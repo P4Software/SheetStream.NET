@@ -99,7 +99,7 @@ byte[] bytes = ExcelPackage.CreateBytes(workbook =>
 |---|---|
 | `ExcelPackage` | `Create(path)`, `new ExcelPackage(stream)`, `CreateBytes(build)`, `Save()`, `Dispose()` |
 | `Workbook` | `Worksheets.Add(name)`, `Styles.Create(...)`, `SharedStrings` counters |
-| `Worksheet` | `Column(i).SetWidth(w).Hide().SetStyle(s)`, `FreezePanes(rows, cols)`, `AutoFilter(row, c1, c2)`, `MergeCells(...)`, `Row()`, `Row(index)`, `Row(index, style, height)` |
+| `Worksheet` | `Column(i).SetWidth(w).Hide().SetStyle(s)`, `Columns(from, to).SetWidth(w)` for wide sheets (identical neighbours collapse into one `<col>` range), `FreezePanes(rows, cols)`, `AutoFilter(row, c1, c2)`, `MergeCells(...)`, `Row()`, `Row(index)`, `Row(index, style, height)` |
 | `RowWriter` | `WriteCell(...)` for `string`, `double`, `decimal`, `int`, `long`, `bool`, `DateTime`, `DateTimeOffset`, `TimeSpan` and `object`; `WriteCells(params)`, `WriteInlineString`, `WriteFormula`, `WriteEmpty`, `Skip` |
 | `StyleOptions` | `Font` (bold, italic, underline, strike, size, name, color), `Fill.BackgroundColor`, `Border` (per edge + color), `NumberFormat`, `HorizontalAlignment`, `VerticalAlignment`, `WrapText` |
 | `PackageOptions` | `CompressionLevel`, `UseSharedStrings` (switch to inline strings for data sets dominated by unique text) |

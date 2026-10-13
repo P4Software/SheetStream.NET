@@ -212,6 +212,55 @@ public class PackageValidationTests
         Assert.True(after - before < 8 * 1024 * 1024, $"Retained {(after - before) / 1024} KB after writing {rows} rows.");
     }
 
+    [Fact]
+    public void WideSheet_CoalescesColumnsAndValidates()
+    {
+        const int columns = 3000;
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var sheet = wb.Worksheets.Add("Wide");
+            sheet.Columns(1, columns).SetWidth(12);      // one run
+            sheet.Column(5).SetWidth(30);                // splits it: 1-4, 5, 6-3000
+            sheet.Columns(2001, 2010).Hide();            // hidden run inside the tail: 6-2000, 2001-2010, 2011-3000
+            for (var r = 1; r <= 20; r++)
+            {
+                var row = sheet.Row();
+                for (var c = 1; c <= columns; c++) row.WriteCell(r * c);
+            }
+        });
+
+        using var ms = new MemoryStream(bytes);
+        using var doc = SpreadsheetDocument.Open(ms, false);
+        Assert.Empty(new OpenXmlValidator(FileFormatVersions.Office2016).Validate(doc));
+        var ws = doc.WorkbookPart!.WorksheetParts.Single().Worksheet;
+        var cols = ws.GetFirstChild<Columns>()!.Elements<Column>().Select(c => (c.Min!.Value, c.Max!.Value, c.Width!.Value, Hidden: c.Hidden?.Value ?? false)).ToList();
+        Assert.Equal(new[] { (1u, 4u, 12d, false), (5u, 5u, 30d, false), (6u, 2000u, 12d, false), (2001u, 2010u, 12d, true), (2011u, 3000u, 12d, false) }, cols);
+        var lastCell = ws.Descendants<Row>().Last().Elements<Cell>().Last();
+        Assert.Equal("DKJ20", lastCell.CellReference!.Value);
+        Assert.Equal((20 * columns).ToString(), lastCell.CellValue!.Text);
+    }
+
+    [Fact]
+    public void WideAndLongSheet_StreamsWithoutRetainingCells()
+    {
+        const int rows = 2_000, columns = 1_000; // 2M cells
+        var before = GC.GetTotalMemory(forceFullCollection: true);
+        using var sink = new CountingStream();
+        using (var package = new ExcelPackage(sink, leaveOpen: true, new PackageOptions { CompressionLevel = System.IO.Compression.CompressionLevel.Fastest }))
+        {
+            var sheet = package.Workbook.Worksheets.Add("Grid");
+            sheet.Columns(1, columns).SetWidth(10);
+            for (var r = 1; r <= rows; r++)
+            {
+                var row = sheet.Row();
+                for (var c = 1; c <= columns; c++) row.WriteCell(c % 5 == 0 ? "label" : (object)(r + c * 0.1));
+            }
+        }
+        var after = GC.GetTotalMemory(forceFullCollection: true);
+        Assert.True(sink.Length > 1_000_000, "Output was written.");
+        Assert.True(after - before < 8 * 1024 * 1024, $"Retained {(after - before) / 1024} KB after writing {rows * columns:N0} cells.");
+    }
+
     /// <summary>Write-only stream that counts bytes, so the large-sheet test does not need disk or memory for the output.</summary>
     private sealed class CountingStream : Stream
     {

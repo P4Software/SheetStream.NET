@@ -84,27 +84,37 @@ stopwatch.Stop();
 Console.WriteLine($"Wrote {path}");
 Console.WriteLine($"Size: {new FileInfo(path).Length:N0} bytes in {stopwatch.ElapsedMilliseconds} ms");
 
-// Optional stress run: `dotnet run -c Release --project samples/SheetStream.Sample -- 1000000`
+// Optional stress run: `dotnet run -c Release --project samples/SheetStream.Sample -- <rows> [columns]`
+// e.g. `-- 1000000` for a long sheet, `-- 5000 2000` for a wide one (10M cells).
 if (args.Length > 0 && int.TryParse(args[0], out var rows) && rows > 0)
 {
+    var columns = args.Length > 1 && int.TryParse(args[1], out var c) && c > 0 ? c : 4;
     var bigPath = Path.Combine(Environment.CurrentDirectory, "Stress.xlsx");
     var sw = Stopwatch.StartNew();
     using (var package = ExcelPackage.Create(bigPath, new PackageOptions { CompressionLevel = System.IO.Compression.CompressionLevel.Fastest }))
     {
         var sheet = package.Workbook.Worksheets.Add("Data");
         var money = package.Workbook.Styles.Create(o => o.NumberFormat = NumberFormats.Decimal2);
-        sheet.Row(1).WriteCells("Id", "Category", "Amount", "When");
+        sheet.Columns(1, columns).SetWidth(12);
+        var header = sheet.Row(1);
+        for (var col = 1; col <= columns; col++) header.WriteCell($"Col {col}");
         var start = new DateTime(2026, 1, 1);
         for (var i = 1; i <= rows; i++)
         {
-            sheet.Row()
-                .WriteCell(i)
-                .WriteCell(i % 7 == 0 ? "Hardware" : i % 3 == 0 ? "Services" : "Software")
-                .WriteCell(i * 1.25, money)
-                .WriteCell(start.AddMinutes(i));
+            var row = sheet.Row();
+            for (var col = 1; col <= columns; col++)
+            {
+                switch (col % 4)
+                {
+                    case 1: row.WriteCell(i); break;
+                    case 2: row.WriteCell(i % 7 == 0 ? "Hardware" : i % 3 == 0 ? "Services" : "Software"); break;
+                    case 3: row.WriteCell(i * 1.25, money); break;
+                    default: row.WriteCell(start.AddMinutes(i)); break;
+                }
+            }
         }
     }
     sw.Stop();
-    Console.WriteLine($"Stress: {rows:N0} rows x 4 cols in {sw.Elapsed.TotalSeconds:F1}s, " +
+    Console.WriteLine($"Stress: {rows:N0} rows x {columns:N0} cols ({(long)rows * columns:N0} cells) in {sw.Elapsed.TotalSeconds:F1}s, " +
                       $"{new FileInfo(bigPath).Length / 1024 / 1024:N0} MB, peak working set {Process.GetCurrentProcess().PeakWorkingSet64 / 1024 / 1024:N0} MB");
 }

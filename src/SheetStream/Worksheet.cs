@@ -69,12 +69,22 @@ namespace SheetStream
         {
             if (index < 1 || index > CellReference.MaxColumns) throw new ArgumentOutOfRangeException(nameof(index), index, "Column index must be between 1 and 16384.");
             EnsureHeaderNotWritten("Column settings");
-            if (!_columns.TryGetValue(index, out var settings))
-            {
-                settings = new ColumnSettings(index);
-                _columns[index] = settings;
-            }
-            return settings;
+            return GetOrCreateColumn(index);
+        }
+
+        /// <summary>
+        /// Returns a handle that applies settings to every column from <paramref name="from"/> to
+        /// <paramref name="to"/> inclusive. Adjacent columns with identical settings are written as a single
+        /// <c>&lt;col min max&gt;</c> range, so configuring thousands of columns costs a handful of bytes.
+        /// Must be called before the first row is written.
+        /// </summary>
+        /// <example><code>sheet.Columns(1, 2000).SetWidth(12);</code></example>
+        public ColumnRangeSettings Columns(int from, int to)
+        {
+            if (from < 1 || from > CellReference.MaxColumns) throw new ArgumentOutOfRangeException(nameof(from), from, "Column index must be between 1 and 16384.");
+            if (to < from || to > CellReference.MaxColumns) throw new ArgumentOutOfRangeException(nameof(to), to, "Last column must be >= first column and <= 16384.");
+            EnsureHeaderNotWritten("Column settings");
+            return new ColumnRangeSettings(this, from, to);
         }
 
         /// <summary>
@@ -212,29 +222,65 @@ namespace SheetStream
 
             if (_frozenRows > 0 || _frozenColumns > 0) WriteFrozenPanes();
 
+            WriteColumnDefinitions();
+
+            _writer.WriteStartElement("sheetData");
+        }
+
+        /// <summary>
+        /// Writes <c>&lt;cols&gt;</c>, merging runs of adjacent columns that share the same width, visibility and
+        /// style into one <c>&lt;col min max&gt;</c>. A sheet with 5,000 identically sized columns therefore
+        /// emits a single element instead of 5,000, which matters for the wide exports this library targets.
+        /// </summary>
+        private void WriteColumnDefinitions()
+        {
+            ColumnSettings? runStart = null;
+            var runEnd = 0;
             var hasCols = false;
+
             foreach (var column in _columns.Values)
             {
                 if (!column.HasSettings) continue;
-                if (!hasCols)
+                if (runStart != null && column.Index == runEnd + 1 && column.HasSameSettingsAs(runStart))
                 {
-                    _writer.WriteStartElement("cols");
-                    hasCols = true;
+                    runEnd = column.Index;
+                    continue;
                 }
-                _writer.WriteStartElement("col");
-                var idx = column.Index.ToString(CultureInfo.InvariantCulture);
-                _writer.WriteAttributeString("min", idx);
-                _writer.WriteAttributeString("max", idx);
-                // The schema requires width; fall back to Excel's default when only a style or hidden flag is set.
-                _writer.WriteAttributeString("width", (column.Width ?? 8.43).ToString(CultureInfo.InvariantCulture));
-                if (column.Style != null && !column.Style.IsDefault) _writer.WriteAttributeString("style", column.Style.Id.ToString(CultureInfo.InvariantCulture));
-                if (column.IsHidden) _writer.WriteAttributeString("hidden", "1");
-                if (column.Width.HasValue) _writer.WriteAttributeString("customWidth", "1");
-                _writer.WriteEndElement();
+                if (runStart != null) WriteColumnRun(runStart, runEnd, ref hasCols);
+                runStart = column;
+                runEnd = column.Index;
             }
+            if (runStart != null) WriteColumnRun(runStart, runEnd, ref hasCols);
             if (hasCols) _writer.WriteEndElement();
+        }
 
-            _writer.WriteStartElement("sheetData");
+        private void WriteColumnRun(ColumnSettings settings, int lastIndex, ref bool hasCols)
+        {
+            if (!hasCols)
+            {
+                _writer.WriteStartElement("cols");
+                hasCols = true;
+            }
+            _writer.WriteStartElement("col");
+            _writer.WriteAttributeString("min", settings.Index.ToString(CultureInfo.InvariantCulture));
+            _writer.WriteAttributeString("max", lastIndex.ToString(CultureInfo.InvariantCulture));
+            // The schema requires width; fall back to Excel's default when only a style or hidden flag is set.
+            _writer.WriteAttributeString("width", (settings.Width ?? 8.43).ToString(CultureInfo.InvariantCulture));
+            if (settings.Style != null && !settings.Style.IsDefault) _writer.WriteAttributeString("style", settings.Style.Id.ToString(CultureInfo.InvariantCulture));
+            if (settings.IsHidden) _writer.WriteAttributeString("hidden", "1");
+            if (settings.Width.HasValue) _writer.WriteAttributeString("customWidth", "1");
+            _writer.WriteEndElement();
+        }
+
+        /// <summary>Returns (creating if needed) the settings object for a column; used by <see cref="ColumnRangeSettings"/>.</summary>
+        internal ColumnSettings GetOrCreateColumn(int index)
+        {
+            if (!_columns.TryGetValue(index, out var settings))
+            {
+                settings = new ColumnSettings(index);
+                _columns[index] = settings;
+            }
+            return settings;
         }
 
         private void WriteFrozenPanes()
