@@ -21,6 +21,14 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>excel;xlsx;openxml;spreadsheet;streaming;epplus;export</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>See https://github.com/P4Software/SheetStream/releases</PackageReleaseNotes>
+
+    <!-- Symbols and Source Link so consumers can step into the library from the published package. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
 
   <ItemGroup>

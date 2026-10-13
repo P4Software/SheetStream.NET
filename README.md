@@ -146,6 +146,19 @@ dotnet run --project samples/SheetStream.Sample            # writes FinancialRep
 dotnet run -c Release --project samples/SheetStream.Sample -- 1000000   # 1M-row stress run
 ```
 
+## 🚢 Releasing
+
+A push of a version tag publishes to nuget.org and creates a GitHub release:
+
+```bash
+# 1. bump <Version> in src/SheetStream/SheetStream.csproj, commit
+# 2. tag and push
+git tag v0.1.0
+git push --tags
+```
+
+The `Release` workflow refuses to run if the tag and the csproj version disagree, and it needs the `NUGET_API_KEY` repository secret.
+
 ## 🤝 Contributing
 
 We welcome the .NET community to help build the best free spreadsheet engine out there! See [CONTRIBUTING.md](CONTRIBUTING.md). Feel free to fork, open issues, submit pull requests, or optimize edge cases.

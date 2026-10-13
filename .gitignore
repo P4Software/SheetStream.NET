@@ -15,3 +15,6 @@ TestResults/
 # Generated sample output
 *.xlsx
 !tests/**/fixtures/*.xlsx
+
+# Local pack output
+artifacts/

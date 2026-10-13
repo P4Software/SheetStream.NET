@@ -1,0 +1,49 @@
+# Publishes SheetStream to nuget.org when a version tag is pushed, e.g. `git tag v0.1.0 && git push --tags`.
+# The tag must match the <Version> in src/SheetStream/SheetStream.csproj; the job fails early if it does not,
+# so a stale csproj version can never ship under the wrong tag.
+# Requires the repository secret NUGET_API_KEY (an API key from https://www.nuget.org/account/apikeys with
+# "Push new packages and package versions" scoped to the SheetStream id).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Check tag matches csproj version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CSPROJ=$(grep -oPm1 '(?<=<Version>)[^<]+' src/SheetStream/SheetStream.csproj)
+          echo "tag=$TAG csproj=$CSPROJ"
+          test "$TAG" = "$CSPROJ" || { echo "Tag v$TAG does not match <Version>$CSPROJ</Version>; bump the csproj first."; exit 1; }
+
+      - name: Restore
+        run: dotnet restore
+      - name: Build
+        run: dotnet build --no-restore -c Release -p:ContinuousIntegrationBuild=true
+      - name: Test
+        run: dotnet test --no-build -c Release
+      - name: Pack
+        run: dotnet pack src/SheetStream/SheetStream.csproj --no-build -c Release -o artifacts
+
+      - name: Push to nuget.org
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create GitHub release with the package attached
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
