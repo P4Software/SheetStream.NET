@@ -22,6 +22,11 @@ namespace SheetStream
         private string _rowText = "";
         private CellStyle? _rowStyle;
 
+        // Row style combined with a date / date-time / duration format, derived once per row on first use.
+        private CellStyle? _rowDateStyle;
+        private CellStyle? _rowDateTimeStyle;
+        private CellStyle? _rowDurationStyle;
+
         internal RowWriter(Worksheet sheet, XmlWriter writer)
         {
             _sheet = sheet;
@@ -43,6 +48,7 @@ namespace SheetStream
             RowIndex = rowIndex;
             NextColumn = 1;
             _rowStyle = style != null && !style.IsDefault ? style : null;
+            _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
             _rowText = rowIndex.ToString(CultureInfo.InvariantCulture);
             IsOpen = true;
 
@@ -207,7 +213,12 @@ namespace SheetStream
         {
             EnsureOpen();
             var styles = _sheet.Workbook.Styles;
-            var effective = style ?? _rowStyle ?? (value.TimeOfDay == TimeSpan.Zero ? styles.DateStyle : styles.DateTimeStyle);
+            CellStyle effective;
+            if (style != null) effective = style;
+            else if (_rowStyle == null) effective = value.TimeOfDay == TimeSpan.Zero ? styles.DateStyle : styles.DateTimeStyle;
+            // A row style (e.g. zebra fill) must not turn the date into a serial number: merge in a date format.
+            else if (value.TimeOfDay == TimeSpan.Zero) effective = _rowDateStyle ??= styles.WithNumberFormat(_rowStyle, "mm-dd-yy");
+            else effective = _rowDateTimeStyle ??= styles.WithNumberFormat(_rowStyle, "m/d/yy h:mm");
             BeginCell(effective, null);
             _w.WriteStartElement("v");
             _w.WriteValue(value.ToOADate());
@@ -223,7 +234,8 @@ namespace SheetStream
         public RowWriter WriteCell(TimeSpan value, CellStyle? style = null)
         {
             EnsureOpen();
-            var effective = style ?? _rowStyle ?? _sheet.Workbook.Styles.DurationStyle;
+            var styles = _sheet.Workbook.Styles;
+            var effective = style ?? (_rowStyle == null ? styles.DurationStyle : _rowDurationStyle ??= styles.WithNumberFormat(_rowStyle, NumberFormats.Duration));
             BeginCell(effective, null);
             _w.WriteStartElement("v");
             _w.WriteValue(value.TotalDays);

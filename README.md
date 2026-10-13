@@ -111,6 +111,7 @@ SheetStream writes directly into the zip archive, which is what keeps memory fla
 1. **One sheet at a time.** Adding a worksheet seals the previous one.
 2. **Rows ascend.** `Row(n)` must be the current row or a later one. Gaps are fine.
 3. **Layout first.** Column widths and frozen panes are declared before the first row of the sheet, because the OpenXML schema places them before the sheet data. `AutoFilter` and `MergeCells` can be called any time before the sheet is sealed.
+4. **Dispose saves.** Leaving a `using` block without calling `Save()` still finishes the file. If your own code throws mid-export, wrap the package in a `try`/`catch` that deletes the partial file, and call `Save()` explicitly so a failure during the final write is not masked by the one that caused it.
 
 ### Migrating from EPPlus
 

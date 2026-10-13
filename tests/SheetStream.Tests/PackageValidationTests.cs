@@ -52,6 +52,8 @@ public class PackageValidationTests
             sheet.Row(9).WriteCell("Total", header).WriteEmpty(header).WriteFormula("=SUM(C2:C4)", money);
             sheet.MergeCells(10, 1, 10, 3);
             sheet.Row(10).WriteCell("Merged across three columns");
+            var stripe = wb.Styles.Create(o => o.Fill.BackgroundColor = "#F2F2F2");
+            sheet.Row(11, stripe).WriteCell(new DateTime(2026, 1, 2)).WriteCell(new DateTime(2026, 1, 2, 8, 0, 0)).WriteCell(TimeSpan.FromMinutes(90)).WriteCell("text");
 
             var second = wb.Worksheets.Add("Empty");
             _ = second;
@@ -142,6 +144,19 @@ public class PackageValidationTests
         Assert.Equal(BorderStyleValues.Thin, border.LeftBorder!.Style!.Value);
         var moneyXf = styles.CellFormats.Elements<CellFormat>().ElementAt((int)cells["C2"].StyleIndex!.Value);
         Assert.Equal("$#,##0.00", styles.NumberingFormats!.Elements<NumberingFormat>().Single(n => n.NumberFormatId!.Value == moneyXf.NumberFormatId!.Value).FormatCode!.Value);
+        // Dates on a row with a default (fill-only) style keep the fill AND get a date format.
+        var cellFormats = styles.CellFormats.Elements<CellFormat>().ToList();
+        var stripedDate = cellFormats[(int)cells["A11"].StyleIndex!.Value];
+        var stripedDateTime = cellFormats[(int)cells["B11"].StyleIndex!.Value];
+        var stripedDuration = cellFormats[(int)cells["C11"].StyleIndex!.Value];
+        var stripedText = cellFormats[(int)cells["D11"].StyleIndex!.Value];
+        Assert.Equal(14u, stripedDate.NumberFormatId!.Value);
+        Assert.Equal(22u, stripedDateTime.NumberFormatId!.Value);
+        Assert.Equal(46u, stripedDuration.NumberFormatId!.Value);
+        Assert.Equal(0u, stripedText.NumberFormatId!.Value);
+        Assert.Equal(stripedText.FillId!.Value, stripedDate.FillId!.Value);
+        Assert.Equal("FFF2F2F2", styles.Fills.Elements<Fill>().ElementAt((int)stripedDate.FillId!.Value).PatternFill!.ForegroundColor!.Rgb!.Value);
+
         // Fills 0 and 1 are the mandatory none / gray125 placeholders.
         var fills = styles.Fills.Elements<Fill>().ToList();
         Assert.Equal(PatternValues.None, fills[0].PatternFill!.PatternType!.Value);

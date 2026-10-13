@@ -120,6 +120,20 @@ namespace SheetStream.Styles
         /// <summary>Style applied to <see cref="TimeSpan"/> cells written without an explicit style (built-in format 46).</summary>
         internal CellStyle DurationStyle => _durationStyle ??= Create(o => o.NumberFormat = NumberFormats.Duration);
 
+        /// <summary>
+        /// Returns a style identical to <paramref name="baseStyle"/> but with <paramref name="formatCode"/> as its
+        /// number format, unless the base already has a non-General format, in which case the base is returned.
+        /// Used so a date written on a row that has a default style (zebra striping, say) keeps the fill but
+        /// still displays as a date instead of a serial number.
+        /// </summary>
+        internal CellStyle WithNumberFormat(CellStyle baseStyle, string formatCode)
+        {
+            var xf = _xfs[baseStyle.Id];
+            if (xf.NumFmtId != 0) return baseStyle;
+            var derived = new XfSpec(RegisterNumberFormat(formatCode), xf.FontId, xf.FillId, xf.BorderId, xf.HAlign, xf.VAlign, xf.Wrap);
+            return new CellStyle(RegisterXf(derived));
+        }
+
         private int RegisterFont(FontSpec font)
         {
             if (_fontIndex.TryGetValue(font, out var id)) return id;
