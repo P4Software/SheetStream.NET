@@ -51,12 +51,35 @@ namespace SheetStream
             return this;
         }
 
+        /// <summary>Outline (grouping) level, 0 to 7. Grouped columns can be collapsed with Excel's outline buttons.</summary>
+        public int OutlineLevel { get; private set; }
+
+        /// <summary>Puts the column in an outline group of the given level (1 to 7; 0 removes it).</summary>
+        public ColumnSettings SetOutlineLevel(int level)
+        {
+            if (level < 0 || level > 7) throw new ArgumentOutOfRangeException(nameof(level), level, "Outline level must be between 0 and 7.");
+            OutlineLevel = level;
+            return this;
+        }
+
+        /// <summary>True when the width was set explicitly (AutoFit then leaves the column alone).</summary>
+        internal bool HasExplicitWidth => Width.HasValue && !_autoWidth;
+
+        private bool _autoWidth;
+
+        /// <summary>Applies a width computed by AutoFit without marking it as user-set.</summary>
+        internal void SetAutoWidth(double width)
+        {
+            Width = Math.Min(255, Math.Max(0, width));
+            _autoWidth = true;
+        }
+
         /// <summary>True when the column needs a <c>&lt;col&gt;</c> element at all.</summary>
-        internal bool HasSettings => Width.HasValue || IsHidden || (Style != null && !Style.IsDefault);
+        internal bool HasSettings => Width.HasValue || IsHidden || OutlineLevel > 0 || (Style != null && !Style.IsDefault);
 
         /// <summary>True when two columns can share one <c>&lt;col min max&gt;</c> element.</summary>
         internal bool HasSameSettingsAs(ColumnSettings other)
-            => Width == other.Width && IsHidden == other.IsHidden && (Style?.Id ?? 0) == (other.Style?.Id ?? 0);
+            => Width == other.Width && IsHidden == other.IsHidden && OutlineLevel == other.OutlineLevel && (Style?.Id ?? 0) == (other.Style?.Id ?? 0);
     }
 
     /// <summary>
@@ -101,6 +124,13 @@ namespace SheetStream
         {
             if (style == null) throw new ArgumentNullException(nameof(style));
             for (var i = From; i <= To; i++) _sheet.GetOrCreateColumn(i).SetStyle(style);
+            return this;
+        }
+
+        /// <summary>Groups the range at the given outline level (1 to 7).</summary>
+        public ColumnRangeSettings SetOutlineLevel(int level)
+        {
+            for (var i = From; i <= To; i++) _sheet.GetOrCreateColumn(i).SetOutlineLevel(level);
             return this;
         }
     }

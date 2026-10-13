@@ -1,0 +1,35 @@
+# Changelog
+
+All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
+
+## 0.2.0 (2026-10-13)
+
+Closes most of the gap with EPPlus while keeping the streaming, zero-dependency design.
+
+### Added
+
+- **Excel tables** with built-in styles, banding and filter buttons (`Worksheet.AddTable`).
+- **Charts**: column, bar, line, area, pie, doughnut and scatter, with titles, axis titles, legends, data labels and series colours (`Worksheet.AddChart`).
+- **Pictures**: PNG, JPEG and GIF, sized by pixels with the aspect ratio kept (`Worksheet.AddPicture`).
+- **Conditional formatting**: cell value, expression, contains text, duplicates, unique, top / bottom, above / below average, colour scales, data bars and icon sets, with differential styles (`StyleSheet.CreateDifferential`).
+- **Data validation**: lists, whole numbers, decimals, dates, text length and custom formulas, with prompts and error alerts.
+- **Hyperlinks** to the web, e-mail and places in the workbook, using Excel's built-in Hyperlink style.
+- **Comments** (notes), **rich text** cells and **formulas with cached values**.
+- **Protection**: sheet and workbook protection with salted SHA-512 password hashes, plus locked / hidden-formula cell styles.
+- **Print setup**: orientation, paper size, scale, fit to page, margins, header and footer, print titles, print area, gridlines and centering.
+- **Layout**: AutoFit columns, tab colour, gridline visibility, zoom, right-to-left, row and column outlining, hidden rows, sheet visibility (hidden and very hidden).
+- **Defined names** and **document properties** (title, author, company...).
+- **Load helpers**: `LoadFromCollection` (with `[SheetColumn]` and `[DisplayName]`), `LoadFromDataTable` and `LoadFromDataReader`, optionally as a table.
+- **Random-access cells**: `Worksheet.Cells[row, column]` for small, irregular layouts.
+- **Streaming reader** (`SheetStream.Reading.ExcelReader`): `ReadRows`, `Read<T>` and `ReadDataTable`, with typed dates, durations and errors.
+- More cell style options: indent, text rotation and shrink to fit.
+
+### Changed
+
+- A workbook saved with no sheets now gets an empty "Sheet1", which Excel requires.
+- `Dispose` no longer retries a save that already failed, so the original exception is not masked.
+- Single-cell absolute references are written as `$B$2` rather than `$B$2:$B$2`.
+
+## 0.1.0 (2026-10-13)
+
+First release: streaming .xlsx writer with shared strings, styles (fonts, fills, borders, number formats, alignment), column widths, frozen panes, AutoFilter, merged cells, formulas and inline strings.

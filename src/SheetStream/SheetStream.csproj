@@ -11,10 +11,10 @@
     <IsPackable>true</IsPackable>
 
     <PackageId>SheetStream</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>P4 Software</Authors>
     <Company>P4 Software</Company>
-    <Description>Lightweight, dependency-free, streaming .xlsx writer for .NET. A modern alternative to EPPlus for creating Excel files.</Description>
+    <Description>Lightweight, dependency-free, MIT-licensed .xlsx library for .NET: streaming writer with tables, charts, pictures, conditional formatting, validation, protection and AutoFit, plus a streaming reader. A free alternative to EPPlus.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/P4Software/SheetStream</PackageProjectUrl>
     <RepositoryUrl>https://github.com/P4Software/SheetStream</RepositoryUrl>

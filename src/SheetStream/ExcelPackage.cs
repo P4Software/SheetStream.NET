@@ -52,7 +52,12 @@ namespace SheetStream
         private ZipArchive? _archive;
         private XmlWriter? _openPart;
         private bool _saved;
+        private bool _saveFailed;
         private bool _disposed;
+
+        // Parts beyond the fixed set (tables, drawings, charts, comments) and extension defaults (png, vml...).
+        private readonly List<(string Part, string ContentType)> _overrides = new List<(string, string)>();
+        private readonly Dictionary<string, string> _defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Creates a package that writes to <paramref name="output"/>.
@@ -125,9 +130,32 @@ namespace SheetStream
         {
             if (_saved) return;
             if (_archive == null) throw new ObjectDisposedException(nameof(ExcelPackage));
+            try
+            {
+                SaveCore();
+            }
+            catch
+            {
+                // Remember the failure so Dispose does not retry and throw a second, misleading exception.
+                _saveFailed = true;
+                throw;
+            }
+        }
+
+        private void SaveCore()
+        {
+
+            // Excel refuses a workbook without sheets, and one whose sheets are all hidden.
+            if (Workbook.Worksheets.Count == 0) Workbook.Worksheets.Add("Sheet1");
+            var anyVisible = false;
+            foreach (var sheet in Workbook.Worksheets) anyVisible |= sheet.Visibility == SheetVisibility.Visible;
+            if (!anyVisible) throw new InvalidOperationException("At least one worksheet must stay visible; Excel cannot open a workbook whose sheets are all hidden.");
 
             Workbook.Worksheets.SealAll();
 
+            var savedUtc = DateTime.UtcNow;
+            using (var w = OpenPart("docProps/core.xml")) Workbook.Properties.WriteCore(w, savedUtc);
+            using (var w = OpenPart("docProps/app.xml")) Workbook.Properties.WriteApp(w);
             using (var w = OpenPart("xl/sharedStrings.xml")) Workbook.SharedStrings.WriteTo(w);
             using (var w = OpenPart("xl/styles.xml")) Workbook.Styles.WriteTo(w);
             using (var w = OpenPart("xl/workbook.xml")) WriteWorkbookPart(w);
@@ -135,7 +163,7 @@ namespace SheetStream
             using (var w = OpenPart("_rels/.rels")) WriteRootRelationships(w);
             using (var w = OpenPart("[Content_Types].xml")) WriteContentTypes(w);
 
-            _archive.Dispose(); // Writes the zip central directory.
+            _archive!.Dispose(); // Writes the zip central directory.
             _archive = null;
             _output.Flush();
             _saved = true;
@@ -148,7 +176,8 @@ namespace SheetStream
             _disposed = true;
             try
             {
-                if (!_saved && _archive != null) Save();
+                // A save that already failed is not retried: its exception is the one the caller needs to see.
+                if (!_saved && !_saveFailed && _archive != null) Save();
             }
             finally
             {
@@ -177,12 +206,63 @@ namespace SheetStream
 
         private void PartClosed() => _openPart = null;
 
-        /// <summary><c>xl/workbook.xml</c>: the sheet list plus optional defined names and calc settings.</summary>
+        /// <summary>Declares the content type of a part written outside the fixed set (path without leading slash).</summary>
+        internal void RegisterPart(string partName, string contentType) => _overrides.Add(("/" + partName, contentType));
+
+        /// <summary>Declares the content type for every part with a given file extension.</summary>
+        internal void RegisterDefault(string extension, string contentType) => _defaults[extension] = contentType;
+
+        /// <summary>
+        /// Writes a complete binary (or pre-built text) part in one go. Images are already compressed, so they
+        /// are stored without deflate to save time.
+        /// </summary>
+        internal void WriteBinaryPart(string entryName, byte[] data)
+        {
+            if (_archive == null) throw new ObjectDisposedException(nameof(ExcelPackage));
+            if (_openPart != null) throw new InvalidOperationException($"Cannot write part '{entryName}' while another part is still being written.");
+            var isImage = entryName.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || entryName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) || entryName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
+            var entry = _archive.CreateEntry(entryName, isImage ? CompressionLevel.NoCompression : Options.CompressionLevel);
+            using (var stream = entry.Open()) stream.Write(data, 0, data.Length);
+        }
+
+        /// <summary><c>xl/workbook.xml</c>: protection, views, the sheet list, defined names and calc settings.</summary>
         private void WriteWorkbookPart(XmlWriter w)
         {
             w.WriteStartDocument(true);
             w.WriteStartElement("workbook", OpenXmlNamespaces.Main);
             w.WriteAttributeString("xmlns", "r", null, OpenXmlNamespaces.Relationships);
+
+            // CT_Workbook order: workbookProtection, bookViews, sheets, definedNames, calcPr.
+            if (Workbook.Protection is var (hash, salt, structure, windows))
+            {
+                w.WriteStartElement("workbookProtection");
+                if (hash != null)
+                {
+                    w.WriteAttributeString("workbookAlgorithmName", "SHA-512");
+                    w.WriteAttributeString("workbookHashValue", hash);
+                    w.WriteAttributeString("workbookSaltValue", salt);
+                    w.WriteAttributeString("workbookSpinCount", PasswordHasher.SpinCount.ToString(CultureInfo.InvariantCulture));
+                }
+                if (structure) w.WriteAttributeString("lockStructure", "1");
+                if (windows) w.WriteAttributeString("lockWindows", "1");
+                w.WriteEndElement();
+            }
+
+            // The active tab must be a visible sheet, otherwise Excel opens on a hidden one.
+            var activeTab = 0;
+            foreach (var sheet in Workbook.Worksheets)
+            {
+                if (sheet.Visibility == SheetVisibility.Visible) { activeTab = sheet.Index - 1; break; }
+            }
+            w.WriteStartElement("bookViews");
+            w.WriteStartElement("workbookView");
+            if (activeTab > 0)
+            {
+                w.WriteAttributeString("firstSheet", activeTab.ToString(CultureInfo.InvariantCulture));
+                w.WriteAttributeString("activeTab", activeTab.ToString(CultureInfo.InvariantCulture));
+            }
+            w.WriteEndElement();
+            w.WriteEndElement();
 
             w.WriteStartElement("sheets");
             foreach (var sheet in Workbook.Worksheets)
@@ -190,26 +270,36 @@ namespace SheetStream
                 w.WriteStartElement("sheet");
                 w.WriteAttributeString("name", sheet.Name);
                 w.WriteAttributeString("sheetId", sheet.Index.ToString(CultureInfo.InvariantCulture));
+                if (sheet.Visibility == SheetVisibility.Hidden) w.WriteAttributeString("state", "hidden");
+                else if (sheet.Visibility == SheetVisibility.VeryHidden) w.WriteAttributeString("state", "veryHidden");
                 w.WriteAttributeString("id", OpenXmlNamespaces.Relationships, SheetRelationshipId(sheet.Index));
                 w.WriteEndElement();
             }
             w.WriteEndElement();
 
-            // Excel registers each AutoFilter through a hidden _FilterDatabase defined name; without it the
-            // filter still works but Excel reports the file as needing repair in some versions.
-            var filtered = new List<Worksheet>();
+            // Built-in names first. Excel registers each AutoFilter through a hidden _FilterDatabase name;
+            // without it some versions report the file as needing repair.
+            var names = new List<(string Name, int? LocalSheet, bool Hidden, string Formula)>();
             foreach (var sheet in Workbook.Worksheets)
-                if (sheet.AutoFilterRange != null) filtered.Add(sheet);
-            if (filtered.Count > 0)
+            {
+                var local = sheet.Index - 1;
+                if (sheet.AutoFilterRange != null)
+                    names.Add(("_xlnm._FilterDatabase", local, true, RangeReference.QuoteSheetName(sheet.Name) + "!" + sheet.AutoFilterRange));
+                if (sheet.PageSetup.PrintAreaFormula is string area) names.Add(("_xlnm.Print_Area", local, false, area));
+                if (sheet.PageSetup.PrintTitlesFormula is string titles) names.Add(("_xlnm.Print_Titles", local, false, titles));
+            }
+            foreach (var dn in Workbook.DefinedNames)
+                names.Add((dn.Name, dn.Scope == null ? (int?)null : dn.Scope.Index - 1, dn.Hidden, dn.Formula));
+            if (names.Count > 0)
             {
                 w.WriteStartElement("definedNames");
-                foreach (var sheet in filtered)
+                foreach (var (name, local, hidden, formula) in names)
                 {
                     w.WriteStartElement("definedName");
-                    w.WriteAttributeString("name", "_xlnm._FilterDatabase");
-                    w.WriteAttributeString("localSheetId", (sheet.Index - 1).ToString(CultureInfo.InvariantCulture));
-                    w.WriteAttributeString("hidden", "1");
-                    w.WriteString("'" + sheet.Name.Replace("'", "''") + "'!" + sheet.AutoFilterRange);
+                    w.WriteAttributeString("name", name);
+                    if (local.HasValue) w.WriteAttributeString("localSheetId", local.Value.ToString(CultureInfo.InvariantCulture));
+                    if (hidden) w.WriteAttributeString("hidden", "1");
+                    w.WriteString(XmlTextUtil.Sanitize(formula));
                     w.WriteEndElement();
                 }
                 w.WriteEndElement();
@@ -247,6 +337,8 @@ namespace SheetStream
             w.WriteStartDocument(true);
             w.WriteStartElement("Relationships", OpenXmlNamespaces.PackageRelationships);
             WriteRelationship(w, "rId1", OpenXmlNamespaces.RelOfficeDocument, "xl/workbook.xml");
+            WriteRelationship(w, "rId2", OpenXmlNamespaces.RelCoreProperties, "docProps/core.xml");
+            WriteRelationship(w, "rId3", OpenXmlNamespaces.RelExtendedProperties, "docProps/app.xml");
             w.WriteEndElement();
             w.WriteEndDocument();
         }
@@ -274,12 +366,22 @@ namespace SheetStream
             w.WriteAttributeString("Extension", "xml");
             w.WriteAttributeString("ContentType", OpenXmlNamespaces.CtXml);
             w.WriteEndElement();
+            foreach (var pair in _defaults)
+            {
+                w.WriteStartElement("Default");
+                w.WriteAttributeString("Extension", pair.Key);
+                w.WriteAttributeString("ContentType", pair.Value);
+                w.WriteEndElement();
+            }
 
             WriteOverride(w, "/xl/workbook.xml", OpenXmlNamespaces.CtWorkbook);
             foreach (var sheet in Workbook.Worksheets)
                 WriteOverride(w, "/xl/worksheets/sheet" + sheet.Index.ToString(CultureInfo.InvariantCulture) + ".xml", OpenXmlNamespaces.CtWorksheet);
             WriteOverride(w, "/xl/styles.xml", OpenXmlNamespaces.CtStyles);
             WriteOverride(w, "/xl/sharedStrings.xml", OpenXmlNamespaces.CtSharedStrings);
+            WriteOverride(w, "/docProps/core.xml", OpenXmlNamespaces.CtCoreProperties);
+            WriteOverride(w, "/docProps/app.xml", OpenXmlNamespaces.CtExtendedProperties);
+            foreach (var (part, contentType) in _overrides) WriteOverride(w, part, contentType);
 
             w.WriteEndElement();
             w.WriteEndDocument();

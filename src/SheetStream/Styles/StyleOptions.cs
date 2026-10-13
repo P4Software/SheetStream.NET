@@ -33,6 +33,34 @@ namespace SheetStream.Styles
 
         /// <summary>Wraps long text onto multiple lines inside the cell.</summary>
         public bool WrapText { get; set; }
+
+        /// <summary>Shrinks the font so the text fits the column width.</summary>
+        public bool ShrinkToFit { get; set; }
+
+        /// <summary>Indent level (each level is about three characters). 0 to 250.</summary>
+        public int Indent { get; set; }
+
+        /// <summary>
+        /// Text rotation in degrees: 0 to 90 rotates counter-clockwise, 91 to 180 means 1 to 90 degrees
+        /// clockwise (Excel's encoding), and 255 stacks the letters vertically.
+        /// </summary>
+        public int TextRotation { get; set; }
+
+        /// <summary>Cell protection flags; they only take effect once the sheet is protected.</summary>
+        public ProtectionOptions Protection { get; } = new ProtectionOptions();
+    }
+
+    /// <summary>Cell protection flags of a <see cref="StyleOptions"/>.</summary>
+    public sealed class ProtectionOptions
+    {
+        /// <summary>
+        /// True (Excel's default) keeps the cell read-only when the sheet is protected. Set to false for
+        /// input cells users may still edit on a protected sheet.
+        /// </summary>
+        public bool Locked { get; set; } = true;
+
+        /// <summary>Hides the cell's formula from the formula bar when the sheet is protected.</summary>
+        public bool HideFormula { get; set; }
     }
 
     /// <summary>Font settings of a <see cref="StyleOptions"/>.</summary>

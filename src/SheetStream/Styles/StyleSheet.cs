@@ -47,9 +47,14 @@ namespace SheetStream.Styles
         private readonly List<XfSpec> _xfs = new List<XfSpec>();
         private readonly Dictionary<XfSpec, int> _xfIndex = new Dictionary<XfSpec, int>();
 
+        private readonly List<DxfSpec> _dxfs = new List<DxfSpec>();
+        private readonly Dictionary<DxfSpec, int> _dxfIndex = new Dictionary<DxfSpec, int>();
+
         private CellStyle? _dateStyle;
         private CellStyle? _dateTimeStyle;
         private CellStyle? _durationStyle;
+        private CellStyle? _hyperlinkStyle;
+        private int _hyperlinkFontId = -1;
 
         internal StyleSheet()
         {
@@ -64,7 +69,7 @@ namespace SheetStream.Styles
             _borders.Add(BorderSpec.Empty);
             _borderIndex[BorderSpec.Empty] = 0;
 
-            var defaultXf = new XfSpec(0, 0, 0, 0, HorizontalAlignment.General, VerticalAlignment.Bottom, false);
+            var defaultXf = XfSpec.Default;
             _xfs.Add(defaultXf);
             _xfIndex[defaultXf] = 0;
             Default = new CellStyle(0);
@@ -107,9 +112,73 @@ namespace SheetStream.Styles
             var borderId = RegisterBorder(BorderSpec.From(options.Border));
             var numFmtId = RegisterNumberFormat(options.NumberFormat);
 
-            var xf = new XfSpec(numFmtId, fontId, fillId, borderId, options.HorizontalAlignment, options.VerticalAlignment, options.WrapText);
+            if (options.Indent < 0 || options.Indent > 250) throw new ArgumentOutOfRangeException(nameof(StyleOptions.Indent), options.Indent, "Indent must be between 0 and 250.");
+            if ((options.TextRotation < 0 || options.TextRotation > 180) && options.TextRotation != 255)
+                throw new ArgumentOutOfRangeException(nameof(StyleOptions.TextRotation), options.TextRotation, "Text rotation must be 0 to 180, or 255 for vertical text.");
+
+            var xf = new XfSpec(numFmtId, fontId, fillId, borderId, options.HorizontalAlignment, options.VerticalAlignment, options.WrapText,
+                options.ShrinkToFit, options.Indent, options.TextRotation, options.Protection.Locked, options.Protection.HideFormula, 0);
             return new CellStyle(RegisterXf(xf));
         }
+
+        /// <summary>
+        /// Creates (or reuses) a differential format for conditional formatting. Only the font colour,
+        /// bold / italic / underline / strikethrough, fill colour, borders and number format are used; font
+        /// name and size are ignored because Excel does not apply them conditionally.
+        /// </summary>
+        /// <example>
+        /// <code>
+        /// var bad = workbook.Styles.CreateDifferential(o => { o.Font.Color = "#9C0006"; o.Fill.BackgroundColor = "#FFC7CE"; });
+        /// </code>
+        /// </example>
+        public DifferentialStyle CreateDifferential(Action<StyleOptions> configure)
+        {
+            if (configure == null) throw new ArgumentNullException(nameof(configure));
+            var o = new StyleOptions();
+            configure(o);
+            string? numFmtCode = string.IsNullOrEmpty(o.NumberFormat) ? null : o.NumberFormat;
+            var numFmtId = numFmtCode == null ? -1 : RegisterNumberFormat(numFmtCode);
+            var spec = new DxfSpec(o.Font.Bold, o.Font.Italic, o.Font.Underline, o.Font.Strikethrough, o.Font.Color,
+                o.Fill.BackgroundColor, BorderSpec.From(o.Border), numFmtId, numFmtCode);
+            if (!_dxfIndex.TryGetValue(spec, out var id))
+            {
+                id = _dxfs.Count;
+                _dxfs.Add(spec);
+                _dxfIndex[spec] = id;
+            }
+            return new DifferentialStyle(id);
+        }
+
+        /// <summary>
+        /// Excel's built-in "Hyperlink" cell style (blue, underlined). Hyperlink cells use it unless given
+        /// another style, so they look and behave like links typed in Excel.
+        /// </summary>
+        public CellStyle Hyperlink
+        {
+            get
+            {
+                if (_hyperlinkStyle != null) return _hyperlinkStyle;
+                _hyperlinkFontId = RegisterFont(new FontSpec(false, false, true, false, 11, "Calibri", "FF0563C1"));
+                var xf = new XfSpec(0, _hyperlinkFontId, 0, 0, HorizontalAlignment.General, VerticalAlignment.Bottom, false,
+                    false, 0, 0, true, false, 1);
+                _hyperlinkStyle = new CellStyle(RegisterXf(xf));
+                return _hyperlinkStyle;
+            }
+        }
+
+        /// <summary>
+        /// Approximate width multiplier of a style's font relative to Calibri 11 regular, used by AutoFit.
+        /// Bold text is about 10% wider; size scales linearly.
+        /// </summary>
+        internal double WidthFactor(int styleId)
+        {
+            if (styleId <= 0 || styleId >= _xfs.Count) return 1.0;
+            var font = _fonts[_xfs[styleId].FontId];
+            return font.Size / 11.0 * (font.Bold ? 1.1 : 1.0);
+        }
+
+        /// <summary>Number format id of a style, used by AutoFit to estimate the displayed width of numbers.</summary>
+        internal int NumberFormatId(int styleId) => styleId <= 0 || styleId >= _xfs.Count ? 0 : _xfs[styleId].NumFmtId;
 
         /// <summary>Style applied to <see cref="DateTime"/> cells written without an explicit style (built-in format 14).</summary>
         internal CellStyle DateStyle => _dateStyle ??= Create(o => o.NumberFormat = "mm-dd-yy");
@@ -130,7 +199,7 @@ namespace SheetStream.Styles
         {
             var xf = _xfs[baseStyle.Id];
             if (xf.NumFmtId != 0) return baseStyle;
-            var derived = new XfSpec(RegisterNumberFormat(formatCode), xf.FontId, xf.FillId, xf.BorderId, xf.HAlign, xf.VAlign, xf.Wrap);
+            var derived = xf.WithNumberFormat(RegisterNumberFormat(formatCode));
             return new CellStyle(RegisterXf(derived));
         }
 
@@ -184,7 +253,7 @@ namespace SheetStream.Styles
 
         /// <summary>
         /// Writes the complete <c>styles.xml</c> part. Element order follows CT_Stylesheet exactly:
-        /// numFmts, fonts, fills, borders, cellStyleXfs, cellXfs, cellStyles. Excel rejects any other order.
+        /// numFmts, fonts, fills, borders, cellStyleXfs, cellXfs, cellStyles, dxfs. Excel rejects any other order.
         /// </summary>
         internal void WriteTo(XmlWriter w)
         {
@@ -222,15 +291,30 @@ namespace SheetStream.Styles
             foreach (var border in _borders) border.WriteTo(w);
             w.WriteEndElement();
 
-            // A single master "Normal" cell style; every cellXf points at it through xfId="0".
+            // Master cell styles: "Normal" (xfId 0) always, plus the built-in "Hyperlink" (xfId 1) when used.
+            var hasHyperlink = _hyperlinkFontId >= 0;
             w.WriteStartElement("cellStyleXfs");
-            WriteCount(w, 1);
+            WriteCount(w, hasHyperlink ? 2 : 1);
             w.WriteStartElement("xf");
             w.WriteAttributeString("numFmtId", "0");
             w.WriteAttributeString("fontId", "0");
             w.WriteAttributeString("fillId", "0");
             w.WriteAttributeString("borderId", "0");
             w.WriteEndElement();
+            if (hasHyperlink)
+            {
+                w.WriteStartElement("xf");
+                w.WriteAttributeString("numFmtId", "0");
+                w.WriteAttributeString("fontId", _hyperlinkFontId.ToString(CultureInfo.InvariantCulture));
+                w.WriteAttributeString("fillId", "0");
+                w.WriteAttributeString("borderId", "0");
+                w.WriteAttributeString("applyNumberFormat", "0");
+                w.WriteAttributeString("applyFill", "0");
+                w.WriteAttributeString("applyBorder", "0");
+                w.WriteAttributeString("applyAlignment", "0");
+                w.WriteAttributeString("applyProtection", "0");
+                w.WriteEndElement();
+            }
             w.WriteEndElement();
 
             w.WriteStartElement("cellXfs");
@@ -239,13 +323,30 @@ namespace SheetStream.Styles
             w.WriteEndElement();
 
             w.WriteStartElement("cellStyles");
-            WriteCount(w, 1);
+            WriteCount(w, hasHyperlink ? 2 : 1);
+            if (hasHyperlink)
+            {
+                w.WriteStartElement("cellStyle");
+                w.WriteAttributeString("name", "Hyperlink");
+                w.WriteAttributeString("xfId", "1");
+                w.WriteAttributeString("builtinId", "8");
+                w.WriteEndElement();
+            }
             w.WriteStartElement("cellStyle");
             w.WriteAttributeString("name", "Normal");
             w.WriteAttributeString("xfId", "0");
             w.WriteAttributeString("builtinId", "0");
             w.WriteEndElement();
             w.WriteEndElement();
+
+            // dxfs follow cellStyles in CT_Stylesheet; conditional formatting rules point here by index.
+            if (_dxfs.Count > 0)
+            {
+                w.WriteStartElement("dxfs");
+                WriteCount(w, _dxfs.Count);
+                foreach (var dxf in _dxfs) dxf.WriteTo(w);
+                w.WriteEndElement();
+            }
 
             w.WriteEndElement(); // styleSheet
             w.WriteEndDocument();
@@ -427,47 +528,129 @@ namespace SheetStream.Styles
         /// <summary>Immutable, hashable cell format (one <c>cellXfs/xf</c> entry).</summary>
         private readonly struct XfSpec : IEquatable<XfSpec>
         {
+            public static readonly XfSpec Default = new XfSpec(0, 0, 0, 0, HorizontalAlignment.General, VerticalAlignment.Bottom, false, false, 0, 0, true, false, 0);
+
             public readonly int NumFmtId, FontId, FillId, BorderId;
             public readonly HorizontalAlignment HAlign;
             public readonly VerticalAlignment VAlign;
-            public readonly bool Wrap;
+            public readonly bool Wrap, Shrink;
+            public readonly int Indent, Rotation;
+            public readonly bool Locked, HideFormula;
+            /// <summary>Index into cellStyleXfs: 0 = Normal, 1 = Hyperlink.</summary>
+            public readonly int ParentXf;
 
-            public XfSpec(int numFmtId, int fontId, int fillId, int borderId, HorizontalAlignment hAlign, VerticalAlignment vAlign, bool wrap)
+            public XfSpec(int numFmtId, int fontId, int fillId, int borderId, HorizontalAlignment hAlign, VerticalAlignment vAlign, bool wrap,
+                bool shrink, int indent, int rotation, bool locked, bool hideFormula, int parentXf)
             {
                 NumFmtId = numFmtId; FontId = fontId; FillId = fillId; BorderId = borderId;
-                HAlign = hAlign; VAlign = vAlign; Wrap = wrap;
+                HAlign = hAlign; VAlign = vAlign; Wrap = wrap; Shrink = shrink; Indent = indent; Rotation = rotation;
+                Locked = locked; HideFormula = hideFormula; ParentXf = parentXf;
             }
 
-            private (int, int, int, int, HorizontalAlignment, VerticalAlignment, bool) Key => (NumFmtId, FontId, FillId, BorderId, HAlign, VAlign, Wrap);
+            public XfSpec WithNumberFormat(int numFmtId)
+                => new XfSpec(numFmtId, FontId, FillId, BorderId, HAlign, VAlign, Wrap, Shrink, Indent, Rotation, Locked, HideFormula, ParentXf);
+
+            private ((int, int, int, int, int), (HorizontalAlignment, VerticalAlignment, bool, bool, int, int), (bool, bool)) Key
+                => ((NumFmtId, FontId, FillId, BorderId, ParentXf), (HAlign, VAlign, Wrap, Shrink, Indent, Rotation), (Locked, HideFormula));
             public bool Equals(XfSpec other) => Key.Equals(other.Key);
             public override bool Equals(object? obj) => obj is XfSpec other && Equals(other);
             public override int GetHashCode() => Key.GetHashCode();
 
             public void WriteTo(XmlWriter w)
             {
-                var hasAlignment = HAlign != HorizontalAlignment.General || VAlign != VerticalAlignment.Bottom || Wrap;
+                var hasAlignment = HAlign != HorizontalAlignment.General || VAlign != VerticalAlignment.Bottom || Wrap || Shrink || Indent != 0 || Rotation != 0;
+                var hasProtection = !Locked || HideFormula;
 
                 w.WriteStartElement("xf");
                 w.WriteAttributeString("numFmtId", NumFmtId.ToString(CultureInfo.InvariantCulture));
                 w.WriteAttributeString("fontId", FontId.ToString(CultureInfo.InvariantCulture));
                 w.WriteAttributeString("fillId", FillId.ToString(CultureInfo.InvariantCulture));
                 w.WriteAttributeString("borderId", BorderId.ToString(CultureInfo.InvariantCulture));
-                w.WriteAttributeString("xfId", "0");
+                w.WriteAttributeString("xfId", ParentXf.ToString(CultureInfo.InvariantCulture));
                 // The apply* flags tell Excel the xf overrides the parent cell style; without them
                 // a fill or font can be silently ignored.
                 if (NumFmtId != 0) w.WriteAttributeString("applyNumberFormat", "1");
                 if (FontId != 0) w.WriteAttributeString("applyFont", "1");
                 if (FillId != 0) w.WriteAttributeString("applyFill", "1");
                 if (BorderId != 0) w.WriteAttributeString("applyBorder", "1");
+                if (hasAlignment) w.WriteAttributeString("applyAlignment", "1");
+                if (hasProtection) w.WriteAttributeString("applyProtection", "1");
+                // CT_Xf children: alignment, then protection.
                 if (hasAlignment)
                 {
-                    w.WriteAttributeString("applyAlignment", "1");
                     w.WriteStartElement("alignment");
                     if (HAlign != HorizontalAlignment.General) w.WriteAttributeString("horizontal", ToXml(HAlign));
                     if (VAlign != VerticalAlignment.Bottom) w.WriteAttributeString("vertical", ToXml(VAlign));
+                    if (Rotation != 0) w.WriteAttributeString("textRotation", Rotation.ToString(CultureInfo.InvariantCulture));
                     if (Wrap) w.WriteAttributeString("wrapText", "1");
+                    if (Indent != 0) w.WriteAttributeString("indent", Indent.ToString(CultureInfo.InvariantCulture));
+                    if (Shrink) w.WriteAttributeString("shrinkToFit", "1");
                     w.WriteEndElement();
                 }
+                if (hasProtection)
+                {
+                    w.WriteStartElement("protection");
+                    if (!Locked) w.WriteAttributeString("locked", "0");
+                    if (HideFormula) w.WriteAttributeString("hidden", "1");
+                    w.WriteEndElement();
+                }
+                w.WriteEndElement();
+            }
+        }
+
+        /// <summary>Immutable, hashable differential format (one <c>dxfs/dxf</c> entry).</summary>
+        private readonly struct DxfSpec : IEquatable<DxfSpec>
+        {
+            public readonly bool Bold, Italic, Underline, Strike;
+            public readonly string? FontColor, FillColor;
+            public readonly BorderSpec Border;
+            public readonly int NumFmtId;
+            public readonly string? NumFmtCode;
+
+            public DxfSpec(bool bold, bool italic, bool underline, bool strike, string? fontColor, string? fillColor, BorderSpec border, int numFmtId, string? numFmtCode)
+            {
+                Bold = bold; Italic = italic; Underline = underline; Strike = strike;
+                FontColor = fontColor; FillColor = fillColor; Border = border; NumFmtId = numFmtId; NumFmtCode = numFmtCode;
+            }
+
+            private (bool, bool, bool, bool, string?, string?, BorderSpec, string?) Key => (Bold, Italic, Underline, Strike, FontColor, FillColor, Border, NumFmtCode);
+            public bool Equals(DxfSpec other) => Key.Equals(other.Key);
+            public override bool Equals(object? obj) => obj is DxfSpec other && Equals(other);
+            public override int GetHashCode() => Key.GetHashCode();
+
+            /// <summary>CT_Dxf order: font, numFmt, fill, alignment, protection, border.</summary>
+            public void WriteTo(XmlWriter w)
+            {
+                w.WriteStartElement("dxf");
+                if (Bold || Italic || Underline || Strike || FontColor != null)
+                {
+                    w.WriteStartElement("font");
+                    if (Bold) { w.WriteStartElement("b"); w.WriteEndElement(); }
+                    if (Italic) { w.WriteStartElement("i"); w.WriteEndElement(); }
+                    if (Strike) { w.WriteStartElement("strike"); w.WriteEndElement(); }
+                    if (FontColor != null) { w.WriteStartElement("color"); w.WriteAttributeString("rgb", FontColor); w.WriteEndElement(); }
+                    if (Underline) { w.WriteStartElement("u"); w.WriteEndElement(); }
+                    w.WriteEndElement();
+                }
+                if (NumFmtCode != null)
+                {
+                    w.WriteStartElement("numFmt");
+                    w.WriteAttributeString("numFmtId", NumFmtId.ToString(CultureInfo.InvariantCulture));
+                    w.WriteAttributeString("formatCode", XmlTextUtil.Sanitize(NumFmtCode));
+                    w.WriteEndElement();
+                }
+                if (FillColor != null)
+                {
+                    // Unlike cellXfs fills, a differential solid fill carries its colour in bgColor.
+                    w.WriteStartElement("fill");
+                    w.WriteStartElement("patternFill");
+                    w.WriteStartElement("bgColor");
+                    w.WriteAttributeString("rgb", FillColor);
+                    w.WriteEndElement();
+                    w.WriteEndElement();
+                    w.WriteEndElement();
+                }
+                if (!Border.Equals(BorderSpec.Empty)) Border.WriteTo(w);
                 w.WriteEndElement();
             }
         }

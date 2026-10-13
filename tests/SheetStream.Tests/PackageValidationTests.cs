@@ -128,7 +128,7 @@ public class PackageValidationTests
 
         Assert.NotNull(wbPart.Workbook.CalculationProperties);
         Assert.True(wbPart.Workbook.CalculationProperties!.FullCalculationOnLoad!.Value);
-        Assert.Contains(wbPart.Workbook.DefinedNames!.Elements<DefinedName>(), d => d.Name!.Value == "_xlnm._FilterDatabase" && d.Text == "'Data'!$A$1:$C$1");
+        Assert.Contains(wbPart.Workbook.DefinedNames!.Elements<DocumentFormat.OpenXml.Spreadsheet.DefinedName>(), d => d.Name!.Value == "_xlnm._FilterDatabase" && d.Text == "'Data'!$A$1:$C$1");
 
         // Styles: header has bold/italic font, solid fill and thin border; money has a custom numFmt.
         var styles = wbPart.WorkbookStylesPart!.Stylesheet;
