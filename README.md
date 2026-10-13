@@ -157,7 +157,7 @@ git tag v0.1.0
 git push --tags
 ```
 
-The `Release` workflow refuses to run if the tag and the csproj version disagree, and it needs the `NUGET_API_KEY` repository secret.
+The `Release` workflow refuses to run if the tag and the csproj version disagree. It publishes through nuget.org Trusted Publishing, so no API key is stored in the repository.
 
 ## 🤝 Contributing
 

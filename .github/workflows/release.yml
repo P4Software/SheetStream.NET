@@ -1,8 +1,9 @@
 # Publishes SheetStream to nuget.org when a version tag is pushed, e.g. `git tag v0.1.0 && git push --tags`.
 # The tag must match the <Version> in src/SheetStream/SheetStream.csproj; the job fails early if it does not,
 # so a stale csproj version can never ship under the wrong tag.
-# Requires the repository secret NUGET_API_KEY (an API key from https://www.nuget.org/account/apikeys with
-# "Push new packages and package versions" scoped to the SheetStream id).
+# Publishing uses nuget.org Trusted Publishing: a policy on the P4Software nuget.org account trusts this
+# repository's release.yml, so the job exchanges its GitHub OIDC token for a short-lived API key. No
+# long-lived key is stored anywhere.
 name: Release
 
 on:
@@ -10,7 +11,8 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: write   # create the GitHub release
+  id-token: write   # request the OIDC token NuGet exchanges for a short-lived key
 
 jobs:
   publish:
@@ -39,8 +41,15 @@ jobs:
       - name: Pack
         run: dotnet pack src/SheetStream/SheetStream.csproj --no-build -c Release -o artifacts
 
+      # Official NuGet action, pinned to the v1.2.0 commit so a moved tag cannot change what runs.
+      - name: NuGet login (Trusted Publishing)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: P4Software
+
       - name: Push to nuget.org
-        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       # The runner's built-in gh CLI avoids a third-party action holding a contents:write token.
       - name: Create GitHub release with the package attached
