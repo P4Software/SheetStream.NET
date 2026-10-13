@@ -339,7 +339,21 @@ namespace SheetStream
             {
                 w.WriteStartElement("c", "marker", OpenXmlNamespaces.Chart);
                 Val(w, "symbol", kind == SeriesKind.Line ? "none" : "circle");
-                if (kind != SeriesKind.Line) Val(w, "size", "5");
+                if (kind != SeriesKind.Line)
+                {
+                    Val(w, "size", "5");
+                    // CT_Marker: symbol, size, spPr. The series colour must reach the markers too, otherwise a
+                    // marker-only scatter series ignores it (its line is hidden).
+                    if (s.Color != null)
+                    {
+                        w.WriteStartElement("c", "spPr", OpenXmlNamespaces.Chart);
+                        SolidFill(w, s.Color);
+                        w.WriteStartElement("a", "ln", OpenXmlNamespaces.DrawingMain);
+                        SolidFill(w, s.Color);
+                        w.WriteEndElement();
+                        w.WriteEndElement();
+                    }
+                }
                 w.WriteEndElement();
             }
 

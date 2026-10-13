@@ -8,6 +8,11 @@ using SheetStream.Styles;
 // Run with `dotnet run --project samples/SheetStream.Sample` and open FinancialReport.xlsx.
 
 // `-- showcase` writes a workbook that exercises every feature (tables, charts, rules, reader round trip).
+if (args.Length > 0 && args[0] == "charts")
+{
+    ChartGallery.Run(Path.Combine(Environment.CurrentDirectory, "ChartGallery.xlsx"));
+    return;
+}
 if (args.Length > 0 && args[0] == "showcase")
 {
     Showcase.Run(Path.Combine(Environment.CurrentDirectory, "Showcase.xlsx"));

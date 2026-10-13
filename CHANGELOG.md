@@ -23,6 +23,8 @@ Closes most of the gap with EPPlus while keeping the streaming, zero-dependency 
 - **Random-access cells**: `Worksheet.Cells[row, column]` for small, irregular layouts.
 - **Streaming reader** (`SheetStream.Reading.ExcelReader`): `ReadRows`, `Read<T>` and `ReadDataTable`, with typed dates, durations and errors.
 - More cell style options: indent, text rotation and shrink to fit.
+- The NuGet package now carries the official P4 Software logo as its icon.
+- Marker colours on line and scatter series; the reader rejects cell references beyond column XFD.
 
 ### Changed
 

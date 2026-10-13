@@ -540,6 +540,39 @@ public class FeatureTests
     }
 
     [Fact]
+    public void Reader_RejectsHostileColumnReferencesAndPlacesOutOfOrderCells()
+    {
+        // Build a valid workbook, then rewrite its sheet XML by hand to simulate a crafted file.
+        var bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S").Row().WriteCell(1.0).WriteCell(2.0));
+        byte[] Rewrite(string sheetXml)
+        {
+            var ms = new MemoryStream();
+            ms.Write(bytes, 0, bytes.Length);
+            using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+            {
+                zip.GetEntry("xl/worksheets/sheet1.xml")!.Delete();
+                using var w = new StreamWriter(zip.CreateEntry("xl/worksheets/sheet1.xml").Open());
+                w.Write(sheetXml);
+            }
+            return ms.ToArray();
+        }
+        const string ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var hostile = Rewrite($"<worksheet xmlns=\"{ns}\"><sheetData><row r=\"1\"><c r=\"ZZZZZZ1\"><v>1</v></c></row></sheetData></worksheet>");
+        using (var r = ExcelReader.Open(new MemoryStream(hostile)))
+            Assert.Throws<InvalidDataException>(() => r.ReadRows(0).ToList());
+
+        var outOfOrder = Rewrite($"<worksheet xmlns=\"{ns}\"><sheetData><row r=\"1\"><c r=\"C1\"><v>3</v></c><c r=\"A1\"><v>1</v></c></row></sheetData></worksheet>");
+        using (var r = ExcelReader.Open(new MemoryStream(outOfOrder)))
+        {
+            var row = r.ReadRows(0).Single();
+            Assert.Equal(1.0, row[0]);
+            Assert.Null(row[1]);
+            Assert.Equal(3.0, row[2]);
+        }
+    }
+
+    [Fact]
     public void Reader_RejectsNonZipInput()
     {
         var ex = Assert.Throws<InvalidDataException>(() => ExcelReader.Open(new MemoryStream(new byte[] { 1, 2, 3, 4, 5 })));

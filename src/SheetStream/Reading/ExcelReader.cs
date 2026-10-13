@@ -457,6 +457,8 @@ namespace SheetStream.Reading
                                 var value = ReadCell(xr); // Leaves the reader on </c> or on an empty <c/>.
                                 xr.Read();
                                 if (value == null) continue;
+                                // ColumnOf caps the index at 16384, so padding is bounded even for hostile files.
+                                if (column - 1 < values.Count) { values[column - 1] = value; continue; } // Out-of-order cell.
                                 while (values.Count < column - 1) values.Add(null);
                                 values.Add(value);
                                 continue;
@@ -582,6 +584,10 @@ namespace SheetStream.Reading
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Column number of an A1 reference. Rejects anything beyond Excel's 16,384 columns: an untrusted file
+        /// could otherwise name column "ZZZZZZ" and make the row buffer grow to billions of entries.
+        /// </summary>
         private static int ColumnOf(string reference)
         {
             var column = 0;
@@ -590,6 +596,8 @@ namespace SheetStream.Reading
                 if (ch >= 'A' && ch <= 'Z') column = column * 26 + (ch - 'A' + 1);
                 else if (ch >= 'a' && ch <= 'z') column = column * 26 + (ch - 'a' + 1);
                 else break;
+                if (column > CellReference.MaxColumns)
+                    throw new InvalidDataException($"Cell reference '{reference}' is beyond Excel's last column (XFD). The file is damaged or not a genuine workbook.");
             }
             return column == 0 ? 1 : column;
         }

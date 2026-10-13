@@ -21,6 +21,8 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>excel;xlsx;openxml;spreadsheet;streaming;epplus;export</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Official P4 Software logo, padded (not stretched) to the square canvas NuGet displays. -->
+    <PackageIcon>icon.png</PackageIcon>
     <PackageReleaseNotes>See https://github.com/P4Software/SheetStream/releases</PackageReleaseNotes>
 
     <!-- Symbols and Source Link so consumers can step into the library from the published package. -->
@@ -37,6 +39,7 @@
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../icon.png" Pack="true" PackagePath="/" />
   </ItemGroup>
 
 </Project>
