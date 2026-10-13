@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+*.nupkg
+*.snupkg
+
+# Local tooling state (session memory buffer, not project content)
+.remember/
+
+# Generated sample output
+*.xlsx
+!tests/**/fixtures/*.xlsx

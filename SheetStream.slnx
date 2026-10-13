@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/SheetStream.Sample/SheetStream.Sample.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/SheetStream/SheetStream.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SheetStream.Tests/SheetStream.Tests.csproj" />
+  </Folder>
+</Solution>
