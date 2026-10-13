@@ -1,9 +1,14 @@
 # Publishes SheetStream to nuget.org when a version tag is pushed, e.g. `git tag v0.1.0 && git push --tags`.
-# The tag must match the <Version> in src/SheetStream/SheetStream.csproj; the job fails early if it does not,
-# so a stale csproj version can never ship under the wrong tag.
+# The tag must match the <Version> in src/SheetStream/SheetStream.csproj; the build job fails early if it
+# does not, so a stale csproj version can never ship under the wrong tag.
+#
 # Publishing uses nuget.org Trusted Publishing: a policy on the P4Software nuget.org account trusts this
-# repository's release.yml, so the job exchanges its GitHub OIDC token for a short-lived API key. No
-# long-lived key is stored anywhere.
+# repository's release.yml, so the publish job exchanges its GitHub OIDC token for a short-lived API key.
+# No long-lived key is stored anywhere.
+#
+# The work is split into three jobs so each holds only the permission it needs: building and testing run
+# our own and third-party code with a read-only token; only the small publish job can mint a NuGet key,
+# and only the release job can write to the repository.
 name: Release
 
 on:
@@ -11,12 +16,13 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write   # create the GitHub release
-  id-token: write   # request the OIDC token NuGet exchanges for a short-lived key
+  contents: read
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -41,6 +47,25 @@ jobs:
       - name: Pack
         run: dotnet pack src/SheetStream/SheetStream.csproj --no-build -c Release -o artifacts
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # request the OIDC token NuGet exchanges for a short-lived key
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
       # Official NuGet action, pinned to the v1.2.0 commit so a moved tag cannot change what runs.
       - name: NuGet login (Trusted Publishing)
         id: nuget-login
@@ -51,8 +76,19 @@ jobs:
       - name: Push to nuget.org
         run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts
+
       # The runner's built-in gh CLI avoids a third-party action holding a contents:write token.
       - name: Create GitHub release with the package attached
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
