@@ -112,6 +112,34 @@ namespace SheetStream
             }
         }
 
+        /// <summary>
+        /// Like <see cref="CreateBytes"/>, but the builder can await between sheets (a query per sheet, say).
+        /// The workbook itself is still written synchronously into memory, so there is no I/O to await after
+        /// the builder returns; this exists so callers need not run every query first and build afterwards.
+        /// </summary>
+        /// <example>
+        /// <code>
+        /// var bytes = await ExcelPackage.CreateBytesAsync(async wb =>
+        /// {
+        ///     wb.Worksheets.Add("Orders").LoadFromCollection(await db.Orders.ToListAsync(ct));
+        ///     wb.Worksheets.Add("Customers").LoadFromCollection(await db.Customers.ToListAsync(ct));
+        /// });
+        /// </code>
+        /// </example>
+        public static async System.Threading.Tasks.Task<byte[]> CreateBytesAsync(Func<Workbook, System.Threading.Tasks.Task> build, PackageOptions? options = null)
+        {
+            if (build == null) throw new ArgumentNullException(nameof(build));
+            using (var ms = new MemoryStream())
+            {
+                using (var package = new ExcelPackage(ms, leaveOpen: true, options))
+                {
+                    await build(package.Workbook).ConfigureAwait(false);
+                    package.Save();
+                }
+                return ms.ToArray();
+            }
+        }
+
         /// <summary>The single workbook of this package.</summary>
         public Workbook Workbook { get; }
 
