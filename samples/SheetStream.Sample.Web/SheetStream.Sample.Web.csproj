@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- A teaching sample: warnings are errors so the code people copy is clean. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- The sample is not a shippable package; keep the build output lean. -->
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Your own app would reference the two NuGet packages instead:
+        <PackageReference Include="SheetStream" Version="0.3.0" />
+        <PackageReference Include="SheetStream.AspNetCore" Version="0.3.0" />
+      The sample lives inside the repository, so it references the projects directly.
+    -->
+    <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
+    <ProjectReference Include="..\..\src\SheetStream.AspNetCore\SheetStream.AspNetCore.csproj" />
+  </ItemGroup>
+
+</Project>
