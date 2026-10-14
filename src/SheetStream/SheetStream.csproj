@@ -33,8 +33,28 @@
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 
+  <!--
+    Trimming and Native AOT. IsAotCompatible turns on the trim, AOT and single-file analyzers, so every
+    reflection path in the library is either annotated or routed through a compile-time mapper. The
+    properties only exist on net8.0+; netstandard2.0 consumers are never trimmed.
+  -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="SheetStream.Tests" />
+  </ItemGroup>
+
+  <!--
+    The source generator ships inside this package. The ProjectReference only orders the build (nothing is
+    referenced at runtime); the None item drops the built generator into analyzers/dotnet/cs, where the
+    consuming compiler picks it up. It is deliberately not under lib/, so it never becomes a runtime dependency.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../SheetStream.Generators/SheetStream.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <None Include="../SheetStream.Generators/bin/$(Configuration)/netstandard2.0/SheetStream.Generators.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>
