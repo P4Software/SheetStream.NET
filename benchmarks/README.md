@@ -1,6 +1,6 @@
 # SheetStream benchmarks
 
-A reproducible comparison of SheetStream with the other .xlsx writers .NET developers actually use. The suite measures speed, bytes allocated, peak memory and output size. Before anything is timed, it checks that every library really wrote the rows.
+A reproducible comparison of SheetStream with the other .xlsx writers and readers .NET developers actually use. The suite measures speed, bytes allocated, peak memory and output size. Before anything is timed, it checks that every library really wrote the rows, and that every reader really read them.
 
 | Library | Version | Licence | Why this version |
 |---|---|---|---|
@@ -9,30 +9,47 @@ A reproducible comparison of SheetStream with the other .xlsx writers .NET devel
 | ClosedXML | 0.105.1 | MIT | Latest stable. |
 | MiniExcel | 1.46.0 | Apache-2.0 | Latest stable. 2.0 is still in preview. |
 | NPOI | **2.7.6**, pinned `[2.7.6]` | Apache-2.0 | The last release whose NuGet binaries are plain Apache-2.0. From 2.8.0 the package ships under an "OSMF EULA" with `requireLicenseAcceptance`: users above US$10,000 a year in revenue owe the project a maintenance fee for the binaries. The agreement says this fee is not a licence fee. 2.8.x still builds: it only prints a build warning until you set `AcceptNPOIOSMFLicense`. As with EPPlus 5+, this suite does not accept that agreement on anyone's behalf. |
+| ExcelDataReader | 3.9.0 | MIT | Latest stable. Read benchmarks only; it does not write. |
 | DocumentFormat.OpenXml | 3.5.1 | MIT | Used only by the correctness guard, to read every library's output back. |
 | BenchmarkDotNet | 0.15.8 | MIT | |
 
-NPOI is measured twice: once with **XSSF**, the in-memory user model, and once with **SXSSF**, the streaming port of Apache POI's SXSSF.
+NPOI is measured twice on the write side: once with **XSSF**, the in-memory user model, and once with **SXSSF**, the streaming port of Apache POI's SXSSF. On the read side it is also measured twice: **XSSF** (user model) and **SAX** (the event model, `XSSFReader` + `XSSFSheetXMLHandler`).
 
 ## How to run
 
 All commands run from `benchmarks/SheetStream.Benchmarks`, and everything is Release.
 
 ```powershell
-# Every benchmark (about 10 minutes on the machine below)
+# The two original write scenarios (about 10 minutes on the machine below)
+dotnet run -c Release -- --filter '*Long*' '*.WideBenchmarks.*'
+
+# One scenario at a time
+dotnet run -c Release -- --filter '*Long*'              # 100k rows x 10 columns
+dotnet run -c Release -- --filter '*.WideBenchmarks.*'  # 1,000 x 1,000 ('*Wide*' alone would also match VeryWide)
+dotnet run -c Release -- --filter '*Million*'           # 1,000,000 rows x 10 columns (needs 16 GB+ RAM, see below)
+dotnet run -c Release -- --filter '*VeryWide*'          # 1,000 rows x 10,000 columns
+dotnet run -c Release -- --filter '*Read*'              # read the 100k x 10 file with every reader (about 7 minutes)
+
+# Everything, including the 10M-cell scenarios (well over an hour)
 dotnet run -c Release -- --filter '*'
 
-# One scenario
-dotnet run -c Release -- --filter '*Wide*'
+# Peak working set, output size and full-size verification, each library in a fresh process.
+# With no scenario it runs all five (Long, Wide, Million, VeryWide, Read); name one or more to run just those.
+dotnet run -c Release -- --peak                         # all scenarios
+dotnet run -c Release -- --peak Long Wide               # about 3 minutes
+dotnet run -c Release -- --peak Read                    # about 3.5 minutes
+dotnet run -c Release -- --peak Million VeryWide        # tens of minutes; the in-memory libraries need 16 GB+ RAM
 
-# Peak working set, output size and full-size verification, each library in a fresh process (about 3 minutes)
-dotnet run -c Release -- --peak
-
-# Correctness guard only: shows which rows, cells and formats every library actually wrote
+# Correctness guard only: shows which rows, cells and formats every writer actually wrote,
+# and the checksum every reader arrived at
 dotnet run -c Release -- --verify
 ```
 
 In Git Bash, quote the filter (`'*'`). Otherwise the shell expands `*` to file names.
+
+BenchmarkDotNet's `-j Dry` switch adds a Dry job next to the one declared on each class rather than replacing it, so a "quick" `--filter '*Read*' -j Dry` still runs the full job as well.
+
+The **Million** scenario holds a million `LongRow` objects (about 80 MB) plus each library's working set. SheetStream and MiniExcel stay close to the baseline, but the in-memory models (EPPlus, ClosedXML, NPOI XSSF) build the whole workbook first and allocate ten times what they do on Long, so run Million on a machine with at least 16 GB of RAM.
 
 EPPlus 4.5.3.3 depends on `System.Drawing.Common`, which only works on Windows under .NET 6+. The EPPlus rows therefore only run on Windows.
 
@@ -47,11 +64,14 @@ Every library gets the same input. The input is built once, before timing, from 
   * a `DateTime` with no time part, formatted `yyyy-mm-dd`
   * a second `int`
 * **Wide**: 1,000 rows x 1,000 columns of doubles, with no header and no formatting.
+* **Million**: 1,000,000 rows x the same 10 columns as Long (10M cells). Same data generator, same `WriteLong` code; only the row count changes.
+* **VeryWide**: 1,000 rows x 10,000 columns of doubles (10M cells, the same count as Million). Same `WriteWide` code as Wide; only the column count changes. Million and VeryWide together show whether a library cares about the shape of a sheet or only about the number of cells.
+* **Read**: every reader reads the Long file (100,000 rows x 10 columns) that SheetStream wrote once, outside the timing, into a byte array. Each reader walks every data row and returns a checksum (the sum of the `Id` column plus the number of non-empty cells), so the work cannot be optimised away and the result can be checked against the generator.
 
 ## Methodology
 
-* **One implementation per library** (`Writers.cs`). The benchmark, the correctness guard and the peak mode all call the same `WriteLong` / `WriteWide` method. What is verified is exactly what is timed.
-* **Output goes to a reused `MemoryStream`** (`ReusableOutput`) for every library. It is created once with 64 MB of capacity and emptied before each write, so the buffer never grows while timed. As a result, "Allocated" counts only the library's own allocations. Its `Dispose` is a no-op, so a library that closes its output stream does no harm.
+* **One implementation per library** (`Writers.cs` for writing, `Readers.cs` for reading). The benchmark, the correctness guard and the peak mode all call the same `WriteLong` / `WriteWide` / `ReadLong` method. What is verified is exactly what is timed.
+* **Output goes to a reused `MemoryStream`** (`ReusableOutput`) for every library. It is created once with enough capacity (64 MB for Long and Wide, 160 MB for Million and VeryWide, chosen from the largest output measured: MiniExcel's 76.6 MB on Million) and emptied before each write, so the buffer never grows while timed. As a result, "Allocated" counts only the library's own allocations. Its `Dispose` is a no-op, so a library that closes its output stream does no harm.
 * **Each library is written the way its docs recommend:**
   * **SheetStream:** `new ExcelPackage(stream, leaveOpen: true)`, `Row(n).WriteCell(value, style)` with three styles created once, and default options (`CompressionLevel.Optimal`). A second row, **SheetStream (Fastest zip)**, sets only `PackageOptions.CompressionLevel = Fastest`. It is labelled separately because every other library runs at its default compression.
   * **EPPlus 4.5.3.3:** `Worksheet.SetValue(row, col, value)` in a loop. This avoids the `ExcelRange` that `Cells[r, c]` allocates on every call. Number formats are then set once per column range, and the package is written with `SaveAs(stream)`.
@@ -61,15 +81,25 @@ Every library gets the same input. The input is built once, before timing, from 
     * Wide passes one `Dictionary<string, object>` per row, MiniExcel's documented shape for dynamic columns. This boxes every double.
     * Everything else is left at MiniExcel's defaults.
   * **NPOI:** `CreateRow` / `CreateCell` / `SetCellValue`, with the three `ICellStyle`s created once and `Write(stream, leaveOpen: true)`. SXSSF uses its default 100-row window. It flushes older rows to a temporary file on disk, so its time includes that disk I/O.
-* **BenchmarkDotNet job:** `[MemoryDiagnoser]` with `SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)` and one invocation per iteration. `[IterationSetup]` empties the buffer, outside the measurement. Each benchmark runs in its own process, as BenchmarkDotNet does by default, on the default runtime settings (workstation GC, tiered compilation).
-* **Correctness guard:** every benchmark's `GlobalSetup` writes a small case (50 rows for Long, 40 x 40 for Wide) with every library. It reads each output back with the Open XML SDK's SAX reader and throws if the row count or the number of cells in the last row is wrong. The `--peak` children repeat the check on the full-size output after their measurement.
+* **Each reader is written the way its docs recommend.** The input is the same byte array for all of them, handed over as a fresh read-only `MemoryStream` per invocation (created in `[IterationSetup]`, outside the timing), so nobody pays for disk I/O and a reader that disposes its stream does no harm. Every reader skips the header row and counts data rows only.
+  * **SheetStream ReadRows:** `ExcelReader.Open(stream, leaveOpen: true)` and `ReadRows("Data")`, the untyped streaming path; numbers arrive as `double`, shared strings resolved, the date column as `DateTime`.
+  * **SheetStream Read&lt;T&gt;:** `Read<LongRow>("Data")`, the typed path that maps the header row to properties by name.
+  * **MiniExcel Query&lt;T&gt;:** `stream.Query<LongRow>(sheetName: "Data")`, with the same `LongRow` class the MiniExcel writer uses.
+  * **MiniExcel Query (dynamic):** `stream.Query(useHeaderRow: true, sheetName: "Data")`, one `IDictionary<string, object>` per row keyed by header caption.
+  * **ExcelDataReader:** `ExcelReaderFactory.CreateReader(stream)` and the `Read()` / `GetValue(i)` loop from its README. Its README also asks .NET Core applications to register `CodePagesEncodingProvider` at start-up; that is done once in a static constructor. It is only needed for binary .xls files, which this suite never opens, but it is the documented set-up step.
+  * **ClosedXML:** `new XLWorkbook(stream)`, then `RowsUsed()` / `CellsUsed()` and `Cell(1).GetDouble()`.
+  * **EPPlus 4.5.3.3:** `new ExcelPackage(stream)`, then a `Cells[r, c].Value` loop over `Dimension`. Each `Cells[r, c]` allocates an `ExcelRange`; there is no cheaper documented path on the read side.
+  * **NPOI XSSF:** `new XSSFWorkbook(stream)`, then `GetRow` / `GetCell` over `LastRowNum`.
+  * **NPOI SAX:** `OPCPackage.Open(stream)`, `XSSFReader`, `ReadOnlySharedStringsTable` and an `ISheetContentsHandler`, driven through `XSSFEventBasedExcelExtractor.ProcessSheet`, which is the only parser entry point NPOI exposes for its port of POI's event model. The handler delivers every cell as a *formatted string*, so `Id` is parsed back from text; that cost is inherent to the API. The package is closed with `Revert()` because `OPCPackage.Open(Stream)` opens read-write and `Close()` would try to save.
+* **BenchmarkDotNet job:** `[MemoryDiagnoser]` with `SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)` for Long, Wide and Read, and a lighter `SimpleJob(launchCount: 1, warmupCount: 1, iterationCount: 3)` for Million and VeryWide, where the in-memory libraries take 20 to 60 seconds per write. One invocation per iteration throughout. `[IterationSetup]` empties the buffer (or opens the input stream), outside the measurement. Each benchmark runs in its own process, as BenchmarkDotNet does by default, on the default runtime settings (workstation GC, tiered compilation).
+* **Correctness guard:** every write benchmark's `GlobalSetup` writes a small case (50 rows for the Long-shaped scenarios, 40 x 40 for the Wide-shaped ones) with every library. It reads each output back with the Open XML SDK's SAX reader and throws if the row count or the number of cells in the last row is wrong. The read benchmark's `GlobalSetup` writes a 50-row file and throws if any reader's checksum differs from the generator's figure (`Checksum.Expected`, computed from the data definition, not from any reader). The `--peak` children repeat both checks on the full-size data after their measurement.
 * **Peak working set (`--peak`):** the executable starts itself again with `--peak-child <library> <scenario>`. Each child does the following:
-  1. Builds the same input.
-  2. Writes once, cold, including JIT.
+  1. Builds the same input (for Read: writes the 100k-row file with SheetStream into memory).
+  2. Writes (or reads) once, cold, including JIT.
   3. Reads `Process.PeakWorkingSet64`.
-  4. Only then verifies the full-size output.
+  4. Only then verifies the full-size output (or compares the checksum).
 
-  Each case runs in 3 fresh processes and the median is reported. A **Baseline** child builds the input and writes nothing. It shows the floor every library sits on: the .NET runtime, the benchmark executable and the input data. The Baseline child never calls a writer, so the libraries' assemblies are not loaded or JIT-compiled in it. Each library's "above baseline" figure therefore includes loading and compiling its own code. The output buffer's pages count only once they are written, so each library's figure includes roughly its output size.
+  Each case runs in 3 fresh processes and the median is reported. A **Baseline** child builds the input and calls no library. It shows the floor every library sits on: the .NET runtime, the benchmark executable and the input data (for Read, the input file as well). The Baseline child never calls a writer or reader, so the libraries' assemblies are not loaded or JIT-compiled in it. Each library's "above baseline" figure therefore includes loading and compiling its own code. The output buffer's pages count only once they are written, so each writer's figure includes roughly its output size.
 
 ## Machine
 
@@ -151,6 +181,22 @@ Each figure is the median of 3 fresh processes. "Cold write time" is a single wr
 | NPOI XSSF | 547.7 | 516.0 | 11,728 | 4,349 | yes (1,000 rows x 1,000 cells) |
 | NPOI SXSSF | 136.4 | 104.8 | 3,669 | 4,353 | yes (1,000 rows x 1,000 cells) |
 
+### Million: 1,000,000 rows x 10 columns (BenchmarkDotNet)
+
+Results pending: run `dotnet run -c Release -- --filter '*Million*'` on the benchmark machine and paste `BenchmarkDotNet.Artifacts/results/SheetStream.Benchmarks.MillionBenchmarks-report-github.md` here.
+
+### VeryWide: 1,000 rows x 10,000 columns (BenchmarkDotNet)
+
+Results pending: run `dotnet run -c Release -- --filter '*VeryWide*'` on the benchmark machine and paste `BenchmarkDotNet.Artifacts/results/SheetStream.Benchmarks.VeryWideBenchmarks-report-github.md` here.
+
+### Read: 100,000 rows x 10 columns (BenchmarkDotNet)
+
+Results pending: run `dotnet run -c Release -- --filter '*Read*'` on the benchmark machine and paste `BenchmarkDotNet.Artifacts/results/SheetStream.Benchmarks.ReadBenchmarks-report-github.md` here.
+
+### Peak working set for Million, VeryWide and Read (`--peak`)
+
+Results pending: run `dotnet run -c Release -- --peak Million VeryWide Read` on the benchmark machine and paste the three tables here. For Read, the "Output size" column becomes "Input size" (the same 5,798 KB file for every reader) and "rows verified" becomes "checksum verified".
+
 ### What each library actually wrote (`--verify`, small Long case)
 
 | Library | Header bold | Price cell type / format | Date cell type / format |
@@ -167,6 +213,10 @@ Built-in number format 4 is `#,##0.00`, so every library stores the same values 
 * By default, MiniExcel also adds an auto-filter and freezes the first row on the Long sheet.
 
 Both are small amounts of extra XML and were left at MiniExcel's defaults.
+
+### What each reader read (`--verify`, 50-row Long file written by SheetStream)
+
+Every reader returns the same checksum (1,775 for 50 rows: the Ids 1..50 sum to 1,275, plus 500 non-empty cells), which is also what the generator predicts. The full 100,000-row file gives 5,001,050,000 for every reader in the `--peak Read` children.
 
 ## Reading the results honestly
 
@@ -194,7 +244,9 @@ Both are small amounts of extra XML and were left at MiniExcel's defaults.
 
 ## Caveats
 
-* These are write benchmarks only; reading is not measured.
+* The read benchmarks read a file that SheetStream wrote. Every reader gets the same bytes, but a file from Excel or another writer could lay out shared strings, styles or cell references differently, and a reader tuned for those files might rank differently. The 10-column file is also small enough to fit in memory many times over; a reader's advantage on files that do not is not measured here.
+* The read checksum needs the `Id` value and a null check per cell. For the typed readers (`Read<T>`, `Query<T>`) that means the mapping cost of all 10 properties, which is the price of using the typed API; the untyped readers only touch the values they are handed.
 * The output stays in memory. Writing to a `FileStream` adds the same disk cost to every library, except NPOI SXSSF, which already does disk I/O for its temp file.
+* Million and VeryWide use a lighter job (1 warm-up, 3 measured iterations) than Long and Wide, so their error bars are wider; treat differences of a few percent as noise.
 * MiniExcel's Wide path boxes every double into a per-row dictionary. That is MiniExcel's documented shape for dynamic columns, but it explains much of its Wide allocation. An `IDataReader` source might allocate less; it was not measured.
 * Every `GlobalSetup` runs the small correctness check for **all** libraries, so each benchmark process has every library's assemblies loaded and JIT-warmed. This affects neither the timed region nor the allocation figures.

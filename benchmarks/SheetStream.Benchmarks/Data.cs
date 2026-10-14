@@ -62,6 +62,15 @@ public static class Data
     /// <summary>Columns in the Wide scenario.</summary>
     public const int WideColumns = 1_000;
 
+    /// <summary>Rows in the Million scenario (same columns as Long).</summary>
+    public const int MillionRows = 1_000_000;
+
+    /// <summary>Rows in the VeryWide scenario.</summary>
+    public const int VeryWideRows = 1_000;
+
+    /// <summary>Columns in the VeryWide scenario; with <see cref="VeryWideRows"/> that is the same 10M cells as Million.</summary>
+    public const int VeryWideColumns = 10_000;
+
     /// <summary>Excel number format applied to the three double columns of the Long scenario.</summary>
     public const string NumberFormat = "#,##0.00";
 
