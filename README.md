@@ -254,6 +254,15 @@ foreach (var link in reader.ReadHyperlinks("Report"))         // Url for web/mai
 
 Merged ranges and hyperlinks are read from the sheet's trailer only, so the rows are skipped and the call is instant even on a million-row sheet.
 
+```csharp
+// Async reading (.NET 8+): buffer an upload without blocking, then stream rows or objects.
+using var reader = await ExcelReader.OpenAsync(Request.Body, cancellationToken: ct); // Non-seekable: copied async, >64 MB spills to a temp file
+await foreach (var row in reader.ReadRowsAsync("Products", ct))                      // Cancellation checked between rows
+    Console.WriteLine($"{row.GetString(0)} = {row.GetDouble(2)}");
+await foreach (var p in reader.ReadAsync<Product>("Products", ct)) db.Products.Add(p); // Or ReadAsync(sheet, Product.SheetMapper, ct) for AOT
+var table = await reader.ReadDataTableAsync("Products", firstRowIsHeader: true, ct);
+```
+
 ### Design-time analyzer
 
 The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001** layout (`FreezePanes`, `Column`, `TabColor`...) set after rows were written, **SS0002** `Row()` and `Cells[]` mixed on one sheet, **SS0003** rows written out of order. It only reports what it can prove inside one method, so a warning means the code will throw. Nothing to install, nothing added to your output. Details, before/after snippets and how to suppress: [docs/analyzers.md](docs/analyzers.md).
@@ -271,7 +280,7 @@ The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001**
 | `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` |
 | `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
 | `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
-| `ExcelReader` | `Open`, `SheetNames`, `ReadRows`, `Read<T>`, `ReadDataTable`, `ReadMergedRanges`, `ReadHyperlinks` |
+| `ExcelReader` | `Open` / `OpenAsync`, `SheetNames`, `ReadRows` / `ReadRowsAsync`, `Read<T>` / `ReadAsync<T>`, `ReadDataTable` / `ReadDataTableAsync`, `ReadMergedRanges`, `ReadHyperlinks` |
 | Templates | `ExcelPackage.OpenTemplate(template, output)`, `Worksheets.Open(name)`, `Worksheet.TemplateStyle(cell)`, `ReplacedTemplateRows` |
 | Editing | `ExcelPackage.Edit(path)` / `Edit(input, output)`, `Worksheets.Edit(name)`, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()` |
 | `SheetStream.AspNetCore` | `ExcelResults.Excel(fileName, build)`, `Results.Extensions.Excel(...)`, `ExcelResult` |
