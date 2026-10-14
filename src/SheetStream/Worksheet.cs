@@ -32,7 +32,7 @@ namespace SheetStream
     /// A worksheet being streamed into the package. Rows are written forward-only through
     /// <see cref="Row()"/> / <see cref="Row(int)"/>; layout settings that the schema places before the
     /// sheet data (column widths, frozen panes, tab colour) must be declared before the first row, unless
-    /// <see cref="AutoFitColumns"/> or random-access <see cref="Cells"/> are used, which defer the header.
+    /// <see cref="AutoFitColumns(double, double)"/> or random-access <see cref="Cells"/> are used, which defer the header.
     /// </summary>
     /// <remarks>
     /// The worksheet XML is produced in three phases: a header (<c>sheetPr</c>, <c>sheetViews</c>,

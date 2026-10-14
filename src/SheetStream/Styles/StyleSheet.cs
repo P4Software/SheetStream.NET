@@ -50,6 +50,9 @@ namespace SheetStream.Styles
         private readonly List<DxfSpec> _dxfs = new List<DxfSpec>();
         private readonly Dictionary<DxfSpec, int> _dxfIndex = new Dictionary<DxfSpec, int>();
 
+        // AutoFit's display-text estimators, one per number format id (see DisplayFormat).
+        private readonly Dictionary<int, NumberDisplayFormat> _displayFormats = new Dictionary<int, NumberDisplayFormat>();
+
         private CellStyle? _dateStyle;
         private CellStyle? _dateTimeStyle;
         private CellStyle? _durationStyle;
@@ -178,20 +181,61 @@ namespace SheetStream.Styles
         }
 
         /// <summary>
-        /// Approximate width multiplier of a style's font relative to Calibri 11 regular, used by AutoFit.
-        /// Bold text is about 10% wider; size scales linearly.
+        /// Font traits AutoFit needs for a style: whether it is bold, and its size relative to the 11 pt default
+        /// (glyph widths scale linearly with size). A style whose font came from a template reports regular 11 pt,
+        /// because the template's font records are not parsed.
         /// </summary>
-        internal double WidthFactor(int styleId)
+        internal void FontTraits(int styleId, out bool bold, out double sizeFactor)
         {
-            if (styleId <= 0 || !TryGetXf(styleId, out var xf)) return 1.0;
+            bold = false;
+            sizeFactor = 1.0;
+            if (styleId <= 0 || !TryGetXf(styleId, out var xf)) return;
             var local = xf.FontId - _fontBase;
-            if (local < 0 || local >= _fonts.Count) return 1.0; // A template font: metrics unknown.
+            if (local < 0 || local >= _fonts.Count) return;
             var font = _fonts[local];
-            return font.Size / 11.0 * (font.Bold ? 1.1 : 1.0);
+            bold = font.Bold;
+            sizeFactor = font.Size / 11.0;
         }
 
         /// <summary>Number format id of a style, used by AutoFit to estimate the displayed width of numbers.</summary>
         internal int NumberFormatId(int styleId) => styleId > 0 && TryGetXf(styleId, out var xf) ? xf.NumFmtId : 0;
+
+        /// <summary>
+        /// The display-text estimator for a style's number format, used by AutoFit to measure what a numeric
+        /// cell shows. Parsed once per number format id and cached.
+        /// </summary>
+        internal NumberDisplayFormat DisplayFormat(int styleId)
+        {
+            var numFmtId = NumberFormatId(styleId);
+            if (numFmtId == 0) return NumberDisplayFormat.General;
+            if (!_displayFormats.TryGetValue(numFmtId, out var format))
+            {
+                format = NumberDisplayFormat.Parse(NumberFormatCode(numFmtId));
+                _displayFormats[numFmtId] = format;
+            }
+            return format;
+        }
+
+        /// <summary>Format code behind a number format id: built-in, registered here, or read from the template.</summary>
+        private string? NumberFormatCode(int numFmtId)
+        {
+            switch (numFmtId)
+            {
+                // The built-in short date and date-time render with the Windows locale, not their nominal code;
+                // en-US shows a four-digit year ("10/13/2026"), the widest common case.
+                case 14: return "m/d/yyyy";
+                case 22: return "m/d/yyyy h:mm";
+                // Legacy currency and accounting ids a template may carry; ECMA-376 leaves their codes implementation-defined.
+                case 5: case 7: return "$#,##0";
+                case 6: case 8: return "$#,##0.00";
+                case 41: case 43: return "_(* #,##0.00_)";
+                case 42: case 44: return "_($* #,##0.00_)";
+            }
+            foreach (var pair in BuiltInNumberFormats) if (pair.Value == numFmtId) return pair.Key;
+            foreach (var pair in _customNumberFormats) if (pair.Key == numFmtId) return pair.Value;
+            foreach (var pair in _numberFormatIndex) if (pair.Value == numFmtId) return pair.Key;
+            return null;
+        }
 
         /// <summary>Looks up a cell format by its global index, whether it came from the template or was added here.</summary>
         private bool TryGetXf(int id, out XfSpec xf)

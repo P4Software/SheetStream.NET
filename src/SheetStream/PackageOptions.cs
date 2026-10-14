@@ -1,3 +1,4 @@
+using System;
 using System.IO.Compression;
 
 namespace SheetStream
@@ -28,6 +29,19 @@ namespace SheetStream
         /// throws and the message points at streaming or templates instead. Default 200,000 cells.
         /// </summary>
         public int MaxEditableCells { get; set; } = 200_000;
+
+        /// <summary>
+        /// Text measurer used by <see cref="Worksheet.AutoFitColumns(double, double)"/> on every sheet of the
+        /// package: <c>(text, bold) =&gt; width</c>, where the width is in Excel's column unit, the width of one
+        /// digit of the default font (Calibri 11: 7 px at 96 dpi), so <c>"0000000000"</c> measures 10.
+        /// SheetStream then adds Excel's cell padding and scales for font size. <c>null</c> (default) uses the
+        /// built-in Calibri 11 glyph table, which reproduces Excel's own AutoFit to a few tenths of a unit for
+        /// Latin text. Plug in real font metrics (SkiaSharp, System.Drawing, ...) when the workbook uses another
+        /// font or non-Latin scripts; the delegate runs once per observed cell, so keep it cheap.
+        /// A per-sheet measurer passed to <see cref="Worksheet.AutoFitColumns(Func{string, bool, double}, double, double)"/>
+        /// takes precedence.
+        /// </summary>
+        public Func<string, bool, double>? TextMeasurer { get; set; }
 
         internal static PackageOptions Default => new PackageOptions();
     }

@@ -356,8 +356,8 @@ public class FeatureTests
         using var doc = OpenValidated(bytes);
         var cols = SheetXml(doc, "Fit").GetFirstChild<X.Columns>().Elements<X.Column>().ToDictionary(c => c.Min.Value, c => c.Width.Value);
         Assert.Equal(20, cols[1]);                       // Explicit width wins.
-        Assert.InRange(cols[2], 38, 45);                 // ~38 characters + padding.
-        Assert.InRange(cols[3], 6, 12);                  // "Big" at 16pt bold is scaled up.
+        Assert.InRange(cols[2], 33, 37);                 // 230 px of Calibri 11 text + padding, as Excel sizes it (~34.7).
+        Assert.InRange(cols[3], 4.5, 7);                 // "Big" at 16pt bold: 19 px scaled by 16/11, wider than the 11pt "1.5" below it.
         Assert.Equal(60, cols[4]);                       // Clamped to maxWidth.
         Assert.Equal(2, SheetXml(doc, "Fit").Descendants<X.Row>().Count());
     }

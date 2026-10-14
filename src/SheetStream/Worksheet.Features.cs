@@ -17,11 +17,23 @@ namespace SheetStream
         private readonly List<PivotTable> _pivotTables = new List<PivotTable>();
         private SheetProtection? _protection;
 
-        // AutoFit state: widest content seen per column, in Calibri-11 character units.
+        // AutoFit state: widest content seen per column, in digit units (the width of one Calibri 11 digit, see
+        // TextMeasure), before Excel's padding is added.
         private bool _autoFit;
         private double _autoFitMin;
         private double _autoFitMax;
+        private Func<string, bool, double>? _autoFitMeasure;
         private double[] _widths = new double[0];
+
+        /// <summary>
+        /// Excel lays cell text out about 3.6% wider than the hinted 96-dpi glyph advances add up to: ten digits
+        /// occupy 72.5 px in an auto-fitted column, not 70 (measured on Excel 2016 over every ASCII glyph).
+        /// Applied to the measured digit units so the widths written here match Excel's own AutoFit.
+        /// </summary>
+        private const double ExcelLayoutScale = 1.0357;
+
+        /// <summary>Pixels Excel adds around the text of a column: a 2 px margin each side plus the grid line.</summary>
+        private const int CellPaddingPixels = 5;
 
         // Widths of cells in the first rows, kept so that rows which later turn out to be table or filter
         // headers (LoadFromCollection adds its table after writing) can be padded for the drop-down button.
@@ -47,16 +59,51 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Sizes columns to their content when the sheet is saved. Call before the first row. Widths are
-        /// estimated from character counts (no font metrics are available without a graphics library), scaled
-        /// for bold and larger fonts, and clamped to [<paramref name="minWidth"/>, <paramref name="maxWidth"/>].
-        /// Columns given an explicit width keep it.
+        /// Sizes columns to their content when the sheet is saved, the way Excel's own AutoFit does. Call before
+        /// the first row. Each cell is measured as it will display (formatted numbers, dates, booleans, the
+        /// widest line of wrapped text) with a built-in Calibri 11 glyph table calibrated against Excel, bold
+        /// and larger fonts included; Excel's cell padding is added and the result is clamped to
+        /// [<paramref name="minWidth"/>, <paramref name="maxWidth"/>]. Columns given an explicit width keep it.
         /// </summary>
         /// <remarks>
+        /// <para>
+        /// The table covers ASCII and Latin-1; other scripts count one digit width per character (two for CJK).
+        /// For another default font or non-Latin text, supply real metrics with
+        /// <see cref="AutoFitColumns(Func{string, bool, double}, double, double)"/> or
+        /// <see cref="PackageOptions.TextMeasurer"/>.
+        /// </para>
+        /// <para>
         /// Column widths sit before the data in the file, so this mode writes the rows to a temporary file and
         /// copies them in at save time. Memory stays flat; disk use roughly equals the uncompressed sheet size.
+        /// </para>
         /// </remarks>
-        public Worksheet AutoFitColumns(double minWidth = 6, double maxWidth = 80)
+        public Worksheet AutoFitColumns(double minWidth = 6, double maxWidth = 80) => AutoFitCore(null, minWidth, maxWidth);
+
+        /// <summary>
+        /// Sizes columns to their content using the application's own text measurer, for workbooks whose default
+        /// font is not Calibri 11 or whose text the built-in table cannot measure (Cyrillic, Arabic, Thai...).
+        /// </summary>
+        /// <param name="measure">
+        /// <c>(text, bold) =&gt; width</c> in Excel's column unit: the width of one digit of the default font,
+        /// so <c>"0000000000"</c> must return 10. Measure at the default size; SheetStream scales the result for
+        /// larger fonts and adds Excel's cell padding. Called once per cell, so it should be cheap.
+        /// </param>
+        /// <param name="minWidth">Smallest width a measured column gets.</param>
+        /// <param name="maxWidth">Largest width a measured column gets (Excel allows up to 255).</param>
+        /// <example>
+        /// <code>
+        /// using var paint = new SKPaint { Typeface = SKTypeface.FromFamilyName("Calibri"), TextSize = 11 * 96f / 72 };
+        /// var digit = paint.MeasureText("0");
+        /// sheet.AutoFitColumns((text, bold) => paint.MeasureText(text) / digit);
+        /// </code>
+        /// </example>
+        public Worksheet AutoFitColumns(Func<string, bool, double> measure, double minWidth = 6, double maxWidth = 80)
+        {
+            if (measure == null) throw new ArgumentNullException(nameof(measure));
+            return AutoFitCore(measure, minWidth, maxWidth);
+        }
+
+        private Worksheet AutoFitCore(Func<string, bool, double>? measure, double minWidth, double maxWidth)
         {
             if (minWidth < 0 || maxWidth > 255 || minWidth > maxWidth) throw new ArgumentOutOfRangeException(nameof(maxWidth), "Widths must satisfy 0 <= minWidth <= maxWidth <= 255.");
             EnsureNotSealed();
@@ -65,6 +112,7 @@ namespace SheetStream
             _autoFit = true;
             _autoFitMin = minWidth;
             _autoFitMax = maxWidth;
+            _autoFitMeasure = measure;
             return this;
         }
 
@@ -88,27 +136,45 @@ namespace SheetStream
                     Array.Copy(_widths, grown, _widths.Length);
                     _widths = grown;
                 }
-                var chars = LongestLine(text) * Workbook.Styles.WidthFactor(styleId);
-                if (chars > _widths[column]) _widths[column] = chars;
-                if (row <= EarlyRowLimit) _earlyWidths[(long)row << 16 | (uint)column] = chars;
+                Workbook.Styles.FontTraits(styleId, out var bold, out var sizeFactor);
+                var units = MeasureUnits(text, bold) * sizeFactor;
+                if (units > _widths[column]) _widths[column] = units;
+                if (row <= EarlyRowLimit) _earlyWidths[(long)row << 16 | (uint)column] = units;
             }
             foreach (var t in _tables)
                 if (t.Range.FromRow == row) t.CaptureHeader(column, text);
         }
 
-        private static int LongestLine(string text)
+        /// <summary>
+        /// Width of a cell's text in digit units: the sheet's measurer, else the package's, else the built-in
+        /// Calibri 11 table. A multi-line cell is as wide as its widest line.
+        /// </summary>
+        private double MeasureUnits(string text, bool bold)
         {
-            var longest = 0;
-            var current = 0;
-            foreach (var c in text)
+            var measure = _autoFitMeasure ?? Workbook.Package.Options.TextMeasurer;
+            if (measure == null) return TextMeasure.Measure(text, bold);
+            if (text.IndexOf('\n') < 0) return measure(text, bold);
+            var widest = 0.0;
+            foreach (var line in text.Split('\n'))
             {
-                if (c == '\n') { if (current > longest) longest = current; current = 0; }
-                else if (c != '\r') current++;
+                var w = measure(line.TrimEnd('\r'), bold);
+                if (w > widest) widest = w;
             }
-            return current > longest ? current : longest;
+            return widest;
         }
 
-        /// <summary>Turns measured character counts into column widths, leaving explicit widths alone.</summary>
+        /// <summary>
+        /// The width Excel stores for an auto-fitted column whose widest text measures <paramref name="digitUnits"/>:
+        /// <c>Truncate((textPixels + 5) / 7 * 256) / 256</c>, the column-width formula of ECMA-376 §18.3.1.13, with
+        /// the text laid out as Excel does (see <see cref="ExcelLayoutScale"/>).
+        /// </summary>
+        internal static double ExcelColumnWidth(double digitUnits)
+        {
+            var textPixels = digitUnits * TextMeasure.DigitWidthPixels * ExcelLayoutScale;
+            return Math.Truncate((textPixels + CellPaddingPixels) / TextMeasure.DigitWidthPixels * 256) / 256;
+        }
+
+        /// <summary>Turns measured digit units into column widths, leaving explicit widths alone.</summary>
         private void ApplyAutoFitWidths()
         {
             // Header cells of tables and AutoFilters need room for the drop-down button as well as the text.
@@ -132,8 +198,7 @@ namespace SheetStream
             {
                 if (_widths[c] <= 0) continue;
                 if (_columns.TryGetValue(c, out var existing) && existing.HasExplicitWidth) continue;
-                // About one character of padding plus a little for the filter button area, as Excel's own AutoFit leaves.
-                var width = Math.Min(_autoFitMax, Math.Max(_autoFitMin, _widths[c] + 2));
+                var width = Math.Min(_autoFitMax, Math.Max(_autoFitMin, ExcelColumnWidth(_widths[c])));
                 GetOrCreateColumn(c).SetAutoWidth(width);
             }
         }
