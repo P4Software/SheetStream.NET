@@ -56,12 +56,15 @@ public static class Guard
     /// </summary>
     public static GuardReport CheckSmall(ILibraryWriter writer, string scenario)
     {
+        // Million shares Long's shape and VeryWide shares Wide's, so the small case is the same for each pair;
+        // what differs between them (the row and column counts) is exactly what the small case leaves out.
+        bool longShape = Scenarios.IsLongShape(scenario);
         using var output = new ReusableOutput(1 << 20);
-        if (scenario == "Long") writer.WriteLong(output, Data.CreateLong(SmallLongRows));
+        if (longShape) writer.WriteLong(output, Data.CreateLong(SmallLongRows));
         else writer.WriteWide(output, Data.CreateWide(SmallWide, SmallWide));
         return Check(writer.Name, scenario, output,
-            scenario == "Long" ? SmallLongRows : SmallWide,
-            scenario == "Long" ? Data.LongHeaders.Length : SmallWide);
+            longShape ? SmallLongRows : SmallWide,
+            longShape ? Data.LongHeaders.Length : SmallWide);
     }
 
     /// <summary>
@@ -69,7 +72,7 @@ public static class Guard
     /// worksheet has the expected number of rows and the last row has the expected number of cells.
     /// </summary>
     /// <param name="library">Library name, for the error message.</param>
-    /// <param name="scenario">"Long" (header row + data) or "Wide" (data only).</param>
+    /// <param name="scenario">A Long-shaped scenario (header row + data) or a Wide-shaped one (data only); see <see cref="Scenarios.IsLongShape"/>.</param>
     /// <param name="output">The written package.</param>
     /// <param name="dataRows">Data rows written, excluding the header.</param>
     /// <param name="columns">Columns per row.</param>
@@ -115,13 +118,14 @@ public static class Guard
             }
         }
 
-        int expectedRows = scenario == "Long" ? dataRows + 1 : dataRows;
+        bool longShape = Scenarios.IsLongShape(scenario);
+        int expectedRows = longShape ? dataRows + 1 : dataRows;
         if (rows != expectedRows)
             throw new InvalidOperationException($"{library} {scenario}: expected {expectedRows} rows, found {rows}.");
         if (cellsInRow != columns)
             throw new InvalidOperationException($"{library} {scenario}: expected {columns} cells in the last row, found {cellsInRow}.");
 
-        if (scenario != "Long") return new GuardReport(rows, cellsInRow, false, "-", "-", "-", "-");
+        if (!longShape) return new GuardReport(rows, cellsInRow, false, "-", "-", "-", "-");
 
         var styles = wbPart.WorkbookStylesPart?.Stylesheet;
         return new GuardReport(rows, cellsInRow,

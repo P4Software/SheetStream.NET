@@ -24,6 +24,8 @@
          under the "OSMF EULA" (requireLicenseAcceptance, a maintenance fee for revenue-generating users above
          US$10,000/year), which, like EPPlus 5+, we do not accept on anyone's behalf. Pinned exactly. -->
     <PackageReference Include="NPOI" Version="[2.7.6]" />
+    <!-- Read benchmarks only. Latest stable (MIT). -->
+    <PackageReference Include="ExcelDataReader" Version="3.9.0" />
     <!-- Used only by the correctness guard to read every library's output back.
          ClosedXML 0.105.1 accepts DocumentFormat.OpenXml [3.1.1, 4.0.0). -->
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
