@@ -7,7 +7,7 @@ poor place to learn a rule.
 
 The SheetStream package therefore ships a Roslyn analyzer. It runs inside the compiler and the IDE and shows the
 three rules below as warnings while you type, with a message that says what to change. There is nothing to
-install: `dotnet add package SheetStream` is enough, and the analyzer adds nothing to your application's output.
+install: `dotnet add package SheetStream.NET` is enough, and the analyzer adds nothing to your application's output.
 
 | Id | Title | What it catches |
 |---|---|---|
@@ -161,4 +161,4 @@ To turn the rules into build errors, set the severity to `error` the same way, o
 ## Not what you expected?
 
 If a warning fires on code that runs fine, or does not fire on code that throws, please open an issue at
-<https://github.com/P4Software/SheetStream/issues> with the snippet. False positives are treated as bugs.
+<https://github.com/P4Software/SheetStream.NET/issues> with the snippet. False positives are treated as bugs.

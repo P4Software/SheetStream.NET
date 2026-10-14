@@ -83,11 +83,11 @@ jobs:
       - name: Generate SBOM
         run: |
           dotnet tool install --global Microsoft.Sbom.DotNetTool --version 4.1.13
-          sbom-tool generate -b artifacts -bc . -m sbom -pn SheetStream -pv "${GITHUB_REF_NAME#v}" -ps "P4 Software" -nsb https://p4.software/sbom -V Warning
-          cp sbom/_manifest/spdx_2.2/manifest.spdx.json "artifacts/SheetStream-${GITHUB_REF_NAME#v}.spdx.json"
+          sbom-tool generate -b artifacts -bc . -m sbom -pn SheetStream.NET -pv "${GITHUB_REF_NAME#v}" -ps "P4 Software" -nsb https://p4.software/sbom -V Warning
+          cp sbom/_manifest/spdx_2.2/manifest.spdx.json "artifacts/SheetStream.NET-${GITHUB_REF_NAME#v}.spdx.json"
 
       # Signed statement that these exact package files were produced by this workflow from this commit.
-      # Anyone can verify it with `gh attestation verify SheetStream.x.y.z.nupkg --owner P4Software`.
+      # Anyone can verify it with `gh attestation verify SheetStream.NET.x.y.z.nupkg --owner P4Software`.
       - name: Attest build provenance
         id: attest
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
@@ -97,7 +97,7 @@ jobs:
       # The same signed provenance, attached to the release as a Sigstore bundle so it can be checked
       # offline (and so scanners that look for a signature file next to the assets find one).
       - name: Attach the provenance bundle to the release assets
-        run: cp "${{ steps.attest.outputs.bundle-path }}" "artifacts/SheetStream-${GITHUB_REF_NAME#v}.intoto.jsonl"
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "artifacts/SheetStream.NET-${GITHUB_REF_NAME#v}.intoto.jsonl"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

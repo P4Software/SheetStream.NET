@@ -1,9 +1,9 @@
-# SheetStream
+# SheetStream.NET
 
 A zero-dependency, MIT-licensed .NET library for creating and reading Excel (`.xlsx`) files. Rows stream straight into the file, so 10 million cells write in seconds with flat memory.
 
 ```bash
-dotnet add package SheetStream
+dotnet add package SheetStream.NET
 dotnet add package SheetStream.AspNetCore   # optional: one-line Excel downloads
 ```
 
@@ -37,7 +37,7 @@ package.Save();
 - [Migrating from EPPlus](migrating-from-epplus.md): a real exporter converted line by line.
 - [Filling templates](templates.md): design in Excel, fill from code.
 - [API reference](api/SheetStream.yml): every public type, generated from the source.
-- [Benchmarks](https://github.com/P4Software/SheetStream/tree/main/benchmarks): reproducible comparisons with EPPlus, ClosedXML, MiniExcel and NPOI.
+- [Benchmarks](https://github.com/P4Software/SheetStream.NET/tree/main/benchmarks): reproducible comparisons with EPPlus, ClosedXML, MiniExcel and NPOI.
 
 ## Design in one paragraph
 

@@ -11,7 +11,7 @@ namespace SheetStream.Analyzers
         /// <summary>Category shown in the IDE's error list and used in <c>.editorconfig</c> severity rules.</summary>
         public const string Category = "SheetStream";
 
-        private const string HelpPage = "https://p4software.github.io/SheetStream/analyzers.html";
+        private const string HelpPage = "https://p4software.github.io/SheetStream.NET/analyzers.html";
 
         /// <summary>
         /// SS0001: a header-level setting (column widths, frozen panes, tab colour, gridlines, zoom, right-to-left,

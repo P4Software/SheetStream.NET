@@ -4,6 +4,10 @@ All notable changes to SheetStream. Versions follow [Semantic Versioning](https:
 
 ## 0.4.0 (2026-10-14)
 
+### Changed
+
+- **Package renamed to `SheetStream.NET`** (the repository is now `P4Software/SheetStream.NET`, the docs live at https://p4software.github.io/SheetStream.NET/). The C# namespace stays `SheetStream` and `SheetStream.AspNetCore` keeps its name, so upgrading is one package reference: `dotnet remove package SheetStream` then `dotnet add package SheetStream.NET`. The old `SheetStream` package stays on nuget.org at 0.3.0, marked as renamed.
+
 ### Added
 
 - **Edit small existing workbooks**: `ExcelPackage.Edit(path)` (in place, atomic replace) or `Edit(input, output)`, then `Worksheets.Edit(name)` loads the sheet into `Cells[...]`: read values, change cells, add rows, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()`. Untouched cells, rows, formulas (shared and array formulas included), charts, tables and other sheets are written back unchanged. Guarded by `PackageOptions.MaxEditableCells` (200,000 by default); large files keep using streaming or templates.
@@ -30,7 +34,7 @@ All notable changes to SheetStream. Versions follow [Semantic Versioning](https:
 - **Template filling**: `ExcelPackage.OpenTemplate(template, output)` and `Worksheets.Open(name)` stream rows into a workbook designed in Excel. Everything not touched is copied unchanged; tables, filters, data validations and conditional formats on the first data row stretch over the new rows; template styles are reusable with `TemplateStyle("D5")`; new styles append to the template's style table; the calculation chain is dropped and the workbook recalculates on open.
 - **Async loading** (.NET 8+): `Worksheet.LoadFromAsyncEnumerable(...)` streams an `IAsyncEnumerable<T>` such as an EF Core query, with cancellation.
 - **SheetStream.AspNetCore** package: `ExcelResults.Excel(...)` and `Results.Extensions.Excel(...)` return a streamed download from minimal APIs and controllers, with flat memory, accurate `Content-Length`, correct non-ASCII file names and no synchronous I/O.
-- **Documentation site** at https://p4software.github.io/SheetStream/ with guides and the API reference generated from the XML comments.
+- **Documentation site** at https://p4software.github.io/SheetStream.NET/ with guides and the API reference generated from the XML comments.
 - **Migration guide** from EPPlus, built on a real production exporter and compiled as a test.
 - **Benchmarks** project comparing SheetStream with EPPlus 4.5.3.3, ClosedXML, MiniExcel and NPOI.
 - Reader **fuzz tests**, code coverage in CI, `SECURITY.md` and Dependabot.

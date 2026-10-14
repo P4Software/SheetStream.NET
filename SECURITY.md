@@ -8,7 +8,7 @@ Security fixes are released for the latest minor version of SheetStream and Shee
 
 Please do not open a public issue for security problems.
 
-Report them privately through GitHub's private vulnerability reporting: https://github.com/P4Software/SheetStream/security/advisories/new (the **Report a vulnerability** button on the repository's **Security** tab). Include the SheetStream version, a minimal reproduction (code or a sample file), and the impact you observed.
+Report them privately through GitHub's private vulnerability reporting: https://github.com/P4Software/SheetStream.NET/security/advisories/new (the **Report a vulnerability** button on the repository's **Security** tab). Include the SheetStream version, a minimal reproduction (code or a sample file), and the impact you observed.
 
 What happens next:
 
@@ -20,7 +20,7 @@ Please give us that window before disclosing publicly. If you have not heard bac
 
 ## Verifying what you install
 
-Every release is built by the public `Release` workflow in this repository. Each package carries a signed build-provenance attestation (`gh attestation verify SheetStream.<version>.nupkg --owner P4Software`), and the GitHub release includes an SPDX software bill of materials. The packages have no runtime dependencies.
+Every release is built by the public `Release` workflow in this repository. Each package carries a signed build-provenance attestation (`gh attestation verify SheetStream.NET.<version>.nupkg --owner P4Software`), and the GitHub release includes an SPDX software bill of materials. The packages have no runtime dependencies.
 
 ## Scope notes
 
