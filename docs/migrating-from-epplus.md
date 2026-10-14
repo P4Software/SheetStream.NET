@@ -138,10 +138,15 @@ The file is built into a temporary file and streamed to the response, so memory 
 | EPPlus | SheetStream |
 |---|---|
 | `new ExcelPackage()` … `GetAsByteArray()` | `ExcelPackage.CreateBytes(wb => …)` |
+| `await package.GetAsByteArrayAsync()` with queries awaited between sheets | `await ExcelPackage.CreateBytesAsync(async wb => { … await db.QueryAsync(…) … })` |
 | `new ExcelPackage(file)` … `SaveAs(file)` | `ExcelPackage.Create(path)` … `Save()` |
 | `new ExcelPackage(templateFile)` to fill a template | `ExcelPackage.OpenTemplate(template, output)` + `Worksheets.Open("Sheet")` |
+| `new ExcelPackage(file)`, change cells, `Save()` (small files) | `ExcelPackage.Edit(path)` + `Worksheets.Edit("Sheet")` + `Cells[…]` |
 | `ws.Cells["A1"].LoadFromCollection(list, true)` | `ws.LoadFromCollection(list)` |
 | `ws.Cells["A1"].LoadFromDataTable(table, true)` | `ws.LoadFromDataTable(table)` |
+| `ws.Cells["A1"].LoadFromArrays(listOfObjectArrays)` | `ws.LoadFromArrays(listOfObjectArrays)` (first array = header row, styled with `HeaderStyle`) |
+| `ws.Cells[1, 1, 1, n].Style.Font.Bold = true` on a header row | `var bold = Styles.Create(o => o.Font.Bold = true); ws.Row(1).WriteCells(bold, headers)` |
+| `ws.Cells[ws.Dimension.Address].AutoFitColumns()` at the end | `ws.AutoFitColumns()` **before the first row** (it measures rows as they stream) |
 | `ws.Cells[r, c].Value = v` | `ws.Row(r).WriteCell(v)` or `ws.Cells[r, c].Value = v` |
 | `ws.Cells[r, c].Formula = "SUM(A1:A9)"` | `row.WriteFormula("SUM(A1:A9)")` |
 | `cell.Style.Numberformat.Format = "0.00%"` | `Styles.Create(o => o.NumberFormat = "0.00%")` |
@@ -164,16 +169,32 @@ The file is built into a temporary file and streamed to the response, so memory 
 
 These EPPlus features have no SheetStream equivalent today: formula calculation (`Calculate()`; SheetStream only writes cached results for simple aggregates, see `CacheFormulaResults`), pivot tables with calculated fields, grouping or slicers (plain pivots are supported and refreshed on open), sparklines, editing large arbitrary workbooks in place (small workbooks can be edited with `ExcelPackage.Edit`; large ones are filled as templates), VBA, encryption and digital signatures. If an exporter depends on one of them, keep that exporter on EPPlus 4.5.3.3 (LGPL) or another library.
 
-## After removing the EPPlus package
+## Things EPPlus did for you silently
 
-Removing EPPlus can break code that never called it. EPPlus 4.5.3.3 depends on `System.Text.Encoding.CodePages` and registers the code-page encoding provider when it loads. Other libraries in the same application may rely on that registration without declaring it; **ExcelDataReader** is the usual case, because legacy `.xls` files need code-page encodings. With EPPlus gone, those imports fail, sometimes silently with empty text.
+Removing the package can break code that never called it. These were found migrating a warehouse management system whose exports moved to SheetStream.
+
+### 1. It registered the code-page encoding provider
+
+EPPlus depends on `System.Text.Encoding.CodePages` and registers `CodePagesEncodingProvider` as a side effect: 4.5.3.3 when it loads, 5 and later as soon as `ExcelPackage` is touched, which the start-up licence call does. Other libraries in the same application rely on that registration without declaring it. **ExcelDataReader** is the usual case, because legacy `.xls` files need code-page encodings. With EPPlus gone, every import fails with:
+
+```
+System.ArgumentException: No data is available for encoding 1252.
+```
 
 Register the provider yourself at startup, before the first import:
 
 ```csharp
-// Program.cs, before building the app. On .NET Framework or netstandard targets add the
-// System.Text.Encoding.CodePages package; on .NET 8 it is part of the shared framework.
+// Program.cs, before building the host. On .NET 5+ the provider is part of the shared framework;
+// on .NET Framework or netstandard targets add the System.Text.Encoding.CodePages package.
 System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 ```
 
-Then run one `.xls` import in a test to prove it. This was found while migrating a warehouse system whose exports moved to SheetStream but whose imports stayed on ExcelDataReader. For `.xlsx` imports, `ExcelReader` needs no provider.
+Then run one `.xls` import in a test to prove it. For `.xlsx` imports, SheetStream's `ExcelReader` needs no provider.
+
+### 2. It let you AutoFit at the end
+
+EPPlus code calls `AutoFitColumns()` after the last row, when every value is known. SheetStream writes column widths before the data, so `sheet.AutoFitColumns()` must be called **before the first row**; it measures the rows as they stream past and writes the widths at save time. A straight port that keeps the call at the end throws, and the analyzer that ships in the package flags it in the IDE (SS0001).
+
+### 3. It wrote dates as raw serial numbers
+
+EPPlus, 4 through 8, writes a `DateTime` as its serial number with the General format, so a cell showed `45123.5` unless you set `Numberformat.Format`. SheetStream applies a built-in date style when you give none: `mm-dd-yy` for dates and `m/d/yy h:mm` for date-times, which Excel shows in the user's locale. Pass a style with your own format (`Styles.Create(o => o.NumberFormat = "yyyy-mm-dd")`, or `[SheetColumn(NumberFormat = "...")]` for `LoadFromCollection`) when the report needs a fixed format. Tell your users that date columns now look like dates.

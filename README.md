@@ -79,6 +79,8 @@ Need bytes for a web download, like EPPlus' `GetAsByteArray()`?
 
 ```csharp
 byte[] bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Export").LoadFromCollection(orders));
+byte[] bytes = await ExcelPackage.CreateBytesAsync(async wb =>            // Await a query per sheet
+    wb.Worksheets.Add("Export").LoadFromCollection(await db.Orders.ToListAsync()));
 ```
 
 ## 🧭 Feature tour
@@ -94,6 +96,7 @@ var result = sheet.LoadFromCollection(orders, new LoadOptions
 });
 sheet.LoadFromDataTable(dataTable);
 sheet.LoadFromDataReader(sqlCommand.ExecuteReader()); // Streams a large query row by row
+sheet.LoadFromArrays(listOfObjectArrays);              // First array is the header row (EPPlus LoadFromArrays)
 ```
 
 Control columns with attributes: `[SheetColumn("Invoice #", Order = 0, NumberFormat = "$#,##0.00")]`, `[SheetColumn(Ignore = true)]`, or `[DisplayName("...")]`. `IDictionary<string, object>` rows (ExpandoObject, Dapper) work too.

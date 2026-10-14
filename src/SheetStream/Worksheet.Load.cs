@@ -109,6 +109,41 @@ namespace SheetStream
         }
 
         /// <summary>
+        /// Writes rows given as arrays, the direct replacement for EPPlus' <c>Cells.LoadFromArrays</c>. With
+        /// <see cref="LoadOptions.PrintHeaders"/> (the default) the first array is the header row and gets
+        /// <see cref="LoadOptions.HeaderStyle"/>; every later array is a data row. Rows may be shorter than the
+        /// header (missing cells stay empty); longer rows have their extra values dropped, because a table or
+        /// filter needs a fixed column count. Values are written like <see cref="RowWriter.WriteCell(object?, CellStyle?)"/>.
+        /// </summary>
+        /// <example>
+        /// <code>
+        /// sheet.LoadFromArrays(new[] { new object?[] { "Sku", "Qty" }, new object?[] { "A-1", 3 } }, new LoadOptions { TableName = "Stock" });
+        /// </code>
+        /// </example>
+        public LoadResult LoadFromArrays(IEnumerable<object?[]> rows, LoadOptions? options = null)
+        {
+            if (rows == null) throw new ArgumentNullException(nameof(rows));
+            options ??= new LoadOptions();
+            using (var e = rows.GetEnumerator())
+            {
+                if (!e.MoveNext())
+                    return new LoadResult(CurrentRow + 1, CurrentRow, options.StartColumn, options.StartColumn - 1, 0);
+
+                // The first array sizes the sheet. Without headers it is data, so it must be written too.
+                var first = e.Current ?? new object?[0];
+                var headers = new string[first.Length];
+                for (var i = 0; i < headers.Length; i++)
+                    headers[i] = options.PrintHeaders
+                        ? (first[i] == null ? Internal.CellReference.ColumnLetters(options.StartColumn + i) : Convert.ToString(first[i], System.Globalization.CultureInfo.InvariantCulture) ?? "")
+                        : Internal.CellReference.ColumnLetters(options.StartColumn + i);
+                var pendingFirst = !options.PrintHeaders;
+                return LoadCore(headers, new CellStyle?[headers.Length], options,
+                    () => { if (pendingFirst) { pendingFirst = false; return true; } return e.MoveNext(); },
+                    i => e.Current != null && i < e.Current.Length ? e.Current[i] : null);
+            }
+        }
+
+        /// <summary>
         /// Writes everything an <see cref="IDataReader"/> returns, streaming row by row; the natural fit for
         /// exporting a large SQL query without materialising it.
         /// </summary>
