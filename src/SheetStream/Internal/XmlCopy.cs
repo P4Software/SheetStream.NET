@@ -67,26 +67,53 @@ namespace SheetStream.Internal
                 r.Read();
                 return;
             }
-            if (drop != null && drop(r))
+
+            // Iterative on purpose: a crafted template with thousands of nested elements would overflow the
+            // stack of a recursive copy, and a StackOverflowException kills the process with no chance to catch it.
+            var rootDepth = r.Depth;
+            var open = 0; // Elements started and not yet ended, relative to the subtree root.
+            do
             {
-                r.Skip();
-                return;
+                switch (r.NodeType)
+                {
+                    case XmlNodeType.Element:
+                        if (r.Depth - rootDepth > MaxDepth)
+                            throw new System.IO.InvalidDataException($"The template nests XML deeper than {MaxDepth} levels, which no Excel file does. It is damaged or crafted.");
+                        if (drop != null && drop(r))
+                        {
+                            r.Skip(); // Moves past the dropped element.
+                            if (open == 0) return;
+                            continue;
+                        }
+                        if (CopyStartElement(r, w, rewrite))
+                        {
+                            r.Read();
+                            if (open == 0) return; // An empty root element: done.
+                            continue;
+                        }
+                        open++;
+                        r.Read();
+                        continue;
+                    case XmlNodeType.EndElement:
+                        w.WriteFullEndElement();
+                        open--;
+                        r.Read();
+                        if (open == 0) return;
+                        continue;
+                    default:
+                        CopyNode(r, w);
+                        r.Read();
+                        continue;
+                }
             }
-            var depth = r.Depth;
-            if (CopyStartElement(r, w, rewrite))
-            {
-                r.Read();
-                return;
-            }
-            r.Read();
-            while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == depth))
-            {
-                if (r.NodeType == XmlNodeType.Element) CopySubtree(r, w, rewrite, drop);
-                else { CopyNode(r, w); r.Read(); }
-            }
-            w.WriteFullEndElement();
-            r.Read();
+            while (!r.EOF);
         }
+
+        /// <summary>
+        /// Deepest nesting accepted below a copied element. Real SpreadsheetML parts nest about a dozen levels
+        /// (DrawingML in extension lists a little more); anything far beyond that is a malformed or hostile file.
+        /// </summary>
+        public const int MaxDepth = 256;
 
         /// <summary>Copies a single non-element node (text, whitespace, comment, processing instruction).</summary>
         public static void CopyNode(XmlReader r, XmlWriter w)

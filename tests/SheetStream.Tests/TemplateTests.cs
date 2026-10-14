@@ -162,6 +162,31 @@ public class TemplateTests
     }
 
     [Fact]
+    public void DeeplyNestedTemplate_IsRejectedWithoutCrashing()
+    {
+        // 100,000 nested elements after sheetData: a recursive copy would overflow the stack and kill the process.
+        var template = BuildTemplate();
+        var ms = new MemoryStream();
+        ms.Write(template, 0, template.Length);
+        using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Update, leaveOpen: true))
+        {
+            var entry = zip.GetEntry("xl/worksheets/sheet1.xml")!;
+            string xml;
+            using (var sr = new StreamReader(entry.Open())) xml = sr.ReadToEnd();
+            entry.Delete();
+            var bomb = new System.Text.StringBuilder("<extLst>");
+            for (var i = 0; i < 100_000; i++) bomb.Append("<a>");
+            for (var i = 0; i < 100_000; i++) bomb.Append("</a>");
+            bomb.Append("</extLst>");
+            using var w = new StreamWriter(zip.CreateEntry("xl/worksheets/sheet1.xml").Open());
+            w.Write(xml.Replace("</worksheet>", bomb + "</worksheet>"));
+        }
+
+        var ex = Record.Exception(() => Fill(ms.ToArray(), p => p.Workbook.Worksheets.Open("Lines").Row(5).WriteCell("x")));
+        Assert.True(ex is InvalidDataException || ex is System.Xml.XmlException, $"Expected a clear rejection, got {ex?.GetType().Name}: {ex?.Message}");
+    }
+
+    [Fact]
     public void OpenTemplate_RefusesToOverwriteTheTemplate()
     {
         var path = Path.Combine(Path.GetTempPath(), "ss-template-" + Guid.NewGuid() + ".xlsx");
