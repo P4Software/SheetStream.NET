@@ -20,10 +20,12 @@ namespace SheetStream.Internal
 
     /// <summary>
     /// Compact record of the values written to a worksheet so far, kept only when the sheet caches formula
-    /// results. One growable <c>double[]</c> per column, indexed by row, so a numeric cell costs 8 bytes. The
-    /// three non-numeric states are stored in the same slot as NaN values with distinct payloads, which is why
-    /// no second array is needed: a real NaN is never recorded because the writer turns NaN and infinities
-    /// into <c>#NUM!</c> error cells.
+    /// results. Each column is a set of fixed-size pages of <c>double</c> allocated on demand, so a numeric
+    /// cell in a dense export costs 8 bytes, while a single cell at row 1,000,000 costs one page (8 KB)
+    /// rather than an 8 MB array. That bound matters in edit mode, where the rows come from a file the
+    /// application did not write. The three non-numeric states are stored in the same slot as NaN values
+    /// with distinct payloads, which is why no second array is needed: a real NaN is never recorded because
+    /// the writer turns NaN and infinities into <c>#NUM!</c> error cells.
     /// </summary>
     internal sealed class FormulaValueStore
     {
@@ -35,7 +37,14 @@ namespace SheetStream.Internal
         private static readonly double TextValue = BitConverter.Int64BitsToDouble(TextBits);
         private static readonly double UnknownValue = BitConverter.Int64BitsToDouble(UnknownBits);
 
-        private double[]?[] _columns = new double[]?[32];
+        // 1,024 rows per page: 8 KB, small enough that a stray far-away cell is cheap and large enough that a
+        // dense column of a million rows needs only ~1,000 page references.
+        private const int PageShift = 10;
+        private const int PageSize = 1 << PageShift;
+        private const int PageMask = PageSize - 1;
+
+        // Column -> pages of that column -> values. Both outer levels grow by doubling, capped at the sheet limits.
+        private double[]?[]?[] _columns = new double[]?[]?[32];
 
         // Rows whose content came from somewhere the writer did not see (copied template rows). A bit per row.
         private ulong[] _unknownRows = new ulong[0];
@@ -55,9 +64,12 @@ namespace SheetStream.Internal
             value = 0;
             if (IsRowUnknown(row)) return FormulaCellState.Unknown;
             if (column >= _columns.Length) return FormulaCellState.Empty;
-            var cells = _columns[column];
-            if (cells == null || row >= cells.Length) return FormulaCellState.Empty;
-            var v = cells[row];
+            var pages = _columns[column];
+            var pageIndex = row >> PageShift;
+            if (pages == null || pageIndex >= pages.Length) return FormulaCellState.Empty;
+            var page = pages[pageIndex];
+            if (page == null) return FormulaCellState.Empty;
+            var v = page[row & PageMask];
             if (!double.IsNaN(v))
             {
                 value = v;
@@ -87,27 +99,35 @@ namespace SheetStream.Internal
             return word < _unknownRows.Length && (_unknownRows[word] & (1UL << (row & 63))) != 0;
         }
 
-        /// <summary>Returns the slot for a cell, growing the column array and the column's row array as needed.</summary>
+        /// <summary>Returns the slot for a cell, growing the column list, the column's page list and the page as needed.</summary>
         private ref double Slot(int row, int column)
         {
             if (column >= _columns.Length)
             {
-                var grown = new double[]?[Math.Min(CellReference.MaxColumns + 1, Math.Max(column + 1, _columns.Length * 2))];
+                var grown = new double[]?[]?[Math.Min(CellReference.MaxColumns + 1, Math.Max(column + 1, _columns.Length * 2))];
                 Array.Copy(_columns, grown, _columns.Length);
                 _columns = grown;
             }
-            var cells = _columns[column];
-            if (cells == null || row >= cells.Length)
+
+            var pages = _columns[column];
+            var pageIndex = row >> PageShift;
+            if (pages == null || pageIndex >= pages.Length)
             {
-                // Doubling keeps the amortised cost flat; the tail is filled with the Empty sentinel because a
-                // default 0.0 would read as a legitimate number.
-                var oldLength = cells?.Length ?? 0;
-                var grown = new double[Math.Min(CellReference.MaxRows + 1, Math.Max(row + 1, Math.Max(oldLength * 2, 256)))];
-                if (cells != null) Array.Copy(cells, grown, oldLength);
-                for (var i = oldLength; i < grown.Length; i++) grown[i] = EmptyValue;
-                _columns[column] = cells = grown;
+                var oldLength = pages?.Length ?? 0;
+                var grown = new double[]?[Math.Min((CellReference.MaxRows >> PageShift) + 1, Math.Max(pageIndex + 1, Math.Max(oldLength * 2, 4)))];
+                if (pages != null) Array.Copy(pages, grown, oldLength);
+                _columns[column] = pages = grown;
             }
-            return ref cells[row];
+
+            var page = pages[pageIndex];
+            if (page == null)
+            {
+                // A fresh page is filled with the Empty sentinel because a default 0.0 would read as a legitimate number.
+                page = new double[PageSize];
+                for (var i = 0; i < page.Length; i++) page[i] = EmptyValue;
+                pages[pageIndex] = page;
+            }
+            return ref page[row & PageMask];
         }
     }
 }
