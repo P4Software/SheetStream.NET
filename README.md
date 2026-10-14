@@ -171,7 +171,8 @@ File previews, Quick Look, some mobile viewers and `ExcelReader` show formula ce
 ### Layout, printing and protection
 
 ```csharp
-sheet.AutoFitColumns();                       // Widths sized to content at save time
+sheet.AutoFitColumns();                       // Widths measured like Excel's own AutoFit, at save time
+sheet.AutoFitColumns((text, bold) => paint.MeasureText(text) / digitWidth); // Or plug in real font metrics
 sheet.TabColor = "#C00000";
 sheet.ShowGridLines = false;
 sheet.Columns(5, 8).SetOutlineLevel(1);       // Collapsible column group
@@ -187,6 +188,8 @@ sheet.Protect("password", o => o.AllowSort = true);   // Salted SHA-512, like Ex
 workbook.Protect("password");                         // Lock the sheet structure
 sheet.Visibility = SheetVisibility.Hidden;
 ```
+
+`AutoFitColumns()` sizes columns the way Excel's AutoFit does: each cell is measured as displayed (formatted numbers, dates, bold, font size) with a Calibri 11 glyph table calibrated against Excel, so "Description" comes out 11.2 wide and ten digits 11.1. For another default font or non-Latin text, pass a measurer (`sheet.AutoFitColumns((text, bold) => ...)` or `PackageOptions.TextMeasurer`) that returns widths in Excel's column unit: one digit of the default font, so `"0000000000"` must measure 10.
 
 ### Fill templates designed in Excel
 
