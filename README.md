@@ -30,6 +30,8 @@ dotnet add package SheetStream.AspNetCore   # optional: one-line Excel downloads
 
 Full documentation and API reference: **https://p4software.github.io/SheetStream/**
 
+Try it in your browser without installing anything: **[DotNetFiddle: write a styled Excel file and read it back](https://dotnetfiddle.net/BR59ju)**.
+
 ## 💻 Quick Start
 
 ```csharp
@@ -174,6 +176,21 @@ package.Save();
 
 Logos, header styles, formulas, charts and print settings come from the template. Tables, filters, validations and conditional formats that start on the first data row stretch over the new rows, and formulas like `=SUM(Lines[Amount])` are recalculated when the file opens. See [Filling templates](docs/templates.md).
 
+### Edit a small existing workbook
+
+```csharp
+using var package = ExcelPackage.Edit("budget.xlsx");            // In place; or Edit(input, output)
+var sheet = package.Workbook.Worksheets.Edit("Summary");
+var current = sheet.Cells["B4"].Value;                            // Typed: double, DateTime, string, bool...
+sheet.Cells["B4"].Value = 1400;                                   // Keeps the cell's number format
+sheet.Cells["C4"].Formula = "B4*1.21";
+var next = sheet.Cells.Dimension.LastRow + 1;
+sheet.Cells[next, 1].Value = "Added by code";
+package.Save();                                                   // Atomic replace; the original is untouched if saving fails
+```
+
+Untouched cells, rows, charts, pictures, tables and other sheets are written back exactly as they were, and formulas recalculate on open. This is meant for small files (default limit 200,000 cells per sheet, `PackageOptions.MaxEditableCells`); large files keep using streaming or templates. See [Editing existing workbooks](docs/editing-workbooks.md).
+
 ### Async and ASP.NET Core
 
 ```csharp
@@ -212,6 +229,23 @@ DataTable table = reader.ReadDataTable("Products");
 
 Dates come back as `DateTime` (built-in and custom date formats, 1904 date system included), elapsed times as `TimeSpan`, errors as `ExcelErrorValue`, and formula cells as their cached result.
 
+```csharp
+foreach (var merge in reader.ReadMergedRanges("Report"))      // e.g. A1:D1
+    Console.WriteLine($"{merge.Range} covers B1: {merge.Contains(1, 2)}");
+foreach (var link in reader.ReadHyperlinks("Report"))         // Url for web/mail links, Location for in-workbook links
+    Console.WriteLine($"{link.Address}: {link.Url ?? link.Location} ({link.Tooltip})");
+```
+
+Merged ranges and hyperlinks are read from the sheet's trailer only, so the rows are skipped and the call is instant even on a million-row sheet.
+
+### Design-time analyzer
+
+The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001** layout (`FreezePanes`, `Column`, `TabColor`...) set after rows were written, **SS0002** `Row()` and `Cells[]` mixed on one sheet, **SS0003** rows written out of order. It only reports what it can prove inside one method, so a warning means the code will throw. Nothing to install, nothing added to your output. Details, before/after snippets and how to suppress: [docs/analyzers.md](docs/analyzers.md).
+
+### Web sample
+
+[`samples/SheetStream.Sample.Web`](samples/SheetStream.Sample.Web) is a minimal API that streams a 50,000-row styled export (`GET /orders.xlsx?rows=N`) and a `Cells[...]` summary with charts (`GET /report.xlsx`) through `ExcelResults.Excel`. Double-click `run.cmd` (or `dotnet run --project samples/SheetStream.Sample.Web --urls http://localhost:5178`) and open http://localhost:5178. Its README has the six lines to copy into your own app and how to call the same endpoint from a Blazor button.
+
 ## 📚 API overview
 
 | Area | What you get |
@@ -221,8 +255,9 @@ Dates come back as `DateTime` (built-in and custom date formats, 1904 date syste
 | `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` |
 | `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
 | `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
-| `ExcelReader` | `Open`, `SheetNames`, `ReadRows`, `Read<T>`, `ReadDataTable` |
+| `ExcelReader` | `Open`, `SheetNames`, `ReadRows`, `Read<T>`, `ReadDataTable`, `ReadMergedRanges`, `ReadHyperlinks` |
 | Templates | `ExcelPackage.OpenTemplate(template, output)`, `Worksheets.Open(name)`, `Worksheet.TemplateStyle(cell)`, `ReplacedTemplateRows` |
+| Editing | `ExcelPackage.Edit(path)` / `Edit(input, output)`, `Worksheets.Edit(name)`, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()` |
 | `SheetStream.AspNetCore` | `ExcelResults.Excel(fileName, build)`, `Results.Extensions.Excel(...)`, `ExcelResult` |
 
 ## ⚖️ How it compares
@@ -235,7 +270,7 @@ Dates come back as `DateTime` (built-in and custom date formats, 1904 date syste
 | Styles, tables, conditional formatting, validation | ✅ | ✅ | Limited | ✅ |
 | Charts and pictures | ✅ | Pictures only | ❌ | ✅ (common chart types) |
 | Fill a template designed in Excel | ✅ | ✅ | ✅ | ✅ (streaming) |
-| Edit and re-save any existing workbook | ✅ | ✅ | ❌ | ❌ |
+| Edit and re-save an existing workbook | ✅ | ✅ | ❌ | ✅ (small workbooks, in memory) |
 | Read workbooks | ✅ | ✅ | ✅ streaming | ✅ streaming |
 | Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
 | Pivot tables | ✅ | ✅ | ❌ | ❌ |
@@ -265,7 +300,7 @@ Full results, the wide-sheet scenario, methodology, machine details and how to r
 
 ### When to choose something else
 
-- **You need to open an arbitrary workbook, change some cells and save it.** SheetStream fills templates but does not edit workbooks in place. Use ClosedXML (MIT) or EPPlus.
+- **You need to edit large workbooks in place.** SheetStream edits small workbooks (`ExcelPackage.Edit`) by holding the edited sheet in memory; for big files it fills templates or streams. Use ClosedXML (MIT) or EPPlus when you must rewrite a large arbitrary workbook.
 - **You need formulas evaluated in .NET**, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
 - **You need pivot tables, sparklines, macros or encryption.** These are not supported.
 - **You only map simple objects to and from sheets** and want the smallest API. MiniExcel is excellent at that.
