@@ -14,7 +14,7 @@ SheetStream streams rows straight into the file instead of building the workbook
 
 * **⚖️ MIT licensed:** free for commercial use with no licence keys or seat counts.
 * **📦 Zero Dependencies:** Built entirely on native .NET `System.IO.Compression` and `System.Xml` APIs. Targets `netstandard2.0` and `net8.0`, so it runs on .NET Framework 4.7.2+ as well as modern .NET.
-* **⚡ High-Performance Streaming:** Rows go straight through an `XmlWriter` into the zip archive. 10 million cells write in about 5 seconds with a 41 MB peak working set, whether the sheet is long or wide.
+* **⚡ Streaming with flat memory:** rows go straight through an `XmlWriter` into the zip archive. In the [benchmarks](benchmarks/README.md) SheetStream allocates about 13× less than the next library, and 10 million cells write in about 5 seconds with a 41 MB peak working set, whether the sheet is long or wide.
 * **🧰 The features real reports use:** tables, charts, pictures, conditional formatting, data validation, hyperlinks, comments, rich text, protection, print setup, outlining, AutoFit, template filling, async loading, and a streaming reader for imports.
 * **🌐 ASP.NET Core ready:** the optional `SheetStream.AspNetCore` package returns a streamed Excel download in one line.
 * **✅ Verified output:** every feature is validated against the ECMA-376 schema with the Open XML SDK validator in CI, and showcase workbooks are opened in real Excel before each release. The reader is fuzz-tested against damaged files.
@@ -238,7 +238,28 @@ Dates come back as `DateTime` (built-in and custom date formats, 1904 date syste
 | Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
 | Pivot tables | ✅ | ✅ | ❌ | ❌ |
 
-Performance numbers are in [benchmarks/README.md](benchmarks/README.md), measured with BenchmarkDotNet against EPPlus 4.5.3.3 (its last LGPL version), ClosedXML, MiniExcel and NPOI. The suite is in the repository, so you can rerun it on your own hardware.
+### Benchmarks
+
+Writing 100,000 rows × 10 mixed, formatted columns (BenchmarkDotNet, .NET 8, Intel i7-8700, Windows 11):
+
+| Library | Time | Allocated | Peak memory above baseline | File size |
+|---|--:|--:|--:|--:|
+| **SheetStream** (default compression) | 1,013 ms | **27 MB** | **30 MB** | 5.7 MB |
+| **SheetStream** (`CompressionLevel.Fastest`) | **534 ms** | **27 MB** | 31 MB | 6.8 MB |
+| MiniExcel 1.46 | 596 ms | 343 MB | 37 MB | 7.2 MB |
+| NPOI 2.7.6 SXSSF | 2,040 ms | 704 MB | 65 MB | 5.4 MB |
+| EPPlus 4.5.3.3 | 2,287 ms | 390 MB | 184 MB | 5.5 MB |
+| ClosedXML 0.105 | 3,103 ms | 1,104 MB | 231 MB | 5.9 MB |
+| NPOI 2.7.6 XSSF | 4,658 ms | 1,186 MB | 545 MB | 5.2 MB |
+
+What the numbers say, including where SheetStream does not win:
+
+- **Memory is SheetStream's clearest advantage.** It allocates about 13 times less than the next library and keeps the lowest peak in both the long and the wide (1,000 × 1,000) scenarios.
+- **MiniExcel is faster than SheetStream's default.** SheetStream defaults to the smallest file (`CompressionLevel.Optimal`). With `Fastest` compression SheetStream is quickest in both scenarios, though on the long sheet the lead over MiniExcel is within the margin of error.
+- **NPOI and EPPlus produce slightly smaller files** on the long sheet.
+- MiniExcel cannot bold the header, so its file carries slightly less formatting.
+
+Full results, the wide-sheet scenario, methodology, machine details and how to rerun everything are in [benchmarks/README.md](benchmarks/README.md). EPPlus is pinned to 4.5.3.3 and NPOI to 2.7.6, their last releases under plain open-source licences. Numbers come from a developer workstation, so expect some noise; rerun them on your own hardware.
 
 ### When to choose something else
 
