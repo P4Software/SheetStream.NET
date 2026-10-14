@@ -350,6 +350,7 @@ What the numbers say, including where SheetStream does not win:
 - **Memory is SheetStream's clearest advantage.** It allocates about 13 times less than the next library and keeps the lowest peak in both the long and the wide (1,000 × 1,000) scenarios.
 - **MiniExcel is faster than SheetStream's default.** SheetStream defaults to the smallest file (`CompressionLevel.Optimal`). With `Fastest` compression SheetStream is quickest in both scenarios, though on the long sheet the lead over MiniExcel is within the margin of error.
 - **NPOI and EPPlus produce slightly smaller files** on the long sheet.
+- **Reading** the same 100,000-row file: SheetStream 0.53 s and 119 MB allocated; ExcelDataReader 0.92 s and 211 MB; EPPlus 4.5.3.3 1.2 s and 787 MB; MiniExcel 1.8 s and 2.4 GB; ClosedXML 3.0 s and 1.6 GB.
 - **At a million rows** (1,000,000 × 10) SheetStream writes in 4.8 s with `Fastest` compression (12.8 s with the default, smaller-file setting) and allocates 275 MB with a 200 MB peak working set; MiniExcel takes 5.3 s and 3.3 GB, EPPlus 4.5.3.3 26 s and 3.9 GB with a 1.5 GB peak, ClosedXML 37 s and 11.6 GB with a 2.4 GB peak. A 1,000 × 10,000 sheet costs SheetStream the same as a 10,000 × 1,000 one.
 - MiniExcel cannot bold the header, so its file carries slightly less formatting.
 

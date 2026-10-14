@@ -199,11 +199,37 @@ At a million rows the zip compression level decides the time: SheetStream with `
 
 ### VeryWide: 1,000 rows x 10,000 columns (BenchmarkDotNet)
 
-Results pending: run `dotnet run -c Release -- --filter '*VeryWide*'` on the benchmark machine and paste `BenchmarkDotNet.Artifacts/results/SheetStream.Benchmarks.VeryWideBenchmarks-report-github.md` here.
+Measured on 2026-10-14. Same job as Million (1 warm-up, 3 measured writes). The whole suite took 2 h 3 min, almost all of it NPOI XSSF.
+
+| Method                      | Mean        | Error        | StdDev     | Ratio  | RatioSD | Gen0         | Gen1        | Gen2       | Allocated   | Alloc Ratio |
+|---------------------------- |------------:|-------------:|-----------:|-------:|--------:|-------------:|------------:|-----------:|------------:|------------:|
+| SheetStream                 |    11.348 s |    11.8447 s |   0.6492 s |   1.00 |    0.07 |   74000.0000 |           - |          - |   443.17 MB |        1.00 |
+| 'SheetStream (Fastest zip)' |     5.047 s |     3.6996 s |   0.2028 s |   0.45 |    0.03 |   74000.0000 |           - |          - |   443.17 MB |        1.00 |
+| 'EPPlus 4.5.3.3'            |    29.570 s |     1.6688 s |   0.0915 s |   2.61 |    0.13 |  642000.0000 |  34000.0000 |  5000.0000 |  5259.79 MB |       11.87 |
+| ClosedXML                   |    19.268 s |     4.8145 s |   0.2639 s |   1.70 |    0.09 | 1485000.0000 |  32000.0000 |  4000.0000 | 10397.54 MB |       23.46 |
+| MiniExcel                   |     6.766 s |     0.2649 s |   0.0145 s |   0.60 |    0.03 |  674000.0000 | 313000.0000 | 14000.0000 |  4197.88 MB |        9.47 |
+| 'NPOI XSSF'                 | 1,274.623 s | 3,264.9381 s | 178.9623 s | 112.57 |   14.87 | 1587000.0000 | 585000.0000 | 14000.0000 | 11465.85 MB |       25.87 |
+| 'NPOI SXSSF'                |    20.747 s |    17.8856 s |   0.9804 s |   1.83 |    0.12 | 1176000.0000 | 392000.0000 | 12000.0000 |  7777.04 MB |       17.55 |
+
+Ten million cells laid out wide cost SheetStream about the same as laid out long (5.0 s against 4.8 s with `Fastest`; 443 MB against 275 MB allocated, the difference being the 10,000 cached column references per row). NPOI XSSF needs 21 minutes per write for this shape: its in-memory column handling is quadratic in the column count.
 
 ### Read: 100,000 rows x 10 columns (BenchmarkDotNet)
 
-Results pending: run `dotnet run -c Release -- --filter '*Read*'` on the benchmark machine and paste `BenchmarkDotNet.Artifacts/results/SheetStream.Benchmarks.ReadBenchmarks-report-github.md` here.
+Measured on 2026-10-14. Job: `InvocationCount=1 IterationCount=10 LaunchCount=1 UnrollFactor=1 WarmupCount=3`. Every reader reads the same 5.8 MB file (100,000 rows x 10 columns, written by SheetStream) from a fresh `MemoryStream` and returns the same checksum.
+
+| Method                      | Mean       | Error     | StdDev    | Ratio | RatioSD | Gen0        | Gen1       | Gen2      | Allocated  | Alloc Ratio |
+|---------------------------- |-----------:|----------:|----------:|------:|--------:|------------:|-----------:|----------:|-----------:|------------:|
+| 'SheetStream ReadRows'      |   532.7 ms |  80.35 ms |  42.02 ms |  1.01 |    0.10 |  19000.0000 |          - |         - |  118.62 MB |        1.00 |
+| 'SheetStream Read<T>'       |   598.2 ms | 150.27 ms |  89.42 ms |  1.13 |    0.18 |  22000.0000 |          - |         - |  133.88 MB |        1.13 |
+| 'MiniExcel Query<T>'        | 1,829.3 ms |  13.25 ms |   8.76 ms |  3.45 |    0.25 | 396000.0000 |  1000.0000 |         - | 2369.07 MB |       19.97 |
+| 'MiniExcel Query (dynamic)' | 1,859.1 ms |  55.72 ms |  36.85 ms |  3.51 |    0.26 | 400000.0000 |  1000.0000 |         - | 2395.38 MB |       20.19 |
+| ExcelDataReader             |   915.9 ms |   5.29 ms |   3.50 ms |  1.73 |    0.13 |  35000.0000 |          - |         - |  211.03 MB |        1.78 |
+| ClosedXML                   | 3,034.0 ms |  89.30 ms |  53.14 ms |  5.73 |    0.43 | 265000.0000 | 36000.0000 | 2000.0000 | 1598.17 MB |       13.47 |
+| 'EPPlus 4.5.3.3'            | 1,205.8 ms |  17.18 ms |  11.36 ms |  2.28 |    0.17 | 115000.0000 | 17000.0000 | 3000.0000 |  787.26 MB |        6.64 |
+| 'NPOI XSSF'                 | 3,622.8 ms | 207.26 ms | 123.34 ms |  6.84 |    0.55 | 192000.0000 | 85000.0000 | 5000.0000 | 1191.55 MB |       10.05 |
+| 'NPOI SAX'                  | 2,664.7 ms | 331.53 ms | 197.29 ms |  5.03 |    0.51 | 304000.0000 |  1000.0000 | 1000.0000 | 1883.08 MB |       15.88 |
+
+SheetStream reads the file fastest (0.53 s untyped, 0.60 s mapped to objects) and allocates the least; ExcelDataReader is the closest at 0.92 s and 211 MB, EPPlus 4 takes 1.2 s and 787 MB, and MiniExcel, which is quick at writing, takes 1.8 s and 2.4 GB to read. The SheetStream allocation (1.2 KB per row) is the boxed `object?[]` per row plus the strings; a typed `Read<T>` with a generated mapper avoids the reflection but still boxes cell values today.
 
 ### Peak working set for Million, VeryWide and Read (`--peak`)
 
@@ -236,7 +262,22 @@ SheetStream's 79 MB above baseline is mostly the 58 MB output buffer: the writer
 | MiniExcel | 180.4 | 80.1 | 14,691 | 49,460 | yes (1,000 rows x 10,000 cells) |
 | NPOI XSSF | 4842.2 | 4741.9 | 1,918,212 | 47,748 | yes (1,000 rows x 10,000 cells) |
 
-The NPOI SXSSF VeryWide row and the Read peak table did not survive the first run's log and are being re-measured; they will be added here.
+**Read: 100,000 rows x 10 columns, the same 5,798 KB file for every reader** (`--peak Read`, 2026-10-14)
+
+| Library | Peak working set (MB) | Above baseline (MB) | Cold read time (ms) | Input size (KB) | Full-size checksum verified |
+|---|---:|---:|---:|---:|---|
+| Baseline | 74.1 | - | - | 5,798 | - |
+| SheetStream-Rows | 76.7 | 2.6 | 823 | 5,798 | yes (checksum 5,001,050,000) |
+| SheetStream-Typed | 77.4 | 3.3 | 890 | 5,798 | yes (checksum 5,001,050,000) |
+| MiniExcel-Typed | 83.7 | 9.6 | 2,896 | 5,798 | yes (checksum 5,001,050,000) |
+| MiniExcel-Dynamic | 84.9 | 10.8 | 2,878 | 5,798 | yes (checksum 5,001,050,000) |
+| ExcelDataReader | 80.4 | 6.3 | 1,742 | 5,798 | yes (checksum 5,001,050,000) |
+| ClosedXML | 187.3 | 113.2 | 4,876 | 5,798 | yes (checksum 5,001,050,000) |
+| EPPlus 4.5.3.3 | 179.5 | 105.5 | 1,841 | 5,798 | yes (checksum 5,001,050,000) |
+| NPOI XSSF | 853.7 | 779.7 | 4,926 | 5,798 | yes (checksum 5,001,050,000) |
+| NPOI SAX | 161.2 | 87.2 | 4,038 | 5,798 | yes (checksum 5,001,050,000) |
+
+Streaming readers (SheetStream, MiniExcel, ExcelDataReader) stay within a few MB of the baseline; the in-memory loaders need 100 MB to 780 MB for a 5.8 MB file. The NPOI SXSSF row for VeryWide is missing from the first `--peak` run and will be added with the next full run.
 
 ### What each library actually wrote (`--verify`, small Long case)
 
