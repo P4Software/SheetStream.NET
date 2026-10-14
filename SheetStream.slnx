@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/samples/">
     <Project Path="samples/SheetStream.Sample/SheetStream.Sample.csproj" />
+    <Project Path="samples/SheetStream.Sample.Web/SheetStream.Sample.Web.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj" />
