@@ -118,7 +118,7 @@ internal static class Showcase
             summary.AddInternalLink(row + 2, 1, "'Invoices'!A1", "Jump to the invoice table");
             summary.Cells[row + 3, 1].Value = "P4 Software";
             summary.Cells[row + 3, 1].Style = wb.Styles.Hyperlink;
-            summary.AddHyperlink(row + 3, 1, "https://github.com/P4Software/SheetStream");
+            summary.AddHyperlink(row + 3, 1, "https://github.com/P4Software/SheetStream.NET");
             summary.MergeCells("A1:B1");
             var pie = summary.AddChart(ChartType.Pie, "D3:J18");
             pie.Title = "Share by customer";

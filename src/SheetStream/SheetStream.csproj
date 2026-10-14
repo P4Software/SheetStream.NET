@@ -10,20 +10,20 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>true</IsPackable>
 
-    <PackageId>SheetStream</PackageId>
+    <PackageId>SheetStream.NET</PackageId>
     <Version>0.4.0</Version>
     <Authors>P4 Software</Authors>
     <Company>P4 Software</Company>
     <Description>Lightweight, dependency-free, MIT-licensed .xlsx library for .NET: streaming writer with tables, charts, pictures, conditional formatting, validation, protection and AutoFit, plus a streaming reader. A free alternative to EPPlus.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/P4Software/SheetStream</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/P4Software/SheetStream</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/P4Software/SheetStream.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/P4Software/SheetStream.NET</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>excel;xlsx;openxml;spreadsheet;streaming;epplus;export</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!-- Official P4 Software logo, padded (not stretched) to the square canvas NuGet displays. -->
     <PackageIcon>icon.png</PackageIcon>
-    <PackageReleaseNotes>See https://github.com/P4Software/SheetStream/releases</PackageReleaseNotes>
+    <PackageReleaseNotes>See https://github.com/P4Software/SheetStream.NET/releases</PackageReleaseNotes>
 
     <!-- Symbols and Source Link so consumers can step into the library from the published package. -->
     <IncludeSymbols>true</IncludeSymbols>

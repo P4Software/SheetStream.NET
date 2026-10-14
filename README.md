@@ -1,16 +1,16 @@
-# 🚀 SheetStream
+# 🚀 SheetStream.NET
 
-A fast, zero-dependency, **MIT-licensed** .NET library for creating, filling and reading Excel (`.xlsx`) files.
+A fast, zero-dependency, **MIT-licensed** .NET library for creating, filling, editing and reading Excel (`.xlsx`) files. (Not related to the Node.js package of the same name.)
 
 SheetStream streams rows straight into the file instead of building the workbook in memory, so large exports stay fast and memory stays flat. It was built at P4 Software when EPPlus moved to a commercial licence, and it covers what business reports actually use: styles, tables, charts, conditional formatting, validation, templates designed in Excel, and a streaming reader for imports.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![NuGet](https://img.shields.io/nuget/v/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
-[![Build](https://github.com/P4Software/SheetStream/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream/actions/workflows/build.yml)
-[![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream/)
+[![Build](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
+[![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream.NET/)
 [![Downloads](https://img.shields.io/nuget/dt/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream%2Fcoverage.json)](https://github.com/P4Software/SheetStream/actions/workflows/build.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/P4Software/SheetStream/badge)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream%2Fcoverage.json)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/P4Software/SheetStream.NET/badge)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream.NET)
 
 ## ✨ Why SheetStream?
 
@@ -24,11 +24,13 @@ SheetStream streams rows straight into the file instead of building the workbook
 ## 📦 Installation
 
 ```bash
-dotnet add package SheetStream
+dotnet add package SheetStream.NET
 dotnet add package SheetStream.AspNetCore   # optional: one-line Excel downloads
 ```
 
-Full documentation and API reference: **https://p4software.github.io/SheetStream/**
+Upgrading from the 0.3.x `SheetStream` package: `dotnet remove package SheetStream`, then add `SheetStream.NET`. The namespace is still `SheetStream`, so no code changes.
+
+Full documentation and API reference: **https://p4software.github.io/SheetStream.NET/**
 
 Try it in your browser without installing anything: **[DotNetFiddle: write a styled Excel file and read it back](https://dotnetfiddle.net/BR59ju)**.
 
@@ -348,6 +350,7 @@ What the numbers say, including where SheetStream does not win:
 - **Memory is SheetStream's clearest advantage.** It allocates about 13 times less than the next library and keeps the lowest peak in both the long and the wide (1,000 × 1,000) scenarios.
 - **MiniExcel is faster than SheetStream's default.** SheetStream defaults to the smallest file (`CompressionLevel.Optimal`). With `Fastest` compression SheetStream is quickest in both scenarios, though on the long sheet the lead over MiniExcel is within the margin of error.
 - **NPOI and EPPlus produce slightly smaller files** on the long sheet.
+- **At a million rows** (1,000,000 × 10) SheetStream writes in 4.8 s with `Fastest` compression (12.8 s with the default, smaller-file setting) and allocates 275 MB with a 200 MB peak working set; MiniExcel takes 5.3 s and 3.3 GB, EPPlus 4.5.3.3 26 s and 3.9 GB with a 1.5 GB peak, ClosedXML 37 s and 11.6 GB with a 2.4 GB peak. A 1,000 × 10,000 sheet costs SheetStream the same as a 10,000 × 1,000 one.
 - MiniExcel cannot bold the header, so its file carries slightly less formatting.
 
 Full results, the wide-sheet scenario, methodology, machine details and how to rerun everything are in [benchmarks/README.md](benchmarks/README.md). EPPlus is pinned to 4.5.3.3 and NPOI to 2.7.6, their last releases under plain open-source licences. Numbers come from a developer workstation, so expect some noise; rerun them on your own hardware.
@@ -424,7 +427,7 @@ The `Release` workflow refuses to run if the tag and the csproj version disagree
 
 ## 🤝 Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [good first issues](https://github.com/P4Software/SheetStream/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), and [Discussions](https://github.com/P4Software/SheetStream/discussions) for questions. Security reports go through [SECURITY.md](SECURITY.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [good first issues](https://github.com/P4Software/SheetStream.NET/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), and [Discussions](https://github.com/P4Software/SheetStream.NET/discussions) for questions. Security reports go through [SECURITY.md](SECURITY.md).
 
 ## 📄 License
 

@@ -1,6 +1,6 @@
 # OpenSSF Scorecard: an automated review of the repository's security practices (pinned dependencies,
 # branch protection, token permissions, dependency updates, SAST...). Results are published to
-# https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream and shown as a README badge, so
+# https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream.NET and shown as a README badge, so
 # anyone evaluating SheetStream for production can see the score without trusting our word for it.
 name: Scorecard
 
