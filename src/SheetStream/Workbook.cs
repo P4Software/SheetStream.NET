@@ -12,6 +12,7 @@ namespace SheetStream
     public sealed class Workbook
     {
         private readonly HashSet<string> _tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _pivotTableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         internal Workbook(ExcelPackage package)
         {
@@ -72,6 +73,14 @@ namespace SheetStream
         internal int ChartCount { get; set; }
         internal int CommentsCount { get; set; }
         internal int ImageCount { get; set; }
+        internal int PivotTableCount { get; set; }
+
+        /// <summary>
+        /// Part numbers of the pivot caches written so far. Each pivot table owns one cache, and the part
+        /// number doubles as the <c>cacheId</c> that links <c>workbook.xml</c> to the pivot table definition.
+        /// The workbook part is written last, so the list is complete by then.
+        /// </summary>
+        internal List<int> PivotCaches { get; } = new List<int>();
 
         /// <summary>
         /// Protects the workbook structure so sheets cannot be added, deleted, renamed, moved, hidden or
@@ -92,6 +101,14 @@ namespace SheetStream
             foreach (var dn in DefinedNames)
                 if (string.Equals(dn.Name, name, StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException($"'{name}' is already used as a defined name.", nameof(name));
+        }
+
+        /// <summary>Reserves a pivot table name; Excel numbers them workbook-wide, so duplicates are refused (case-insensitive).</summary>
+        internal void ReservePivotTableName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Pivot table name cannot be empty.", nameof(name));
+            if (name.Length > 255) throw new ArgumentException($"Pivot table name '{name}' is longer than 255 characters.", nameof(name));
+            if (!_pivotTableNames.Add(name)) throw new ArgumentException($"A pivot table named '{name}' already exists in this workbook.", nameof(name));
         }
     }
 }

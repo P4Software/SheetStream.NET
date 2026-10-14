@@ -128,7 +128,17 @@ internal static class Showcase
             if (File.Exists(banner)) summary.AddPicture(banner, 20, 4);
             summary.Protect(configure: o => o.AllowSelectLockedCells = true);
 
-            // ---- Sheet 3: outline grouping and a hidden lookup sheet.
+            // ---- Sheet 3: a pivot table over the invoice table. The cache is empty; Excel fills it on open.
+            var pivotSheet = wb.Worksheets.Add("Pivot");
+            pivotSheet.Column(1).SetWidth(22);
+            pivotSheet.Row(1, title).WriteCell("Amount by customer and status");
+            var pivot = pivotSheet.AddPivotTable("InvoicePivot", loaded.Table!, row: 3, column: 1);
+            pivot.AddRowField("Customer");
+            pivot.AddColumnField("Status");
+            pivot.AddDataField("Amount", PivotFunction.Sum, numberFormat: "$#,##0.00");
+            pivot.AddDataField("Invoice #", PivotFunction.Count, "Invoices");
+
+            // ---- Sheet 4: outline grouping and a hidden lookup sheet.
             var grouped = wb.Worksheets.Add("Grouped");
             grouped.Row().WriteCell("Region", header).WriteCell("Sales", header);
             foreach (var region in new[] { "North", "South" })

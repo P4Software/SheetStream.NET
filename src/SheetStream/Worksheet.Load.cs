@@ -177,19 +177,20 @@ namespace SheetStream
             }
 
             var lastRow = CurrentRow < firstRow ? firstRow : CurrentRow;
+            ExcelTable? table = null;
             if (options.TableName != null)
             {
                 // A table needs at least one data row; Excel rejects a header-only table.
                 if (rows == 0) Row().Skip(options.StartColumn - 1).WriteEmpty();
                 lastRow = CurrentRow;
-                var table = AddTable(options.TableName, firstRow, options.StartColumn, lastRow, lastColumn, headers);
+                table = AddTable(options.TableName, firstRow, options.StartColumn, lastRow, lastColumn, headers);
                 table.StyleName = options.TableStyle;
             }
             else if (options.AutoFilter && options.PrintHeaders && headers.Length > 0)
             {
                 AutoFilter(firstRow, options.StartColumn, lastColumn);
             }
-            return new LoadResult(firstRow, lastRow, options.StartColumn, lastColumn, rows);
+            return new LoadResult(firstRow, lastRow, options.StartColumn, lastColumn, rows, (string[])headers.Clone(), table);
         }
 
         /// <summary>

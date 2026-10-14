@@ -327,11 +327,29 @@ namespace SheetStream
                 w.WriteEndElement();
             }
 
+            // CT_Workbook continues: oleSize, customWorkbookViews, pivotCaches. Each cache is a workbook-level
+            // relationship; the cacheId here is what the pivot table definitions point at.
+            if (Workbook.PivotCaches.Count > 0)
+            {
+                w.WriteStartElement("pivotCaches");
+                for (var i = 0; i < Workbook.PivotCaches.Count; i++)
+                {
+                    w.WriteStartElement("pivotCache");
+                    w.WriteAttributeString("cacheId", Workbook.PivotCaches[i].ToString(CultureInfo.InvariantCulture));
+                    w.WriteAttributeString("id", OpenXmlNamespaces.Relationships, PivotCacheRelationshipId(i));
+                    w.WriteEndElement();
+                }
+                w.WriteEndElement();
+            }
+
             w.WriteEndElement();
             w.WriteEndDocument();
         }
 
-        /// <summary><c>xl/_rels/workbook.xml.rels</c>: one relationship per sheet, then styles and shared strings.</summary>
+        /// <summary>Relationship id of the i-th pivot cache: allocated after the sheets, styles and shared strings.</summary>
+        private string PivotCacheRelationshipId(int index) => "rId" + (Workbook.Worksheets.Count + 3 + index).ToString(CultureInfo.InvariantCulture);
+
+        /// <summary><c>xl/_rels/workbook.xml.rels</c>: one relationship per sheet, then styles, shared strings and pivot caches.</summary>
         private void WriteWorkbookRelationships(XmlWriter w)
         {
             w.WriteStartDocument(true);
@@ -341,6 +359,8 @@ namespace SheetStream
             var next = Workbook.Worksheets.Count + 1;
             WriteRelationship(w, "rId" + next.ToString(CultureInfo.InvariantCulture), OpenXmlNamespaces.RelStyles, "styles.xml");
             WriteRelationship(w, "rId" + (next + 1).ToString(CultureInfo.InvariantCulture), OpenXmlNamespaces.RelSharedStrings, "sharedStrings.xml");
+            for (var i = 0; i < Workbook.PivotCaches.Count; i++)
+                WriteRelationship(w, PivotCacheRelationshipId(i), OpenXmlNamespaces.RelPivotCacheDefinition, "pivotCache/pivotCacheDefinition" + Workbook.PivotCaches[i].ToString(CultureInfo.InvariantCulture) + ".xml");
             w.WriteEndElement();
             w.WriteEndDocument();
         }

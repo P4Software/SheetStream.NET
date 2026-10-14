@@ -267,7 +267,11 @@ namespace SheetStream.Styles
             return id;
         }
 
-        private int RegisterNumberFormat(string? formatCode)
+        /// <summary>
+        /// Returns the <c>numFmtId</c> for a format code, registering a custom format when it is not built in.
+        /// Pivot data fields reference number formats by id, so they share this registry with cell styles.
+        /// </summary>
+        internal int RegisterNumberFormat(string? formatCode)
         {
             if (string.IsNullOrEmpty(formatCode)) return 0;
             if (BuiltInNumberFormats.TryGetValue(formatCode!, out var builtIn)) return builtIn;

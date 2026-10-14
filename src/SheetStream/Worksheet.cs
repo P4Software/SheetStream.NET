@@ -39,7 +39,7 @@ namespace SheetStream
     /// <c>sheetFormatPr</c>, <c>cols</c>, <c>sheetData</c> start); the rows; and a trailer (protection,
     /// filters, merges, conditional formats, validations, hyperlinks, print settings, drawings, tables)
     /// written when the sheet is sealed by adding the next sheet or saving the package. Parts that live
-    /// outside the sheet (tables, drawings, charts, comments, the sheet's relationships) are written right
+    /// outside the sheet (tables, drawings, charts, comments, pivot tables, the sheet's relationships) are written right
     /// after it. Not thread-safe.
     /// </remarks>
     public sealed partial class Worksheet
@@ -607,6 +607,13 @@ namespace SheetStream
             }
             if (_drawingNumber > 0) DrawingWriter.Write(package, Workbook, _drawingNumber, _pictures, _charts);
             if (_commentsNumber > 0) CommentsWriter.Write(package, _commentsNumber, Index, _comments, out _, out _);
+            // A pivot table is referenced only from the sheet's .rels, never from the sheet XML, so its
+            // relationship can be allocated here, after the sheet part is closed.
+            foreach (var p in _pivotTables)
+            {
+                rels.Add(OpenXmlNamespaces.RelPivotTable, "../pivotTables/pivotTable" + p.Number.ToString(CultureInfo.InvariantCulture) + ".xml");
+                PivotTableWriter.Write(package, Workbook, p);
+            }
             if (rels.Count > 0)
                 using (var w = package.OpenPart("xl/worksheets/_rels/sheet" + Index.ToString(CultureInfo.InvariantCulture) + ".xml.rels"))
                     rels.WriteTo(w);
