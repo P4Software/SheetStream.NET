@@ -12,5 +12,7 @@
   href: aot-and-source-generator.md
 - name: Analyzers
   href: analyzers.md
+- name: Gap analysis versus EPPlus 8
+  href: gap-analysis-epplus-8.md
 - name: API reference
   href: api/
