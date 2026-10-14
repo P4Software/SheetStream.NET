@@ -26,6 +26,8 @@ a branch or a loop, or the sheet lives in a field, it stays quiet rather than gu
 the usual run-time exception; a wrong warning would make you distrust the right ones, so the analyzer errs on the
 side of silence.
 
+<a id="ss0001"></a>
+
 ## SS0001: Layout setting after rows were written
 
 The OpenXML schema stores column widths, frozen panes, tab colour, gridlines, zoom, right-to-left and the
@@ -63,6 +65,8 @@ Sheets written through `Cells[...]` buffer everything until save, so the rule do
 Settings that live after the data (`AutoFilter`, `MergeCells`, protection, validation, conditional formats, print
 margins, orientation) can be set at any time and are never reported.
 
+<a id="ss0002"></a>
+
 ## SS0002: Row() and Cells[] used on the same worksheet
 
 A sheet is either streamed forward-only through `Row()` and `LoadFrom*()`, or kept in memory and written in order
@@ -92,6 +96,8 @@ var sheet = workbook.Worksheets.Add("Summary");
 sheet.Cells[1, 1].Value = "Total";
 sheet.Cells[1, 2].Formula = "SUM(Orders!B:B)";
 ```
+
+<a id="ss0003"></a>
 
 ## SS0003: Rows must ascend
 
