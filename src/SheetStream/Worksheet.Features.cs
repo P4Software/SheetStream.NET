@@ -14,6 +14,7 @@ namespace SheetStream
         private readonly List<ExcelPicture> _pictures = new List<ExcelPicture>();
         private readonly List<ExcelChart> _charts = new List<ExcelChart>();
         private readonly List<CellComment> _comments = new List<CellComment>();
+        private readonly List<PivotTable> _pivotTables = new List<PivotTable>();
         private SheetProtection? _protection;
 
         // AutoFit state: widest content seen per column, in Calibri-11 character units.
@@ -285,6 +286,84 @@ namespace SheetStream
             var chart = new ExcelChart(type, RangeReference.Parse(placement), Name, ++Workbook.ChartCount);
             _charts.Add(chart);
             return chart;
+        }
+
+        /// <summary>
+        /// Adds a pivot table to this sheet with its top-left cell at (<paramref name="row"/>, <paramref name="column"/>),
+        /// summarising <paramref name="sourceRange"/> (header row included) on sheet <paramref name="sourceSheetName"/>.
+        /// Excel computes the pivot when the file opens; see <see cref="PivotTable"/> for the design and its limits.
+        /// </summary>
+        /// <param name="name">Pivot table name, unique within the workbook (e.g. "SalesByRegion").</param>
+        /// <param name="sourceSheetName">Sheet holding the data. It must already exist in this workbook (it may be this sheet).</param>
+        /// <param name="sourceRange">A1 range of the data including its header row, e.g. "A1:F500".</param>
+        /// <param name="row">1-based row of the pivot's top-left cell on this sheet.</param>
+        /// <param name="column">1-based column of the pivot's top-left cell on this sheet.</param>
+        /// <param name="headers">
+        /// The header texts of the source columns, in order. The source sheet has already been streamed out, so
+        /// SheetStream cannot read them back; <see cref="LoadResult.Headers"/> returns them for data written with
+        /// a <c>LoadFrom*</c> call, and the <see cref="AddPivotTable(string, ExcelTable, int, int)"/> overload takes
+        /// them from the table.
+        /// </param>
+        /// <example>
+        /// <code>
+        /// var loaded = data.LoadFromCollection(orders);
+        /// var pivot = summary.AddPivotTable("ByRegion", "Data", loaded.Range, 1, 1, loaded.Headers);
+        /// pivot.AddRowField("Region").AddDataField("Amount");
+        /// </code>
+        /// </example>
+        public PivotTable AddPivotTable(string name, string sourceSheetName, string sourceRange, int row, int column, IReadOnlyList<string> headers)
+        {
+            if (headers == null) throw new ArgumentNullException(nameof(headers));
+            if (string.IsNullOrWhiteSpace(sourceSheetName)) throw new ArgumentException("Source sheet name cannot be empty.", nameof(sourceSheetName));
+            var range = RangeReference.Parse(sourceRange);
+            if (range.RowCount < 2) throw new ArgumentException($"Pivot source {sourceRange} needs a header row and at least one data row.", nameof(sourceRange));
+            if (headers.Count != range.ColumnCount)
+                throw new ArgumentException($"Pivot source {sourceRange} spans {range.ColumnCount} columns but {headers.Count} headers were given.", nameof(headers));
+            var source = FindSheet(sourceSheetName) ?? throw new ArgumentException($"This workbook has no sheet named '{sourceSheetName}'. Write the source sheet before adding the pivot table.", nameof(sourceSheetName));
+            return AddPivotTableCore(name, source.Name, range, null, headers, row, column);
+        }
+
+        /// <summary>
+        /// Adds a pivot table whose source is an Excel table written earlier (or on this sheet). The field names
+        /// come from the table's columns, and Excel re-reads the whole table on every refresh, so the pivot follows
+        /// the table as it grows.
+        /// </summary>
+        /// <param name="name">Pivot table name, unique within the workbook.</param>
+        /// <param name="source">The table to summarise, from <see cref="AddTable(string, string, IReadOnlyList{string})"/> or <see cref="LoadOptions.TableName"/>.</param>
+        /// <param name="row">1-based row of the pivot's top-left cell on this sheet.</param>
+        /// <param name="column">1-based column of the pivot's top-left cell on this sheet.</param>
+        public PivotTable AddPivotTable(string name, ExcelTable source, int row, int column)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            if (!ReferenceEquals(source.Sheet.Workbook, Workbook))
+                throw new ArgumentException($"Table '{source.Name}' belongs to another workbook.", nameof(source));
+            var headers = source.ColumnNames
+                ?? throw new InvalidOperationException($"The header texts of table '{source.Name}' are not known yet. Write its header row (or pass column names to AddTable) before adding the pivot table.");
+            return AddPivotTableCore(name, source.Sheet.Name, source.Range, source.Name, headers, row, column);
+        }
+
+        private PivotTable AddPivotTableCore(string name, string sourceSheet, RangeReference sourceRange, string? sourceTable, IReadOnlyList<string> headers, int row, int column)
+        {
+            EnsureNotSealed();
+            if (_templateSource != null)
+                throw new NotSupportedException($"Sheet '{Name}' fills a template or an edited workbook; pivot tables can only be added to sheets written from scratch.");
+            ValidateRow(row, nameof(row));
+            CellReference.ColumnLetters(column);
+            // Construct first: the constructor validates the headers, and a failed call must not leave the
+            // name reserved or a part number consumed.
+            var pivot = new PivotTable(this, Workbook.PivotTableCount + 1, name, sourceSheet, sourceRange, sourceTable, headers, row, column);
+            Workbook.ReservePivotTableName(name);
+            Workbook.PivotTableCount++;
+            _pivotTables.Add(pivot);
+            return pivot;
+        }
+
+        /// <summary>Finds a worksheet of this workbook by name (case-insensitive, like Excel).</summary>
+        private Worksheet? FindSheet(string name)
+        {
+            foreach (var s in Workbook.Worksheets)
+                if (string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)) return s;
+            return null;
         }
 
         /// <summary>

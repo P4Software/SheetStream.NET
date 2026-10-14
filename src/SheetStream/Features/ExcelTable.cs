@@ -72,6 +72,24 @@ namespace SheetStream
             }
         }
 
+        /// <summary>
+        /// The column names once every header is known (given explicitly or captured from the header row), or
+        /// <c>null</c> while some are still missing. Pivot tables read their source field names from here.
+        /// </summary>
+        internal IReadOnlyList<string>? ColumnNames
+        {
+            get
+            {
+                var names = new string[_columnNames.Length];
+                for (var i = 0; i < names.Length; i++)
+                {
+                    if (_columnNames[i] == null) return null;
+                    names[i] = _columnNames[i]!;
+                }
+                return names;
+            }
+        }
+
         /// <summary>Records the text written into a header cell of this table.</summary>
         internal void CaptureHeader(int column, string text)
         {
