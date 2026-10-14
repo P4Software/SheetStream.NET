@@ -147,7 +147,11 @@ namespace SheetStream
                 {
                     writer.Skip(cellPair.Key - writer.NextColumn);
                     var cell = cellPair.Value;
-                    if (cell.RawInner != null) writer.WriteRawCell(cell.RawType, cell.RawAttributes, cell.RawInner, cell.Style);
+                    if (cell.RawInner != null)
+                    {
+                        writer.WriteRawCell(cell.RawType, cell.RawAttributes, cell.RawInner, cell.Style);
+                        RecordLoadedCell(rowPair.Key, cellPair.Key, cell);
+                    }
                     else if (cell.Formula != null) WriteBufferedFormula(writer, cell);
                     else if (cell.Value == null && cell.Style != null) writer.WriteEmpty(cell.Style);
                     else WriteBufferedValue(writer, cell);
