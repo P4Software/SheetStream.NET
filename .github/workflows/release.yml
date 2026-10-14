@@ -6,8 +6,8 @@
 # repository's release.yml, so the publish job exchanges its GitHub OIDC token for a short-lived API key.
 # No long-lived key is stored anywhere.
 #
-# The work is split into three jobs so each holds only the permission it needs: building and testing run
-# our own and third-party code with a read-only token; only the small publish job can mint a NuGet key,
+# The work is split into four jobs so each holds only the permission it needs: building and testing run
+# our own and third-party code with a read-only token; the attest job alone can sign provenance, only the publish job can mint a NuGet key,
 # and only the release job can write to the repository.
 name: Release
 
@@ -22,9 +22,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write       # sign the build provenance attestation
-      attestations: write   # store the attestation on GitHub
+      contents: read   # this job runs third-party test code, so it never holds a signing token
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -53,11 +51,38 @@ jobs:
           dotnet pack src/SheetStream/SheetStream.csproj --no-build -c Release -o artifacts
           dotnet pack src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj --no-build -c Release -o artifacts
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: built-packages
+          path: artifacts/*
+
+  # Runs after the build with nothing but the finished packages: no project code or tests execute here,
+  # so the signing token cannot be reached by anything a dependency might run.
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # sign the build provenance attestation
+      attestations: write   # store the attestation on GitHub
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-packages
+          path: artifacts
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
       # A software bill of materials (SPDX 2.2) listing exactly what is inside the packages and what they
       # were built from, attached to every release so procurement and security teams can check it.
+      # The tool version is pinned so the SBOM format cannot change under us.
       - name: Generate SBOM
         run: |
-          dotnet tool install --global Microsoft.Sbom.DotNetTool
+          dotnet tool install --global Microsoft.Sbom.DotNetTool --version 4.1.13
           sbom-tool generate -b artifacts -bc . -m sbom -pn SheetStream -pv "${GITHUB_REF_NAME#v}" -ps "P4 Software" -nsb https://p4.software/sbom -V Warning
           cp sbom/_manifest/spdx_2.2/manifest.spdx.json "artifacts/SheetStream-${GITHUB_REF_NAME#v}.spdx.json"
 
@@ -74,7 +99,7 @@ jobs:
           path: artifacts/*
 
   publish:
-    needs: build
+    needs: attest
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # request the OIDC token NuGet exchanges for a short-lived key

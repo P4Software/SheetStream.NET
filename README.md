@@ -9,6 +9,8 @@ SheetStream streams rows straight into the file instead of building the workbook
 [![Build](https://github.com/P4Software/SheetStream/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream/actions/workflows/build.yml)
 [![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream/)
 [![Downloads](https://img.shields.io/nuget/dt/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream%2Fcoverage.json)](https://github.com/P4Software/SheetStream/actions/workflows/build.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/P4Software/SheetStream/badge)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream)
 
 ## ✨ Why SheetStream?
 
