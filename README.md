@@ -204,6 +204,22 @@ app.MapGet("/orders.xlsx", (AppDb db) => ExcelResults.Excel("orders.xlsx", async
 
 The download is built into a temporary file and copied to the response asynchronously: flat memory, an accurate `Content-Length`, and no synchronous I/O on the response.
 
+### Trimming and Native AOT
+
+```csharp
+[SheetRow]                                   // The bundled source generator writes the column mapping at compile time
+public partial class Order
+{
+    [SheetColumn("Invoice #", Order = 0)] public int Id { get; set; }
+    [SheetColumn(NumberFormat = "$#,##0.00")] public decimal Total { get; set; }
+}
+
+sheet.LoadFromCollection(orders);            // Uses Order.SheetMapper automatically on .NET 5+
+sheet.LoadFromCollection(orders, Order.SheetMapper);   // Or pass it explicitly
+```
+
+The `net8.0` build is `IsTrimmable` and `IsAotCompatible`. Types marked `[SheetRow] partial` get a generated mapper, so `LoadFromCollection<T>`, `LoadFromAsyncEnumerable<T>` and `ExcelReader.Read<T>` need no reflection and no `Expression.Compile`; `[SheetColumn]` and `[DisplayName]` work exactly as before, and reflection remains the fallback for unmarked types. See [Trimming, Native AOT and the source generator](docs/aot-and-source-generator.md).
+
 ### Random access, EPPlus style
 
 ```csharp

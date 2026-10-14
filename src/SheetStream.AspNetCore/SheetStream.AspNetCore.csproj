@@ -11,7 +11,7 @@
     <IsPackable>true</IsPackable>
 
     <PackageId>SheetStream.AspNetCore</PackageId>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Authors>P4 Software</Authors>
     <Company>P4 Software</Company>
     <Description>ASP.NET Core helpers for SheetStream: return a streamed .xlsx download from a minimal API or controller in one line, with flat memory and no synchronous I/O.</Description>

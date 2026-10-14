@@ -6,6 +6,8 @@
   href: templates.md
 - name: Editing existing workbooks
   href: editing-workbooks.md
+- name: Trimming, Native AOT and the source generator
+  href: aot-and-source-generator.md
 - name: Analyzers
   href: analyzers.md
 - name: API reference

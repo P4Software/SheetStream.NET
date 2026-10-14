@@ -2,6 +2,22 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.4.0 (2026-10-14)
+
+### Added
+
+- **Edit small existing workbooks**: `ExcelPackage.Edit(path)` (in place, atomic replace) or `Edit(input, output)`, then `Worksheets.Edit(name)` loads the sheet into `Cells[...]`: read values, change cells, add rows, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()`. Untouched cells, rows, formulas (shared and array formulas included), charts, tables and other sheets are written back unchanged. Guarded by `PackageOptions.MaxEditableCells` (200,000 by default); large files keep using streaming or templates.
+- **Trimming and Native AOT**: the `net8.0` build is `IsTrimmable` and `IsAotCompatible`. A bundled **source generator** turns `[SheetRow] partial` types into compile-time mappers (`ISheetRowMapper<T>`, `SheetMappers`), so `LoadFromCollection<T>`, `LoadFromAsyncEnumerable<T>` and `ExcelReader.Read<T>` work without reflection or `Expression.Compile`; new overloads take a mapper explicitly. Reflection stays the fallback for unmarked types and is now annotated for the trimmer.
+- **Roslyn analyzer** shipped inside the package: **SS0001** layout setting after rows were written, **SS0002** `Row()` and `Cells[]` mixed on one sheet, **SS0003** rows written out of order. Warnings at design time instead of exceptions at run time.
+- **Reader**: `ReadMergedRanges` and `ReadHyperlinks` (issue #6) read a sheet's merged cells and links, external URLs resolved from the sheet relationships, without parsing the rows.
+- **Benchmarks**: 1,000,000-row and 1,000 × 10,000-column write scenarios, and read benchmarks against MiniExcel, ExcelDataReader, ClosedXML, EPPlus and NPOI.
+- **Web sample** (`samples/SheetStream.Sample.Web`): a minimal API with a download button, a 50,000-row streamed export and a `Cells[...]` report with charts; double-click `run.cmd`. A [DotNetFiddle](https://dotnetfiddle.net/BR59ju) runs the quick start in the browser.
+- **Trust signals**: OpenSSF Scorecard workflow and badge, an SPDX SBOM and a signed build-provenance attestation attached to every release (`gh attestation verify <nupkg> --owner P4Software`), a coverage badge served from the docs site, and every GitHub Action pinned to a commit SHA.
+
+### Changed
+
+- The release workflow signs provenance in a job that only sees the finished packages; the build job stays read-only.
+
 ## 0.3.0 (2026-10-13)
 
 ### Added

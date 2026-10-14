@@ -59,7 +59,7 @@ public class ReaderFuzzTests
     [InlineData("xl/styles.xml")]
     [InlineData("xl/workbook.xml")]
     [InlineData("xl/_rels/workbook.xml.rels")]
-    public void MutatedXml_FailsCleanlyOrReads(string part)
+    public async Task MutatedXml_FailsCleanlyOrReads(string part)
     {
         var seed = Seed();
         var rng = new Random(part.GetHashCode() ^ 12345); // Deterministic per part, so failures reproduce.
@@ -88,17 +88,20 @@ public class ReaderFuzzTests
 
             try
             {
+                // Awaiting (instead of Task.Wait) keeps the test thread free; a reader that hangs on damaged
+                // input still fails the test after the timeout instead of blocking the whole run.
                 var task = Task.Run(() => ReadEverything(mutated));
-                Assert.True(task.Wait(TimeSpan.FromSeconds(10)), $"Reader hung on iteration {iteration} of {part}.");
+                Assert.True(await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10))) == task, $"Reader hung on iteration {iteration} of {part}.");
+                await task;
             }
-            catch (AggregateException agg) when (agg.InnerException != null && IsExpected(agg.InnerException))
+            catch (Exception ex) when (IsExpected(ex))
             {
                 // A clear rejection is the correct outcome for damaged input.
                 rejected++;
             }
-            catch (AggregateException agg)
+            catch (Exception ex) when (ex is not Xunit.Sdk.XunitException)
             {
-                Assert.Fail($"Iteration {iteration} of {part}: unexpected {agg.InnerException?.GetType().Name}: {agg.InnerException?.Message}");
+                Assert.Fail($"Iteration {iteration} of {part}: unexpected {ex.GetType().Name}: {ex.Message}");
             }
         }
         // Guard against a fuzzer that never reaches the error paths (for example a part the reader ignores).
