@@ -142,6 +142,16 @@ sheet.AddComment(2, 3, "Checked by finance", author: "Glenn");
 workbook.DefinedNames.Add("TaxRate", "'Settings'!B2");
 ```
 
+### Formula results for viewers that do not calculate
+
+```csharp
+sheet.CacheFormulaResults();                                      // Before the first row; about 8 bytes per numeric cell
+sheet.Row().WriteCell("Total").WriteFormula("SUM(C2:C101)");      // Written with its result
+sheet.Row().WriteCell("Avg").WriteFormula("ROUND(AVERAGE(C2:C101), 2)");
+```
+
+File previews, Quick Look, some mobile viewers and `ExcelReader` show formula cells blank unless the file carries a cached result. Opt in per sheet and SheetStream evaluates `+ - * / %`, `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND` and `ABS` over cells already written on that sheet. Anything else (other sheets, `IF`, forward references, names) is written as before, with no value and Excel calculating on open: never a wrong value.
+
 ### Layout, printing and protection
 
 ```csharp
