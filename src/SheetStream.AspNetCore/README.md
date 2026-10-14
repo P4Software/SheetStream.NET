@@ -1,6 +1,6 @@
 # SheetStream.AspNetCore
 
-ASP.NET Core helpers for [SheetStream](https://www.nuget.org/packages/SheetStream), the MIT-licensed, zero-dependency streaming `.xlsx` library.
+ASP.NET Core helpers for [SheetStream.NET](https://www.nuget.org/packages/SheetStream.NET), the MIT-licensed, zero-dependency streaming `.xlsx` library.
 
 ```bash
 dotnet add package SheetStream.AspNetCore

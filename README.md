@@ -5,11 +5,11 @@ A fast, zero-dependency, **MIT-licensed** .NET library for creating, filling, ed
 SheetStream streams rows straight into the file instead of building the workbook in memory, so large exports stay fast and memory stays flat. It was built at P4 Software when EPPlus moved to a commercial licence, and it covers what business reports actually use: styles, tables, charts, conditional formatting, validation, templates designed in Excel, and a streaming reader for imports.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![NuGet](https://img.shields.io/nuget/v/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
+[![NuGet](https://img.shields.io/nuget/v/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET)
 [![Build](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
 [![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream.NET/)
-[![Downloads](https://img.shields.io/nuget/dt/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream%2Fcoverage.json)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
+[![Downloads](https://img.shields.io/nuget/dt/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream.NET%2Fcoverage.json)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/P4Software/SheetStream.NET/badge)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream.NET)
 
 ## ✨ Why SheetStream?
