@@ -129,7 +129,7 @@ namespace SheetStream
         public RowWriter WriteCell(string? value, CellStyle? style = null)
         {
             if (value == null) return WriteEmpty(style);
-            return _sheet.Workbook.Package.Options.UseSharedStrings ? WriteSharedString(value, style) : WriteInlineString(value, style);
+            return _sheet.Workbook.UseSharedStrings ? WriteSharedString(value, style) : WriteInlineString(value, style);
         }
 
         /// <summary>

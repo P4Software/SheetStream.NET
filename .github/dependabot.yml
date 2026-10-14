@@ -1,0 +1,22 @@
+# Keeps the CI actions and the test/benchmark packages current. The library itself has no package
+# dependencies, so updates here never change what consumers download.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # EPPlus 5+ requires a commercial licence; the benchmarks deliberately compare against 4.5.3.3 (LGPL).
+      - dependency-name: EPPlus
+    groups:
+      test-and-tooling:
+        patterns: ["*"]

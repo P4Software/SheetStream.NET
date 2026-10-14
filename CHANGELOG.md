@@ -2,6 +2,18 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.3.0 (2026-10-13)
+
+### Added
+
+- **Template filling**: `ExcelPackage.OpenTemplate(template, output)` and `Worksheets.Open(name)` stream rows into a workbook designed in Excel. Everything not touched is copied unchanged; tables, filters, data validations and conditional formats on the first data row stretch over the new rows; template styles are reusable with `TemplateStyle("D5")`; new styles append to the template's style table; the calculation chain is dropped and the workbook recalculates on open.
+- **Async loading** (.NET 8+): `Worksheet.LoadFromAsyncEnumerable(...)` streams an `IAsyncEnumerable<T>` such as an EF Core query, with cancellation.
+- **SheetStream.AspNetCore** package: `ExcelResults.Excel(...)` and `Results.Extensions.Excel(...)` return a streamed download from minimal APIs and controllers, with flat memory, accurate `Content-Length`, correct non-ASCII file names and no synchronous I/O.
+- **Documentation site** at https://p4software.github.io/SheetStream/ with guides and the API reference generated from the XML comments.
+- **Migration guide** from EPPlus, built on a real production exporter and compiled as a test.
+- **Benchmarks** project comparing SheetStream with EPPlus 4.5.3.3, ClosedXML, MiniExcel and NPOI.
+- Reader **fuzz tests**, code coverage in CI, `SECURITY.md` and Dependabot.
+
 ## 0.2.0 (2026-10-13)
 
 Closes most of the gap with EPPlus while keeping the streaming, zero-dependency design.

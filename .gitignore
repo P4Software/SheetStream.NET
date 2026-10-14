@@ -18,3 +18,8 @@ TestResults/
 
 # Local pack output
 artifacts/
+
+# DocFX output
+docs/_site/
+docs/api/
+coverage/

@@ -56,6 +56,15 @@ namespace SheetStream.Styles
         private CellStyle? _hyperlinkStyle;
         private int _hyperlinkFontId = -1;
 
+        // Template ("append") mode: the template's own fonts, fills, borders, cell formats and differential
+        // formats keep their indexes 0..base-1 and new ones are numbered after them. In normal mode every base
+        // is 0 and the lists start with the mandatory defaults.
+        private bool _appendMode;
+        private int _fontBase, _fillBase, _borderBase, _xfBase, _dxfBase;
+        private int _nextNumberFormatId = FirstCustomNumberFormatId;
+        private readonly List<XfSpec> _templateXfs = new List<XfSpec>();
+        private readonly Dictionary<string, int> _templateCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
         internal StyleSheet()
         {
             // Index 0 of every table is the workbook default and must exist even if never referenced.
@@ -78,8 +87,8 @@ namespace SheetStream.Styles
         /// <summary>The workbook default style (Calibri 11, no fill, no border, General format).</summary>
         public CellStyle Default { get; }
 
-        /// <summary>Number of registered cell styles, including the default.</summary>
-        public int Count => _xfs.Count;
+        /// <summary>Number of registered cell styles, including the default (and the template's, when filling one).</summary>
+        public int Count => _xfBase + _xfs.Count;
 
         /// <summary>
         /// Creates (or reuses) a style from a configuration callback.
@@ -142,7 +151,7 @@ namespace SheetStream.Styles
                 o.Fill.BackgroundColor, BorderSpec.From(o.Border), numFmtId, numFmtCode);
             if (!_dxfIndex.TryGetValue(spec, out var id))
             {
-                id = _dxfs.Count;
+                id = _dxfBase + _dxfs.Count;
                 _dxfs.Add(spec);
                 _dxfIndex[spec] = id;
             }
@@ -159,8 +168,10 @@ namespace SheetStream.Styles
             {
                 if (_hyperlinkStyle != null) return _hyperlinkStyle;
                 _hyperlinkFontId = RegisterFont(new FontSpec(false, false, true, false, 11, "Calibri", "FF0563C1"));
+                // The built-in Hyperlink master style (cellStyleXfs[1]) only exists in workbooks we write from
+                // scratch; in a template the index could point at an unrelated style, so parent to Normal.
                 var xf = new XfSpec(0, _hyperlinkFontId, 0, 0, HorizontalAlignment.General, VerticalAlignment.Bottom, false,
-                    false, 0, 0, true, false, 1);
+                    false, 0, 0, true, false, _appendMode ? 0 : 1);
                 _hyperlinkStyle = new CellStyle(RegisterXf(xf));
                 return _hyperlinkStyle;
             }
@@ -172,13 +183,28 @@ namespace SheetStream.Styles
         /// </summary>
         internal double WidthFactor(int styleId)
         {
-            if (styleId <= 0 || styleId >= _xfs.Count) return 1.0;
-            var font = _fonts[_xfs[styleId].FontId];
+            if (styleId <= 0 || !TryGetXf(styleId, out var xf)) return 1.0;
+            var local = xf.FontId - _fontBase;
+            if (local < 0 || local >= _fonts.Count) return 1.0; // A template font: metrics unknown.
+            var font = _fonts[local];
             return font.Size / 11.0 * (font.Bold ? 1.1 : 1.0);
         }
 
         /// <summary>Number format id of a style, used by AutoFit to estimate the displayed width of numbers.</summary>
-        internal int NumberFormatId(int styleId) => styleId <= 0 || styleId >= _xfs.Count ? 0 : _xfs[styleId].NumFmtId;
+        internal int NumberFormatId(int styleId) => styleId > 0 && TryGetXf(styleId, out var xf) ? xf.NumFmtId : 0;
+
+        /// <summary>Looks up a cell format by its global index, whether it came from the template or was added here.</summary>
+        private bool TryGetXf(int id, out XfSpec xf)
+        {
+            if (id >= 0 && id < _xfBase && id < _templateXfs.Count) { xf = _templateXfs[id]; return true; }
+            var local = id - _xfBase;
+            if (local >= 0 && local < _xfs.Count) { xf = _xfs[local]; return true; }
+            xf = default;
+            return false;
+        }
+
+        /// <summary>True when <paramref name="id"/> is a valid cell format index for this workbook.</summary>
+        internal bool IsValidStyleId(int id) => id >= 0 && id < _xfBase + _xfs.Count;
 
         /// <summary>Style applied to <see cref="DateTime"/> cells written without an explicit style (built-in format 14).</summary>
         internal CellStyle DateStyle => _dateStyle ??= Create(o => o.NumberFormat = "mm-dd-yy");
@@ -197,8 +223,7 @@ namespace SheetStream.Styles
         /// </summary>
         internal CellStyle WithNumberFormat(CellStyle baseStyle, string formatCode)
         {
-            var xf = _xfs[baseStyle.Id];
-            if (xf.NumFmtId != 0) return baseStyle;
+            if (!TryGetXf(baseStyle.Id, out var xf) || xf.NumFmtId != 0) return baseStyle;
             var derived = xf.WithNumberFormat(RegisterNumberFormat(formatCode));
             return new CellStyle(RegisterXf(derived));
         }
@@ -206,7 +231,7 @@ namespace SheetStream.Styles
         private int RegisterFont(FontSpec font)
         {
             if (_fontIndex.TryGetValue(font, out var id)) return id;
-            id = _fonts.Count;
+            id = _fontBase + _fonts.Count;
             _fonts.Add(font);
             _fontIndex[font] = id;
             return id;
@@ -216,7 +241,7 @@ namespace SheetStream.Styles
         {
             if (color == null) return 0;
             if (_fillIndex.TryGetValue(color, out var id)) return id;
-            id = _fills.Count;
+            id = _fillBase + _fills.Count;
             _fills.Add(color);
             _fillIndex[color] = id;
             return id;
@@ -225,7 +250,7 @@ namespace SheetStream.Styles
         private int RegisterBorder(BorderSpec border)
         {
             if (_borderIndex.TryGetValue(border, out var id)) return id;
-            id = _borders.Count;
+            id = _borderBase + _borders.Count;
             _borders.Add(border);
             _borderIndex[border] = id;
             return id;
@@ -236,7 +261,7 @@ namespace SheetStream.Styles
             if (string.IsNullOrEmpty(formatCode)) return 0;
             if (BuiltInNumberFormats.TryGetValue(formatCode!, out var builtIn)) return builtIn;
             if (_numberFormatIndex.TryGetValue(formatCode!, out var id)) return id;
-            id = FirstCustomNumberFormatId + _customNumberFormats.Count;
+            id = _nextNumberFormatId++;
             _customNumberFormats.Add(new KeyValuePair<int, string>(id, formatCode!));
             _numberFormatIndex[formatCode!] = id;
             return id;
@@ -245,10 +270,212 @@ namespace SheetStream.Styles
         private int RegisterXf(XfSpec xf)
         {
             if (_xfIndex.TryGetValue(xf, out var id)) return id;
-            id = _xfs.Count;
+            id = _xfBase + _xfs.Count;
             _xfs.Add(xf);
             _xfIndex[xf] = id;
             return id;
+        }
+
+        /// <summary>
+        /// Switches to template mode by reading the template's <c>styles.xml</c>: records how many fonts, fills,
+        /// borders, cell formats and differential formats it has, remembers its custom number formats (so equal
+        /// codes are reused) and parses its cell formats (so a template style can be combined with a date format).
+        /// </summary>
+        internal void AttachTemplate(XmlReader r)
+        {
+            _appendMode = true;
+            _fonts.Clear(); _fills.Clear(); _borders.Clear(); _xfs.Clear();
+            _fontIndex.Clear(); _fillIndex.Clear(); _borderIndex.Clear(); _xfIndex.Clear();
+
+            var maxNumFmt = FirstCustomNumberFormatId - 1;
+            string? collection = null;
+            var collectionDepth = -1;
+            XfSpec? pending = null;
+            var pendingDepth = -1;
+            while (r.Read())
+            {
+                if (r.NodeType == XmlNodeType.EndElement)
+                {
+                    if (pending.HasValue && r.Depth == pendingDepth) { _templateXfs.Add(pending.Value); pending = null; }
+                    if (r.Depth == collectionDepth) { collection = null; collectionDepth = -1; }
+                    continue;
+                }
+                if (r.NodeType != XmlNodeType.Element) continue;
+
+                if (r.Depth == 1)
+                {
+                    collection = r.LocalName;
+                    collectionDepth = 1;
+                    _templateCounts[collection] = 0;
+                    if (r.IsEmptyElement) { collection = null; collectionDepth = -1; }
+                    continue;
+                }
+                if (collection != null && r.Depth == 2)
+                {
+                    _templateCounts[collection]++;
+                    if (collection == "numFmts" && r.LocalName == "numFmt")
+                    {
+                        var id = TemplateSource.Int(r.GetAttribute("numFmtId")) ?? 0;
+                        if (id > maxNumFmt) maxNumFmt = id;
+                        var code = r.GetAttribute("formatCode");
+                        if (code != null && !_numberFormatIndex.ContainsKey(code)) _numberFormatIndex[code] = id;
+                    }
+                    else if (collection == "cellXfs" && r.LocalName == "xf")
+                    {
+                        var xf = XfSpec.FromTemplate(r);
+                        if (r.IsEmptyElement) _templateXfs.Add(xf);
+                        else { pending = xf; pendingDepth = r.Depth; }
+                    }
+                    continue;
+                }
+                if (pending.HasValue && r.Depth == pendingDepth + 1)
+                {
+                    if (r.LocalName == "alignment") pending = pending.Value.WithTemplateAlignment(r);
+                    else if (r.LocalName == "protection") pending = pending.Value.WithTemplateProtection(r);
+                }
+            }
+
+            _fontBase = Count("fonts");
+            _fillBase = Count("fills");
+            _borderBase = Count("borders");
+            _xfBase = Count("cellXfs");
+            _dxfBase = Count("dxfs");
+            _nextNumberFormatId = maxNumFmt + 1;
+
+            // Our defaults map onto the template's defaults, so plain cells inherit the template's look.
+            _fontIndex[FontSpec.Default] = 0;
+            _borderIndex[BorderSpec.Empty] = 0;
+            _xfIndex[XfSpec.Default] = 0;
+
+            int Count(string name) => _templateCounts.TryGetValue(name, out var n) ? n : 0;
+        }
+
+        /// <summary>
+        /// Writes the template's <c>styles.xml</c> with the styles created here appended to each collection and
+        /// the counts corrected. Collections the template lacks (number formats, differential formats) are
+        /// inserted at their schema position.
+        /// </summary>
+        internal void WriteMerged(XmlReader r, XmlWriter w)
+        {
+            w.WriteStartDocument(true);
+            XmlCopy.MoveToRoot(r);
+            XmlCopy.CopyStartElement(r, w);
+            r.Read();
+            var wroteNumFmts = false;
+            var wroteDxfs = false;
+            while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == 0))
+            {
+                if (r.NodeType != XmlNodeType.Element || r.Depth != 1)
+                {
+                    XmlCopy.CopyNode(r, w);
+                    r.Read();
+                    continue;
+                }
+                var name = r.LocalName;
+                if (!wroteNumFmts && _customNumberFormats.Count > 0 && name != "numFmts")
+                {
+                    WriteNumberFormats(w, _customNumberFormats.Count, null);
+                    wroteNumFmts = true;
+                }
+                if (!wroteDxfs && _dxfs.Count > 0 && (name == "tableStyles" || name == "colors" || name == "extLst"))
+                {
+                    WriteDifferentials(w, _dxfs.Count, null);
+                    wroteDxfs = true;
+                }
+                switch (name)
+                {
+                    case "numFmts":
+                        MergeCollection(r, w, _customNumberFormats.Count, () => WriteNumberFormatItems(w));
+                        wroteNumFmts = true;
+                        break;
+                    case "fonts":
+                        MergeCollection(r, w, _fonts.Count, () => { foreach (var f in _fonts) f.WriteTo(w); });
+                        break;
+                    case "fills":
+                        MergeCollection(r, w, _fills.Count, () => { foreach (var f in _fills) WritePatternFill(w, "solid", f); });
+                        break;
+                    case "borders":
+                        MergeCollection(r, w, _borders.Count, () => { foreach (var b in _borders) b.WriteTo(w); });
+                        break;
+                    case "cellXfs":
+                        MergeCollection(r, w, _xfs.Count, () => { foreach (var x in _xfs) x.WriteTo(w); });
+                        break;
+                    case "dxfs":
+                        MergeCollection(r, w, _dxfs.Count, () => { foreach (var d in _dxfs) d.WriteTo(w); });
+                        wroteDxfs = true;
+                        break;
+                    default:
+                        XmlCopy.CopySubtree(r, w);
+                        break;
+                }
+            }
+            if (!wroteDxfs && _dxfs.Count > 0) WriteDifferentials(w, _dxfs.Count, null);
+            w.WriteEndElement();
+            w.WriteEndDocument();
+        }
+
+        /// <summary>Copies a collection element, fixing its count and appending <paramref name="extra"/> new items.</summary>
+        private void MergeCollection(XmlReader r, XmlWriter w, int extra, Action writeExtra)
+        {
+            var name = r.LocalName;
+            var total = (_templateCounts.TryGetValue(name, out var n) ? n : 0) + extra;
+            XmlCopy.AttributeRewriter fixCount = (element, attribute, value) =>
+                element == name && attribute == "count" ? total.ToString(CultureInfo.InvariantCulture) : value;
+            var depth = r.Depth;
+            var empty = r.IsEmptyElement;
+            // Write the start tag manually so an empty template collection can still receive items.
+            w.WriteStartElement(r.Prefix, r.LocalName, r.NamespaceURI);
+            var hadCount = false;
+            if (r.MoveToFirstAttribute())
+            {
+                do
+                {
+                    if (r.LocalName == "count") { hadCount = true; w.WriteAttributeString("count", total.ToString(CultureInfo.InvariantCulture)); }
+                    else w.WriteAttributeString(r.Prefix, r.LocalName, r.NamespaceURI, r.Value);
+                }
+                while (r.MoveToNextAttribute());
+                r.MoveToElement();
+            }
+            if (!hadCount) w.WriteAttributeString("count", total.ToString(CultureInfo.InvariantCulture));
+            r.Read();
+            if (!empty)
+            {
+                while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == depth))
+                {
+                    if (r.NodeType == XmlNodeType.Element) XmlCopy.CopySubtree(r, w, fixCount);
+                    else { XmlCopy.CopyNode(r, w); r.Read(); }
+                }
+                r.Read(); // past the collection's end tag
+            }
+            writeExtra();
+            w.WriteEndElement();
+        }
+
+        private void WriteNumberFormats(XmlWriter w, int count, int? templateCount)
+        {
+            w.WriteStartElement("numFmts", OpenXmlNamespaces.Main);
+            WriteCount(w, count + (templateCount ?? 0));
+            WriteNumberFormatItems(w);
+            w.WriteEndElement();
+        }
+
+        private void WriteNumberFormatItems(XmlWriter w)
+        {
+            foreach (var pair in _customNumberFormats)
+            {
+                w.WriteStartElement("numFmt", OpenXmlNamespaces.Main);
+                w.WriteAttributeString("numFmtId", pair.Key.ToString(CultureInfo.InvariantCulture));
+                w.WriteAttributeString("formatCode", XmlTextUtil.Sanitize(pair.Value));
+                w.WriteEndElement();
+            }
+        }
+
+        private void WriteDifferentials(XmlWriter w, int count, int? templateCount)
+        {
+            w.WriteStartElement("dxfs", OpenXmlNamespaces.Main);
+            WriteCount(w, count + (templateCount ?? 0));
+            foreach (var d in _dxfs) d.WriteTo(w);
+            w.WriteEndElement();
         }
 
         /// <summary>
@@ -292,7 +519,7 @@ namespace SheetStream.Styles
             w.WriteEndElement();
 
             // Master cell styles: "Normal" (xfId 0) always, plus the built-in "Hyperlink" (xfId 1) when used.
-            var hasHyperlink = _hyperlinkFontId >= 0;
+            var hasHyperlink = _hyperlinkFontId >= 0 && !_appendMode;
             w.WriteStartElement("cellStyleXfs");
             WriteCount(w, hasHyperlink ? 2 : 1);
             w.WriteStartElement("xf");
@@ -549,6 +776,39 @@ namespace SheetStream.Styles
 
             public XfSpec WithNumberFormat(int numFmtId)
                 => new XfSpec(numFmtId, FontId, FillId, BorderId, HAlign, VAlign, Wrap, Shrink, Indent, Rotation, Locked, HideFormula, ParentXf);
+
+            /// <summary>Reads the attributes of a template <c>xf</c> element (children are applied separately).</summary>
+            public static XfSpec FromTemplate(XmlReader r)
+                => new XfSpec(TemplateSource.Int(r.GetAttribute("numFmtId")) ?? 0, TemplateSource.Int(r.GetAttribute("fontId")) ?? 0,
+                    TemplateSource.Int(r.GetAttribute("fillId")) ?? 0, TemplateSource.Int(r.GetAttribute("borderId")) ?? 0,
+                    HorizontalAlignment.General, VerticalAlignment.Bottom, false, false, 0, 0, true, false,
+                    TemplateSource.Int(r.GetAttribute("xfId")) ?? 0);
+
+            /// <summary>Applies a template <c>alignment</c> element.</summary>
+            public XfSpec WithTemplateAlignment(XmlReader r)
+            {
+                var h = r.GetAttribute("horizontal") switch
+                {
+                    "left" => HorizontalAlignment.Left, "center" => HorizontalAlignment.Center, "right" => HorizontalAlignment.Right,
+                    "fill" => HorizontalAlignment.Fill, "justify" => HorizontalAlignment.Justify, _ => HorizontalAlignment.General,
+                };
+                var v = r.GetAttribute("vertical") switch
+                {
+                    "top" => VerticalAlignment.Top, "center" => VerticalAlignment.Center, "justify" => VerticalAlignment.Justify, _ => VerticalAlignment.Bottom,
+                };
+                return new XfSpec(NumFmtId, FontId, FillId, BorderId, h, v, Flag(r.GetAttribute("wrapText")), Flag(r.GetAttribute("shrinkToFit")),
+                    TemplateSource.Int(r.GetAttribute("indent")) ?? 0, TemplateSource.Int(r.GetAttribute("textRotation")) ?? 0, Locked, HideFormula, ParentXf);
+            }
+
+            /// <summary>Applies a template <c>protection</c> element.</summary>
+            public XfSpec WithTemplateProtection(XmlReader r)
+            {
+                var locked = r.GetAttribute("locked");
+                return new XfSpec(NumFmtId, FontId, FillId, BorderId, HAlign, VAlign, Wrap, Shrink, Indent, Rotation,
+                    locked == null || Flag(locked), Flag(r.GetAttribute("hidden")), ParentXf);
+            }
+
+            private static bool Flag(string? v) => v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
 
             private ((int, int, int, int, int), (HorizontalAlignment, VerticalAlignment, bool, bool, int, int), (bool, bool)) Key
                 => ((NumFmtId, FontId, FillId, BorderId, ParentXf), (HAlign, VAlign, Wrap, Shrink, Indent, Rotation), (Locked, HideFormula));

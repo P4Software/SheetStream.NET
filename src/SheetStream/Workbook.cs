@@ -44,6 +44,25 @@ namespace SheetStream
         /// <summary>True once any sheet has written a formula; the package then asks Excel to recalculate on open.</summary>
         internal bool HasFormulas { get; set; }
 
+        /// <summary>The template being filled, or null for a workbook written from scratch.</summary>
+        internal TemplateSource? Template { get; private set; }
+
+        /// <summary>
+        /// Whether text cells go through the shared string table. A template without a shared strings part gets
+        /// inline strings, which avoids adding a part, a relationship and a content type to someone else's file.
+        /// </summary>
+        internal bool UseSharedStrings => Package.Options.UseSharedStrings && (Template == null || Template.SharedStringsPart != null);
+
+        /// <summary>Puts the workbook in template mode: styles and shared strings continue the template's numbering.</summary>
+        internal void AttachTemplate(TemplateSource template)
+        {
+            Template = template;
+            SharedStrings.AttachTemplate(template.SharedStringCount, template.PlainSharedStrings);
+            using (var archive = template.OpenArchive())
+            using (var r = template.OpenXml(archive, template.StylesPart!)!)
+                Styles.AttachTemplate(r);
+        }
+
         /// <summary>Workbook protection verifier (hash, salt) and flags, or null when unprotected.</summary>
         internal (string? Hash, string? Salt, bool Structure, bool Windows)? Protection { get; private set; }
 

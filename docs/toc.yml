@@ -1,0 +1,8 @@
+- name: Guide
+  href: index.md
+- name: Migrating from EPPlus
+  href: migrating-from-epplus.md
+- name: Filling templates
+  href: templates.md
+- name: API reference
+  href: api/

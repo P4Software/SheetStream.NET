@@ -59,6 +59,7 @@ namespace SheetStream
         {
             if (minWidth < 0 || maxWidth > 255 || minWidth > maxWidth) throw new ArgumentOutOfRangeException(nameof(maxWidth), "Widths must satisfy 0 <= minWidth <= maxWidth <= 255.");
             EnsureNotSealed();
+            if (_templateSource != null) throw new NotSupportedException($"Sheet '{Name}' fills a template, so its column widths come from the template.");
             if (_bodyStarted) throw new InvalidOperationException("AutoFitColumns must be called before the first row is written, so the rows can be measured.");
             _autoFit = true;
             _autoFitMin = minWidth;

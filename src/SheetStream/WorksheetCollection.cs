@@ -42,6 +42,8 @@ namespace SheetStream
         /// </param>
         public Worksheet Add(string name)
         {
+            if (_workbook.Template != null)
+                throw new NotSupportedException("A workbook filled from a template keeps the template's sheets. Use Worksheets.Open(name) to fill one, or add the sheet to the template in Excel.");
             ValidateName(name);
             if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot add a worksheet after the package has been saved.");
 
@@ -52,6 +54,34 @@ namespace SheetStream
             var sheet = new Worksheet(_workbook, index, name, writer);
             _sheets.Add(sheet);
             _names.Add(name);
+            return sheet;
+        }
+
+        /// <summary>
+        /// Opens a sheet of the template for filling (template mode only) and makes it the current one; the
+        /// previously current sheet is sealed. Sheets you do not open are copied unchanged.
+        /// </summary>
+        /// <param name="name">The sheet's tab name in the template (case-insensitive).</param>
+        public Worksheet Open(string name)
+        {
+            var template = _workbook.Template ?? throw new InvalidOperationException("Worksheets.Open is for workbooks created with ExcelPackage.OpenTemplate. Use Worksheets.Add to create sheets.");
+            if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot open a worksheet after the package has been saved.");
+            var position = template.Sheets.FindIndex(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (position < 0)
+            {
+                var names = new List<string>();
+                foreach (var s in template.Sheets) names.Add(s.Name);
+                throw new ArgumentException($"The template has no sheet named '{name}'. Sheets: {string.Join(", ", names)}.", nameof(name));
+            }
+            if (!_names.Add(template.Sheets[position].Name))
+                throw new InvalidOperationException($"Sheet '{name}' has already been filled. Each template sheet can be opened once.");
+
+            Current?.Seal();
+            var (sheetName, part) = template.Sheets[position];
+            var writer = _workbook.Package.OpenPart(part);
+            var sheet = new Worksheet(_workbook, position + 1, sheetName, writer);
+            sheet.AttachTemplate(template, part);
+            _sheets.Add(sheet);
             return sheet;
         }
 

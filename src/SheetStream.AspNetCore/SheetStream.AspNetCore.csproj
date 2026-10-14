@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- ASP.NET Core ships with the shared framework, so this adds no NuGet dependency beyond SheetStream itself. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>true</IsPackable>
+
+    <PackageId>SheetStream.AspNetCore</PackageId>
+    <Version>0.3.0</Version>
+    <Authors>P4 Software</Authors>
+    <Company>P4 Software</Company>
+    <Description>ASP.NET Core helpers for SheetStream: return a streamed .xlsx download from a minimal API or controller in one line, with flat memory and no synchronous I/O.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/P4Software/SheetStream</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/P4Software/SheetStream</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>excel;xlsx;aspnetcore;download;export;streaming;epplus</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../SheetStream/SheetStream.csproj" />
+    <InternalsVisibleTo Include="SheetStream.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../icon.png" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>

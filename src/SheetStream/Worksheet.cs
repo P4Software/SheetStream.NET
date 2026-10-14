@@ -267,6 +267,8 @@ namespace SheetStream
 
             EnsureBodyStarted();
             _row.End();
+            if (_templateSource != null) MergeTemplateRowsBefore(index);
+            else if (_firstWrittenRow == 0) _firstWrittenRow = index;
             CurrentRow = index;
             if (options != null)
             {
@@ -287,6 +289,14 @@ namespace SheetStream
             FlushBuffer();
             EnsureBodyStarted(); // A sheet with no rows still needs a (possibly empty) sheetData element.
             _row.End();
+
+            if (_templateSource != null)
+            {
+                FinishTemplateSheet();
+                _part.Dispose();
+                _sealed = true;
+                return;
+            }
 
             if (_spill != null)
             {
@@ -355,6 +365,11 @@ namespace SheetStream
         {
             if (_headerWritten) return;
             _headerWritten = true;
+            if (_templateSource != null)
+            {
+                CopyTemplateHeader();
+                return;
+            }
 
             _part.WriteStartDocument(true);
             _part.WriteStartElement("worksheet", OpenXmlNamespaces.Main);
@@ -598,6 +613,8 @@ namespace SheetStream
         internal void EnsureHeaderNotWritten(string what)
         {
             EnsureNotSealed();
+            if (_templateSource != null)
+                throw new NotSupportedException($"{what} comes from the template for sheet '{Name}'. Change it in the template in Excel.");
             if (_headerWritten || (_bodyStarted && !_autoFit))
                 throw new InvalidOperationException($"{what} must be defined before the first row is written. SheetStream streams the sheet forward-only and the OpenXML schema places this setting before the sheet data. Set it first, or enable AutoFitColumns() / use Cells[...] to defer the header.");
         }

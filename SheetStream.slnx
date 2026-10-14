@@ -3,6 +3,7 @@
     <Project Path="samples/SheetStream.Sample/SheetStream.Sample.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj" />
     <Project Path="src/SheetStream/SheetStream.csproj" />
   </Folder>
   <Folder Name="/tests/">

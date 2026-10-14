@@ -35,7 +35,7 @@ namespace SheetStream
     /// package.Save();
     /// </code>
     /// </example>
-    public sealed class ExcelPackage : IDisposable
+    public sealed partial class ExcelPackage : IDisposable
     {
         private static readonly XmlWriterSettings WriterSettings = new XmlWriterSettings
         {
@@ -144,6 +144,12 @@ namespace SheetStream
 
         private void SaveCore()
         {
+            if (Workbook.Template != null)
+            {
+                SaveTemplate(Workbook.Template);
+                _saved = true;
+                return;
+            }
 
             // Excel refuses a workbook without sheets, and one whose sheets are all hidden.
             if (Workbook.Worksheets.Count == 0) Workbook.Worksheets.Add("Sheet1");

@@ -1,30 +1,32 @@
 # 🚀 SheetStream
 
-A lightning-fast, zero-dependency, **100% MIT-licensed** .NET library for creating and reading Excel (`.xlsx`) files.
+A fast, zero-dependency, **MIT-licensed** .NET library for creating, filling and reading Excel (`.xlsx`) files.
 
-Stop paying thousands of dollars in commercial developer subscriptions just to write a spreadsheet. **SheetStream** uses a highly optimized, streaming XML engine to build massive Excel files with ultra-low memory allocation and absolute legal freedom.
+SheetStream streams rows straight into the file instead of building the workbook in memory, so large exports stay fast and memory stays flat. It was built at P4 Software when EPPlus moved to a commercial licence, and it covers what business reports actually use: styles, tables, charts, conditional formatting, validation, templates designed in Excel, and a streaming reader for imports.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![NuGet](https://img.shields.io/nuget/v/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
 [![Build](https://github.com/P4Software/SheetStream/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream/actions/workflows/build.yml)
+[![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream/)
+[![Downloads](https://img.shields.io/nuget/dt/SheetStream.svg)](https://www.nuget.org/packages/SheetStream)
 
 ## ✨ Why SheetStream?
 
-* **⚖️ Zero Financial & Legal Friction:** 100% MIT Licensed. Free for commercial use, personal use, startups, and massive enterprises alike. No license keys, no tier audits, and no required subscriptions.
+* **⚖️ MIT licensed:** free for commercial use with no licence keys or seat counts.
 * **📦 Zero Dependencies:** Built entirely on native .NET `System.IO.Compression` and `System.Xml` APIs. Targets `netstandard2.0` and `net8.0`, so it runs on .NET Framework 4.7.2+ as well as modern .NET.
 * **⚡ High-Performance Streaming:** Rows go straight through an `XmlWriter` into the zip archive. 10 million cells write in about 5 seconds with a 41 MB peak working set, whether the sheet is long or wide.
-* **🧰 The features real reports use:** tables, charts, pictures, conditional formatting, data validation, hyperlinks, comments, rich text, protection, print setup, outlining, AutoFit, and a streaming reader for imports.
-* **✅ Verified ECMA-376 output:** Every feature is validated against the OpenXML schema with the official Open XML SDK validator, and the showcase workbook is opened in real Excel to confirm nothing triggers a repair.
+* **🧰 The features real reports use:** tables, charts, pictures, conditional formatting, data validation, hyperlinks, comments, rich text, protection, print setup, outlining, AutoFit, template filling, async loading, and a streaming reader for imports.
+* **🌐 ASP.NET Core ready:** the optional `SheetStream.AspNetCore` package returns a streamed Excel download in one line.
+* **✅ Verified output:** every feature is validated against the ECMA-376 schema with the Open XML SDK validator in CI, and showcase workbooks are opened in real Excel before each release. The reader is fuzz-tested against damaged files.
 
 ## 📦 Installation
 
 ```bash
 dotnet add package SheetStream
+dotnet add package SheetStream.AspNetCore   # optional: one-line Excel downloads
 ```
 
-```powershell
-Install-Package SheetStream
-```
+Full documentation and API reference: **https://p4software.github.io/SheetStream/**
 
 ## 💻 Quick Start
 
@@ -156,6 +158,33 @@ workbook.Protect("password");                         // Lock the sheet structur
 sheet.Visibility = SheetVisibility.Hidden;
 ```
 
+### Fill templates designed in Excel
+
+```csharp
+using var package = ExcelPackage.OpenTemplate("invoice-template.xlsx", "invoice-1042.xlsx");
+var sheet = package.Workbook.Worksheets.Open("Lines");
+var money = sheet.TemplateStyle("D5");            // Reuse the designer's formatting
+var row = 5;
+foreach (var line in lines)
+    sheet.Row(row++).WriteCell(line.Sku).WriteCell(line.Description).WriteCell(line.Qty).WriteCell(line.Amount, money);
+package.Save();
+```
+
+Logos, header styles, formulas, charts and print settings come from the template. Tables, filters, validations and conditional formats that start on the first data row stretch over the new rows, and formulas like `=SUM(Lines[Amount])` are recalculated when the file opens. See [Filling templates](docs/templates.md).
+
+### Async and ASP.NET Core
+
+```csharp
+// Stream an EF Core query into a sheet without materialising it (.NET 8+)
+await sheet.LoadFromAsyncEnumerable(db.Orders.AsNoTracking().AsAsyncEnumerable(), new LoadOptions { TableName = "Orders" }, ct);
+
+// Minimal API download (SheetStream.AspNetCore)
+app.MapGet("/orders.xlsx", (AppDb db) => ExcelResults.Excel("orders.xlsx", async (wb, ct) =>
+    await wb.Worksheets.Add("Orders").LoadFromAsyncEnumerable(db.Orders.AsAsyncEnumerable(), null, ct)));
+```
+
+The download is built into a temporary file and copied to the response asynchronously: flat memory, an accurate `Content-Length`, and no synchronous I/O on the response.
+
 ### Random access, EPPlus style
 
 ```csharp
@@ -191,27 +220,38 @@ Dates come back as `DateTime` (built-in and custom date formats, 1904 date syste
 | `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
 | `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
 | `ExcelReader` | `Open`, `SheetNames`, `ReadRows`, `Read<T>`, `ReadDataTable` |
+| Templates | `ExcelPackage.OpenTemplate(template, output)`, `Worksheets.Open(name)`, `Worksheet.TemplateStyle(cell)`, `ReplacedTemplateRows` |
+| `SheetStream.AspNetCore` | `ExcelResults.Excel(fileName, build)`, `Results.Extensions.Excel(...)`, `ExcelResult` |
 
-## ⚖️ SheetStream vs EPPlus 8
+## ⚖️ How it compares
 
-| | EPPlus 8 | SheetStream |
-|---|---|---|
-| License | Commercial key for business use | MIT |
-| Dependencies | Several packages | None |
-| Write cells, styles, formats, widths, freeze, filters, merges | ✅ | ✅ |
-| Tables, charts, pictures, conditional formatting, validation | ✅ | ✅ (common chart types) |
-| Hyperlinks, comments, rich text, defined names, protection, print setup, outlining | ✅ | ✅ |
-| AutoFit columns | ✅ font metrics | ✅ character-count estimate |
-| Load from collection / DataTable / DataReader | ✅ | ✅ |
-| Random-access `Cells[r, c]` | ✅ | ✅ (per sheet, in memory) |
-| Read workbooks | ✅ | ✅ streaming, read-only |
-| Large exports | Whole workbook in memory | Streaming, flat memory |
-| Edit and re-save an existing workbook | ✅ | ❌ |
-| Formula calculation engine | ✅ | ❌ Excel calculates on open; cached values can be supplied |
-| Pivot tables | ✅ | ❌ |
-| Sparklines, OLE objects, digital signatures, sensitivity labels, VBA, encryption | ✅ | ❌ |
+| | EPPlus 8 | ClosedXML | MiniExcel | SheetStream |
+|---|---|---|---|---|
+| Licence | Commercial for business use | MIT | Apache 2.0 | MIT |
+| Package dependencies | Several | Several | None | None |
+| Write model | In memory | In memory | Streaming | Streaming |
+| Styles, tables, conditional formatting, validation | ✅ | ✅ | Limited | ✅ |
+| Charts and pictures | ✅ | Pictures only | ❌ | ✅ (common chart types) |
+| Fill a template designed in Excel | ✅ | ✅ | ✅ | ✅ (streaming) |
+| Edit and re-save any existing workbook | ✅ | ✅ | ❌ | ❌ |
+| Read workbooks | ✅ | ✅ | ✅ streaming | ✅ streaming |
+| Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
+| Pivot tables | ✅ | ✅ | ❌ | ❌ |
+
+Performance numbers are in [benchmarks/README.md](benchmarks/README.md), measured with BenchmarkDotNet against EPPlus 4.5.3.3 (its last LGPL version), ClosedXML, MiniExcel and NPOI. The suite is in the repository, so you can rerun it on your own hardware.
+
+### When to choose something else
+
+- **You need to open an arbitrary workbook, change some cells and save it.** SheetStream fills templates but does not edit workbooks in place. Use ClosedXML (MIT) or EPPlus.
+- **You need formulas evaluated in .NET**, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
+- **You need pivot tables, sparklines, macros or encryption.** These are not supported.
+- **You only map simple objects to and from sheets** and want the smallest API. MiniExcel is excellent at that.
+
+SheetStream is the right fit when you write large or styled exports, fill branded templates, stream reports from ASP.NET Core, or read big imports with flat memory, under a licence you never have to think about.
 
 ### Migrating from EPPlus
+
+The full guide, with a real exporter converted line by line, is in [docs/migrating-from-epplus.md](docs/migrating-from-epplus.md).
 
 | EPPlus | SheetStream |
 |---|---|
@@ -255,6 +295,8 @@ dotnet run --project samples/SheetStream.Sample                         # Financ
 dotnet run --project samples/SheetStream.Sample -- showcase              # Showcase.xlsx: every feature
 dotnet run -c Release --project samples/SheetStream.Sample -- 1000000    # 1M-row stress run
 dotnet run -c Release --project samples/SheetStream.Sample -- 5000 2000  # 10M-cell wide stress run
+dotnet run -c Release --project benchmarks/SheetStream.Benchmarks          # comparison benchmarks
+dotnet tool restore && dotnet docfx docs/docfx.json --serve                 # documentation site on localhost
 ```
 
 ## 🚢 Releasing
@@ -270,7 +312,7 @@ The `Release` workflow refuses to run if the tag and the csproj version disagree
 
 ## 🤝 Contributing
 
-We welcome the .NET community to help build the best free spreadsheet engine out there! See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [good first issues](https://github.com/P4Software/SheetStream/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), and [Discussions](https://github.com/P4Software/SheetStream/discussions) for questions. Security reports go through [SECURITY.md](SECURITY.md).
 
 ## 📄 License
 
