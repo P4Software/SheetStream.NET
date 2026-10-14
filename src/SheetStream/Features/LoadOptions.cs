@@ -69,14 +69,21 @@ namespace SheetStream
     /// <summary>The cells a load call wrote, for follow-up formatting such as charts or totals.</summary>
     public readonly struct LoadResult
     {
-        internal LoadResult(int firstRow, int lastRow, int firstColumn, int lastColumn, int dataRows)
+        private readonly string[]? _headers;
+
+        internal LoadResult(int firstRow, int lastRow, int firstColumn, int lastColumn, int dataRows, string[]? headers = null, ExcelTable? table = null)
         {
             FirstRow = firstRow;
             LastRow = lastRow;
             FirstColumn = firstColumn;
             LastColumn = lastColumn;
             DataRows = dataRows;
+            _headers = headers;
+            Table = table;
         }
+
+        /// <summary>The Excel table created over the data when <see cref="LoadOptions.TableName"/> was set, otherwise null.</summary>
+        public ExcelTable? Table { get; }
 
         /// <summary>First row written (the header row when headers are printed).</summary>
         public int FirstRow { get; }
@@ -92,5 +99,17 @@ namespace SheetStream
 
         /// <summary>Number of data rows (excluding the header).</summary>
         public int DataRows { get; }
+
+        /// <summary>
+        /// The column header texts in column order (empty when nothing was loaded). Pass them to
+        /// <see cref="Worksheet.AddPivotTable(string, string, string, int, int, IReadOnlyList{string})"/> on a later
+        /// sheet: the source rows have already been streamed out, so the pivot cannot read them back.
+        /// </summary>
+        public IReadOnlyList<string> Headers => _headers ?? Array.Empty<string>();
+
+        /// <summary>The loaded block as an A1 range including the header row, e.g. "A2:F62"; the pivot source range.</summary>
+        public string Range => LastColumn < FirstColumn
+            ? Internal.CellReference.ToA1(FirstRow, FirstColumn)
+            : Internal.CellReference.ToRange(FirstRow, FirstColumn, LastRow < FirstRow ? FirstRow : LastRow, LastColumn);
     }
 }

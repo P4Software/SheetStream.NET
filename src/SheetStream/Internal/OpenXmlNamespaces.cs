@@ -39,6 +39,9 @@ namespace SheetStream.Internal
         public const string RelChart = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
         public const string RelComments = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
         public const string RelVmlDrawing = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing";
+        public const string RelPivotTable = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable";
+        public const string RelPivotCacheDefinition = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition";
+        public const string RelPivotCacheRecords = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheRecords";
         public const string RelCoreProperties = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
         public const string RelExtendedProperties = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties";
 
@@ -54,6 +57,9 @@ namespace SheetStream.Internal
         public const string CtChart = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
         public const string CtComments = "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml";
         public const string CtVmlDrawing = "application/vnd.openxmlformats-officedocument.vmlDrawing";
+        public const string CtPivotTable = "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml";
+        public const string CtPivotCacheDefinition = "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml";
+        public const string CtPivotCacheRecords = "application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml";
         public const string CtCoreProperties = "application/vnd.openxmlformats-package.core-properties+xml";
         public const string CtExtendedProperties = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
     }

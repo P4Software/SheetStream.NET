@@ -29,6 +29,10 @@ namespace SheetStream
         // Computed once per row so the common path pays a single bool test per cell.
         private bool _observe;
 
+        // True when the sheet caches formula results and therefore wants every value recorded. Read once per
+        // row, so with the feature off (the default) each cell pays one false branch and nothing else.
+        private bool _cache;
+
         // Row style combined with a date / date-time / duration format, derived once per row on first use.
         private CellStyle? _rowDateStyle;
         private CellStyle? _rowDateTimeStyle;
@@ -70,6 +74,7 @@ namespace SheetStream
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
             _rowText = rowIndex.ToString(CultureInfo.InvariantCulture);
             _observe = _sheet.ShouldObserveRow(rowIndex);
+            _cache = _sheet.IsCachingFormulaResults;
             IsOpen = true;
 
             _w.WriteStartElement("row");
@@ -153,6 +158,7 @@ namespace SheetStream
             _w.WriteString(text);
             _w.WriteEndElement();
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(value);
             return this;
         }
@@ -165,6 +171,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(index);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(value);
             return this;
         }
@@ -194,6 +201,7 @@ namespace SheetStream
                 foreach (var run in runs) sb.Append(run.Text);
                 text = sb.ToString();
             }
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(text);
             return this;
         }
@@ -228,6 +236,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
             return this;
         }
@@ -243,6 +252,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
             return this;
         }
@@ -255,6 +265,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
             return this;
         }
@@ -267,6 +278,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, (double)value);
             EndCell(_observe ? NumberText((double)value) : null);
             return this;
         }
@@ -279,6 +291,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteString(value ? "1" : "0");
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn); // Booleans do not take part in SUM/AVERAGE over a range.
             EndCell(value ? "TRUE" : "FALSE");
             return this;
         }
@@ -302,6 +315,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value.ToOADate());
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.ToOADate());
             // Display width: "10/13/2026" or "10/13/2026 15:30".
             EndCell(_observe ? (value.TimeOfDay == TimeSpan.Zero ? "00/00/0000" : "00/00/0000 00:00") : null);
             return this;
@@ -320,6 +334,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteValue(value.TotalDays);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.TotalDays);
             EndCell(_observe ? "000:00:00" : null);
             return this;
         }
@@ -378,29 +393,39 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Writes a formula cell, e.g. <c>"SUM(C2:C101)"</c>. A leading <c>=</c> is removed. No cached result
-        /// is stored; the workbook asks Excel to recalculate on open, so the value appears when the file is
-        /// opened in Excel. Use an overload with a cached value when the file will also be read by tools that
-        /// do not calculate (viewers, ExcelReader, other libraries).
+        /// Writes a formula cell, e.g. <c>"SUM(C2:C101)"</c>. A leading <c>=</c> is removed. By default no cached
+        /// result is stored; the workbook asks Excel to recalculate on open, so the value appears when the file
+        /// is opened in Excel. With <see cref="Worksheet.CacheFormulaResults"/> enabled, simple aggregates over
+        /// cells already written get their result stored too, so tools that do not calculate (viewers,
+        /// ExcelReader, other libraries) show it. Pass the value yourself with the other overloads when you
+        /// already know it.
         /// </summary>
         public RowWriter WriteFormula(string formula, CellStyle? style = null)
         {
             var text = PrepareFormula(formula);
+            if (_cache && _sheet.TryEvaluateFormula(text, RowIndex, NextColumn, out var value))
+                return WriteFormulaWithNumber(text, value, style);
             BeginCell(style, null);
             WriteF(text);
+            // A later SUM over this cell cannot know its value, so it must not get one either.
+            if (_cache) _sheet.RecordUnknown(RowIndex, NextColumn);
             EndCell(null);
             return this;
         }
 
         /// <summary>Writes a formula with a precomputed numeric result that non-calculating readers will see.</summary>
         public RowWriter WriteFormula(string formula, double cachedValue, CellStyle? style = null)
+            => WriteFormulaWithNumber(PrepareFormula(formula), cachedValue, style);
+
+        /// <summary>Shared by the explicit cached-value overload and the evaluator path; <paramref name="text"/> is already prepared.</summary>
+        private RowWriter WriteFormulaWithNumber(string text, double cachedValue, CellStyle? style)
         {
-            var text = PrepareFormula(formula);
             BeginCell(style, null);
             WriteF(text);
             _w.WriteStartElement("v");
             _w.WriteValue(cachedValue);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, cachedValue);
             EndCell(_observe ? NumberText(cachedValue) : null);
             return this;
         }
@@ -413,6 +438,7 @@ namespace SheetStream
             BeginCell(style, "str");
             WriteF(text);
             _w.WriteElementString("v", XmlTextUtil.Sanitize(cachedValue));
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(cachedValue);
             return this;
         }
@@ -424,6 +450,7 @@ namespace SheetStream
             BeginCell(style, "b");
             WriteF(text);
             _w.WriteElementString("v", cachedValue ? "1" : "0");
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(cachedValue ? "TRUE" : "FALSE");
             return this;
         }
@@ -455,7 +482,8 @@ namespace SheetStream
         /// Writes a cell loaded from an edited workbook exactly as it was: the type attribute, any attributes the
         /// library does not model (<c>cm</c>, <c>vm</c>, <c>ph</c>) and the original inner XML (formula, cached
         /// value, rich inline text). Only the style is taken from <paramref name="style"/>, so a style change
-        /// does not disturb the content.
+        /// does not disturb the content. The caller records the cell's value for formula caching, since only it
+        /// knows the typed value behind the raw XML.
         /// </summary>
         internal void WriteRawCell(string? type, IReadOnlyList<RawAttribute>? attributes, string innerXml, CellStyle? style)
         {
@@ -473,6 +501,7 @@ namespace SheetStream
             _w.WriteStartElement("v");
             _w.WriteString(errorCode);
             _w.WriteEndElement();
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(errorCode);
             return this;
         }

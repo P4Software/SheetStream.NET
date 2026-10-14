@@ -130,6 +130,19 @@ sheet.AddPicture("logo.png", row: 1, column: 8, widthPixels: 160);
 
 Chart types: column, bar (clustered, stacked, 100%), line, line with markers, stacked line, area, stacked area, pie, doughnut, scatter and scatter with lines. Pictures: PNG, JPEG and GIF.
 
+### Pivot tables
+
+```csharp
+var loaded = data.LoadFromCollection(orders, new LoadOptions { TableName = "Orders" });
+var pivot = workbook.Worksheets.Add("Pivot").AddPivotTable("SalesByRegion", loaded.Table!, row: 3, column: 1);
+pivot.AddRowField("Region");
+pivot.AddColumnField("Category");
+pivot.AddDataField("Amount", PivotFunction.Sum, numberFormat: "$#,##0.00");
+pivot.AddDataField("OrderId", PivotFunction.Count, displayName: "Orders");
+```
+
+The pivot sits over a table or range written earlier (`AddPivotTable("P", "Data", loaded.Range, 3, 1, loaded.Headers)` for a plain range) and is marked refresh-on-open, so Excel computes it when the file opens; the output is checked against real Excel in `tests/excel-check-pivot.ps1`. Viewers without a pivot engine show only the headers until Excel has opened and saved the file. Calculated fields, grouping and slicers are not supported. See [Pivot tables](docs/pivot-tables.md).
+
 ### Links, comments, rich text and formulas
 
 ```csharp
@@ -141,6 +154,16 @@ sheet.Row()
 sheet.AddComment(2, 3, "Checked by finance", author: "Glenn");
 workbook.DefinedNames.Add("TaxRate", "'Settings'!B2");
 ```
+
+### Formula results for viewers that do not calculate
+
+```csharp
+sheet.CacheFormulaResults();                                      // Before the first row; about 8 bytes per numeric cell
+sheet.Row().WriteCell("Total").WriteFormula("SUM(C2:C101)");      // Written with its result
+sheet.Row().WriteCell("Avg").WriteFormula("ROUND(AVERAGE(C2:C101), 2)");
+```
+
+File previews, Quick Look, some mobile viewers and `ExcelReader` show formula cells blank unless the file carries a cached result. Opt in per sheet and SheetStream evaluates `+ - * / %`, `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND` and `ABS` over cells already written on that sheet. Anything else (other sheets, `IF`, forward references, names) is written as before, with no value and Excel calculating on open: never a wrong value.
 
 ### Layout, printing and protection
 
@@ -254,6 +277,15 @@ foreach (var link in reader.ReadHyperlinks("Report"))         // Url for web/mai
 
 Merged ranges and hyperlinks are read from the sheet's trailer only, so the rows are skipped and the call is instant even on a million-row sheet.
 
+```csharp
+// Async reading (.NET 8+): buffer an upload without blocking, then stream rows or objects.
+using var reader = await ExcelReader.OpenAsync(Request.Body, cancellationToken: ct); // Non-seekable: copied async, >64 MB spills to a temp file
+await foreach (var row in reader.ReadRowsAsync("Products", ct))                      // Cancellation checked between rows
+    Console.WriteLine($"{row.GetString(0)} = {row.GetDouble(2)}");
+await foreach (var p in reader.ReadAsync<Product>("Products", ct)) db.Products.Add(p); // Or ReadAsync(sheet, Product.SheetMapper, ct) for AOT
+var table = await reader.ReadDataTableAsync("Products", firstRowIsHeader: true, ct);
+```
+
 ### Design-time analyzer
 
 The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001** layout (`FreezePanes`, `Column`, `TabColor`...) set after rows were written, **SS0002** `Row()` and `Cells[]` mixed on one sheet, **SS0003** rows written out of order. It only reports what it can prove inside one method, so a warning means the code will throw. Nothing to install, nothing added to your output. Details, before/after snippets and how to suppress: [docs/analyzers.md](docs/analyzers.md).
@@ -268,10 +300,10 @@ The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001**
 |---|---|
 | `ExcelPackage` | `Create(path)`, `new ExcelPackage(stream)`, `CreateBytes(build)`, `Save()`, `Dispose()` |
 | `Workbook` | `Worksheets.Add`, `Styles`, `DefinedNames`, `Properties`, `Protect` |
-| `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` |
+| `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddPivotTable`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `CacheFormulaResults`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` / `AsyncEnumerable` |
 | `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
 | `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
-| `ExcelReader` | `Open`, `SheetNames`, `ReadRows`, `Read<T>`, `ReadDataTable`, `ReadMergedRanges`, `ReadHyperlinks` |
+| `ExcelReader` | `Open` / `OpenAsync`, `SheetNames`, `ReadRows` / `ReadRowsAsync`, `Read<T>` / `ReadAsync<T>`, `ReadDataTable` / `ReadDataTableAsync`, `ReadMergedRanges`, `ReadHyperlinks` |
 | Templates | `ExcelPackage.OpenTemplate(template, output)`, `Worksheets.Open(name)`, `Worksheet.TemplateStyle(cell)`, `ReplacedTemplateRows` |
 | Editing | `ExcelPackage.Edit(path)` / `Edit(input, output)`, `Worksheets.Edit(name)`, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()` |
 | `SheetStream.AspNetCore` | `ExcelResults.Excel(fileName, build)`, `Results.Extensions.Excel(...)`, `ExcelResult` |
@@ -289,7 +321,7 @@ The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001**
 | Edit and re-save an existing workbook | ✅ | ✅ | ❌ | ✅ (small workbooks, in memory) |
 | Read workbooks | ✅ | ✅ | ✅ streaming | ✅ streaming |
 | Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
-| Pivot tables | ✅ | ✅ | ❌ | ❌ |
+| Pivot tables | ✅ | ✅ | ❌ | ✅ (refreshed on open) |
 
 ### Benchmarks
 
@@ -318,7 +350,7 @@ Full results, the wide-sheet scenario, methodology, machine details and how to r
 
 - **You need to edit large workbooks in place.** SheetStream edits small workbooks (`ExcelPackage.Edit`) by holding the edited sheet in memory; for big files it fills templates or streams. Use ClosedXML (MIT) or EPPlus when you must rewrite a large arbitrary workbook.
 - **You need formulas evaluated in .NET**, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
-- **You need pivot tables, sparklines, macros or encryption.** These are not supported.
+- **You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers.** These are not supported.
 - **You only map simple objects to and from sheets** and want the smallest API. MiniExcel is excellent at that.
 
 SheetStream is the right fit when you write large or styled exports, fill branded templates, stream reports from ASP.NET Core, or read big imports with flat memory, under a licence you never have to think about.
