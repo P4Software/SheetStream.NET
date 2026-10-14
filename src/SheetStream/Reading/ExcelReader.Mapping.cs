@@ -35,26 +35,35 @@ namespace SheetStream.Reading
                     continue;
                 }
 
-                var item = mapper.Create();
-                var any = false;
-                for (var sheetColumn = 0; sheetColumn < columns.Length; sheetColumn++)
-                {
-                    var column = columns[sheetColumn];
-                    if (column < 0) continue;
-                    var raw = row[sheetColumn];
-                    if (raw == null) continue;
-                    any = true;
-                    object? converted;
-                    try { converted = Convert(raw, mapper.MemberType(column)); }
-                    catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException || ex is ArgumentException)
-                    {
-                        throw new FormatException($"Row {row.Index}, column {CellReference.ColumnLetters(sheetColumn + 1)} ('{mapper.Headers[column]}'): cannot convert '{raw}' to {mapper.MemberType(column).Name}.", ex);
-                    }
-                    mapper.SetValue(ref item, column, converted);
-                }
                 // Blank rows are skipped, the same rule the reflection reader applies.
-                if (any) yield return item;
+                if (MapRow(row, columns, mapper, out var item)) yield return item;
             }
+        }
+
+        /// <summary>
+        /// Fills a mapper-created <typeparamref name="T"/> from one data row. Returns false for a blank row (no
+        /// mapped column has a value). Shared by the sync and async readers.
+        /// </summary>
+        private static bool MapRow<T>(ExcelRow row, int[] columns, ISheetRowMapper<T> mapper, out T item)
+        {
+            item = mapper.Create();
+            var any = false;
+            for (var sheetColumn = 0; sheetColumn < columns.Length; sheetColumn++)
+            {
+                var column = columns[sheetColumn];
+                if (column < 0) continue;
+                var raw = row[sheetColumn];
+                if (raw == null) continue;
+                any = true;
+                object? converted;
+                try { converted = Convert(raw, mapper.MemberType(column)); }
+                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException || ex is ArgumentException)
+                {
+                    throw new FormatException($"Row {row.Index}, column {CellReference.ColumnLetters(sheetColumn + 1)} ('{mapper.Headers[column]}'): cannot convert '{raw}' to {mapper.MemberType(column).Name}.", ex);
+                }
+                mapper.SetValue(ref item, column, converted);
+            }
+            return any;
         }
 
         private static int[] BindColumns<T>(ISheetRowMapper<T> mapper, ExcelRow header)

@@ -171,12 +171,14 @@ namespace SheetStream.Reading
         public IEnumerable<ExcelRow> ReadRows(string sheetName) => ReadRows(FindSheet(sheetName));
 
         /// <summary>Streams the rows of a sheet by zero-based position.</summary>
-        public IEnumerable<ExcelRow> ReadRows(int sheetIndex)
+        public IEnumerable<ExcelRow> ReadRows(int sheetIndex) => ReadRowsCore(SheetEntry(sheetIndex));
+
+        /// <summary>Resolves a sheet position to its zip entry, failing eagerly (not on the first MoveNext) for a bad index or a damaged package.</summary>
+        private ZipArchiveEntry SheetEntry(int sheetIndex)
         {
             if (sheetIndex < 0 || sheetIndex >= _sheets.Count) throw new ArgumentOutOfRangeException(nameof(sheetIndex), sheetIndex, $"The workbook has {_sheets.Count} sheet(s).");
-            var entry = _zip.GetEntry(_sheets[sheetIndex].Part)
+            return _zip.GetEntry(_sheets[sheetIndex].Part)
                 ?? throw new InvalidDataException($"Sheet '{_sheets[sheetIndex].Name}' points at missing part '{_sheets[sheetIndex].Part}'.");
-            return ReadRowsCore(entry);
         }
 
         /// <summary>
@@ -193,25 +195,37 @@ namespace SheetStream.Reading
                 if (first && firstRowIsHeader)
                 {
                     first = false;
-                    var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    for (var i = 0; i < row.Values.Count; i++)
-                    {
-                        var name = row.GetString(i);
-                        if (string.IsNullOrWhiteSpace(name)) name = CellReference.ColumnLetters(i + 1);
-                        var unique = name!;
-                        for (var n = 2; !used.Add(unique); n++) unique = name + n.ToString(CultureInfo.InvariantCulture);
-                        table.Columns.Add(unique, typeof(object));
-                    }
+                    AddHeaderColumns(table, row);
                     continue;
                 }
                 first = false;
-                while (table.Columns.Count < row.Values.Count)
-                    table.Columns.Add(CellReference.ColumnLetters(table.Columns.Count + 1), typeof(object));
-                var values = new object[table.Columns.Count];
-                for (var i = 0; i < values.Length; i++) values[i] = row[i] ?? DBNull.Value;
-                table.Rows.Add(values);
+                AddDataRow(table, row);
             }
             return table;
+        }
+
+        /// <summary>Turns the header row into table columns: blank headers get the column letter, duplicates a numeric suffix.</summary>
+        private static void AddHeaderColumns(DataTable table, ExcelRow row)
+        {
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < row.Values.Count; i++)
+            {
+                var name = row.GetString(i);
+                if (string.IsNullOrWhiteSpace(name)) name = CellReference.ColumnLetters(i + 1);
+                var unique = name!;
+                for (var n = 2; !used.Add(unique); n++) unique = name + n.ToString(CultureInfo.InvariantCulture);
+                table.Columns.Add(unique, typeof(object));
+            }
+        }
+
+        /// <summary>Appends a sheet row to the table, growing the column list when a row is wider than the header.</summary>
+        private static void AddDataRow(DataTable table, ExcelRow row)
+        {
+            while (table.Columns.Count < row.Values.Count)
+                table.Columns.Add(CellReference.ColumnLetters(table.Columns.Count + 1), typeof(object));
+            var values = new object[table.Columns.Count];
+            for (var i = 0; i < values.Length; i++) values[i] = row[i] ?? DBNull.Value;
+            table.Rows.Add(values);
         }
 
         /// <summary>
@@ -232,24 +246,33 @@ namespace SheetStream.Reading
                     bindings = Bind(typeof(T), row);
                     continue;
                 }
-                var item = new T();
-                object boxed = item!;
-                var any = false;
-                foreach (var b in bindings)
-                {
-                    var raw = row[b.Column];
-                    if (raw == null) continue;
-                    any = true;
-                    object? converted;
-                    try { converted = Convert(raw, b.Type); }
-                    catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException || ex is ArgumentException)
-                    {
-                        throw new FormatException($"Row {row.Index}, column {CellReference.ColumnLetters(b.Column + 1)} ('{b.Header}'): cannot convert '{raw}' to {b.Type.Name}.", ex);
-                    }
-                    b.Set(boxed, converted);
-                }
-                if (any) yield return (T)boxed;
+                if (MapRow(row, bindings, out T item)) yield return item;
             }
+        }
+
+        /// <summary>
+        /// Fills a new <typeparamref name="T"/> from one data row through reflection bindings. Returns false for a
+        /// blank row (no bound column has a value), which callers skip. Shared by the sync and async readers.
+        /// </summary>
+        private static bool MapRow<T>(ExcelRow row, Binding[] bindings, out T item) where T : new()
+        {
+            object boxed = new T()!;
+            var any = false;
+            foreach (var b in bindings)
+            {
+                var raw = row[b.Column];
+                if (raw == null) continue;
+                any = true;
+                object? converted;
+                try { converted = Convert(raw, b.Type); }
+                catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException || ex is ArgumentException)
+                {
+                    throw new FormatException($"Row {row.Index}, column {CellReference.ColumnLetters(b.Column + 1)} ('{b.Header}'): cannot convert '{raw}' to {b.Type.Name}.", ex);
+                }
+                b.Set(boxed, converted);
+            }
+            item = (T)boxed;
+            return any;
         }
 
         /// <inheritdoc />
@@ -432,9 +455,17 @@ namespace SheetStream.Reading
 
         // ------------------------------------------------------------------ rows and cells
 
+        /// <summary>
+        /// Settings for parsing a sheet part. DTDs are never resolved (untrusted input), and the reader owns the
+        /// zip entry stream so disposing it closes both. <paramref name="async"/> enables the <c>*Async</c>
+        /// methods used by <c>ReadRowsAsync</c>; the sync reader leaves it off because it costs a little per call.
+        /// </summary>
+        private static XmlReaderSettings SheetSettings(bool async)
+            => new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, CloseInput = true, IgnoreComments = true, Async = async };
+
         private IEnumerable<ExcelRow> ReadRowsCore(ZipArchiveEntry entry)
         {
-            using (var xr = XmlReader.Create(entry.Open(), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, CloseInput = true, IgnoreComments = true }))
+            using (var xr = XmlReader.Create(entry.Open(), SheetSettings(async: false)))
             {
                 var lastRow = 0;
                 var values = new List<object?>();
@@ -460,11 +491,7 @@ namespace SheetStream.Reading
                                 nextColumn = column + 1;
                                 var value = ReadCell(xr); // Leaves the reader on </c> or on an empty <c/>.
                                 xr.Read();
-                                if (value == null) continue;
-                                // ColumnOf caps the index at 16384, so padding is bounded even for hostile files.
-                                if (column - 1 < values.Count) { values[column - 1] = value; continue; } // Out-of-order cell.
-                                while (values.Count < column - 1) values.Add(null);
-                                values.Add(value);
+                                if (value != null) PlaceCell(values, column, value);
                                 continue;
                             }
                             xr.Read();
@@ -473,6 +500,17 @@ namespace SheetStream.Reading
                     yield return new ExcelRow(rowIndex, values.ToArray());
                 }
             }
+        }
+
+        /// <summary>
+        /// Stores a cell value at its 1-based column in the row buffer, padding skipped columns with null.
+        /// ColumnOf caps the index at 16384, so the padding is bounded even for hostile files.
+        /// </summary>
+        private static void PlaceCell(List<object?> values, int column, object value)
+        {
+            if (column - 1 < values.Count) { values[column - 1] = value; return; } // Out-of-order cell.
+            while (values.Count < column - 1) values.Add(null);
+            values.Add(value);
         }
 
         /// <summary>Reads one <c>c</c> element (positioned on its start) and returns its typed value.</summary>
@@ -509,6 +547,16 @@ namespace SheetStream.Reading
                 xr.Read();
             }
 
+            return CellValue(type, styleIndex, v, inline);
+        }
+
+        /// <summary>
+        /// Turns the raw parts of a <c>c</c> element (its <c>t</c> and <c>s</c> attributes, the <c>v</c> text and
+        /// any inline string) into the typed value the row exposes. Shared by the sync and async parsers so the
+        /// two can never disagree on how a cell reads.
+        /// </summary>
+        private object? CellValue(string? type, int styleIndex, string? v, string? inline)
+        {
             switch (type)
             {
                 case "s":
