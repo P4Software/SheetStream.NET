@@ -57,7 +57,11 @@ public class ReaderFuzzTests
     public void NegativeStyleIndex_ReadsAsPlainValue()
     {
         // Regression: s="-1" passed the "< Count" guard and indexed the style table at -1. Found by the fuzzer in CI.
-        var mutated = MutatePart(Seed(), "xl/worksheets/sheet1.xml", text => text.Replace("<c r=", "<c s=\"-1\" r="));
+        // Cells that already carry a style keep a single (now negative) s attribute; the rest get one added.
+        var mutated = MutatePart(Seed(), "xl/worksheets/sheet1.xml", text =>
+            System.Text.RegularExpressions.Regex.Replace(
+                System.Text.RegularExpressions.Regex.Replace(text, "(<c\\b[^>]*?\\bs=\")\\d+(\")", "$1-1$2"),
+                "<c r=\"([A-Z]+[0-9]+)\"(?![^>]*\\bs=)", "<c r=\"$1\" s=\"-1\""));
         using var reader = ExcelReader.Open(new MemoryStream(mutated));
         var rows = reader.ReadRows(0).ToList();
         Assert.NotEmpty(rows);
