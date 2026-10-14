@@ -4,5 +4,7 @@
   href: migrating-from-epplus.md
 - name: Filling templates
   href: templates.md
+- name: Analyzers
+  href: analyzers.md
 - name: API reference
   href: api/

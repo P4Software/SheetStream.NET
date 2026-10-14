@@ -4,10 +4,12 @@
     <Project Path="samples/SheetStream.Sample.Web/SheetStream.Sample.Web.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/SheetStream.Analyzers/SheetStream.Analyzers.csproj" />
     <Project Path="src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj" />
     <Project Path="src/SheetStream/SheetStream.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SheetStream.Analyzers.Tests/SheetStream.Analyzers.Tests.csproj" />
     <Project Path="tests/SheetStream.Tests/SheetStream.Tests.csproj" />
   </Folder>
 </Solution>

@@ -42,4 +42,11 @@
     <None Include="../../icon.png" Pack="true" PackagePath="/" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Design-time analyzer (SS0001-SS0003) shipped inside this package. ReferenceOutputAssembly=false only orders
+         the build; PrivateAssets=all keeps it out of the package's dependency list. -->
+    <ProjectReference Include="../SheetStream.Analyzers/SheetStream.Analyzers.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="../SheetStream.Analyzers/bin/$(Configuration)/netstandard2.0/SheetStream.Analyzers.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
 </Project>
