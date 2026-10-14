@@ -162,4 +162,18 @@ The file is built into a temporary file and streamed to the response, so memory 
 
 ## What does not translate
 
-These EPPlus features have no SheetStream equivalent today: formula calculation (`Calculate()`), pivot tables, sparklines, editing an existing workbook in place (other than filling a template), VBA, encryption and digital signatures. If an exporter depends on one of them, keep that exporter on EPPlus 4.5.3.3 (LGPL) or another library.
+These EPPlus features have no SheetStream equivalent today: formula calculation (`Calculate()`; SheetStream only writes cached results for simple aggregates, see `CacheFormulaResults`), pivot tables with calculated fields, grouping or slicers (plain pivots are supported and refreshed on open), sparklines, editing large arbitrary workbooks in place (small workbooks can be edited with `ExcelPackage.Edit`; large ones are filled as templates), VBA, encryption and digital signatures. If an exporter depends on one of them, keep that exporter on EPPlus 4.5.3.3 (LGPL) or another library.
+
+## After removing the EPPlus package
+
+Removing EPPlus can break code that never called it. EPPlus 4.5.3.3 depends on `System.Text.Encoding.CodePages` and registers the code-page encoding provider when it loads. Other libraries in the same application may rely on that registration without declaring it; **ExcelDataReader** is the usual case, because legacy `.xls` files need code-page encodings. With EPPlus gone, those imports fail, sometimes silently with empty text.
+
+Register the provider yourself at startup, before the first import:
+
+```csharp
+// Program.cs, before building the app. On .NET Framework or netstandard targets add the
+// System.Text.Encoding.CodePages package; on .NET 8 it is part of the shared framework.
+System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+```
+
+Then run one `.xls` import in a test to prove it. This was found while migrating a warehouse system whose exports moved to SheetStream but whose imports stayed on ExcelDataReader. For `.xlsx` imports, `ExcelReader` needs no provider.
