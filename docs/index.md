@@ -28,6 +28,10 @@ chart.AddSeries(values: "C2:C13", categories: "A2:A13", name: "=C1");
 package.Save();
 ```
 
+## Formulas and cached results
+
+`row.WriteFormula("SUM(C2:C101)")` writes the formula and asks Excel to calculate on open. Viewers that do not calculate (file previews, Quick Look, many mobile and web viewers, `ExcelReader`) show such a cell blank unless the file also carries the result. Turn on `sheet.CacheFormulaResults()` before the first row and SheetStream computes the result itself when the formula is simple enough: numbers, references to cells already written on the same sheet, ranges, `+ - * /`, `%`, parentheses and `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS`. Anything else (other functions, other sheets, rows not yet written, a division by zero) is written exactly as before, without a value; a wrong value is never written. The sheet keeps about 8 bytes per numeric cell to do this, which is why it is opt-in. When you already know the result, `WriteFormula(formula, cachedValue)` stores it directly.
+
 ## Where to go next
 
 - [Migrating from EPPlus](migrating-from-epplus.md): a real exporter converted line by line.

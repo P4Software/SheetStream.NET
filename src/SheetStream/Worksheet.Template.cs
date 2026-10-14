@@ -182,7 +182,12 @@ namespace SheetStream
             {
                 var r = _templateReader!;
                 _templateLastRow = _templateRowAhead.Value;
-                if (_templateRowAhead.Value < index) XmlCopy.CopySubtree(r, _part);
+                if (_templateRowAhead.Value < index)
+                {
+                    // Copied as XML without looking at its cells, so formulas must not treat it as known.
+                    RecordUnknownRow(_templateRowAhead.Value);
+                    XmlCopy.CopySubtree(r, _part);
+                }
                 else if (SkipTemplateRow(r)) ReplacedTemplateRows++;
                 ParkOnNextTemplateRow();
             }
