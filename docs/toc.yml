@@ -4,6 +4,8 @@
   href: migrating-from-epplus.md
 - name: Filling templates
   href: templates.md
+- name: Editing existing workbooks
+  href: editing-workbooks.md
 - name: Analyzers
   href: analyzers.md
 - name: API reference
