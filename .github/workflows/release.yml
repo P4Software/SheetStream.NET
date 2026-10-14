@@ -83,6 +83,7 @@ jobs:
       - name: Generate SBOM
         run: |
           dotnet tool install --global Microsoft.Sbom.DotNetTool --version 4.1.13
+          mkdir -p sbom   # sbom-tool refuses to create its manifest directory itself
           sbom-tool generate -b artifacts -bc . -m sbom -pn SheetStream.NET -pv "${GITHUB_REF_NAME#v}" -ps "P4 Software" -nsb https://p4.software/sbom -V Warning
           cp sbom/_manifest/spdx_2.2/manifest.spdx.json "artifacts/SheetStream.NET-${GITHUB_REF_NAME#v}.spdx.json"
 
