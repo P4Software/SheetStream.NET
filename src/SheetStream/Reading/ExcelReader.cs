@@ -101,7 +101,7 @@ namespace SheetStream.Reading
     /// var products = reader.Read&lt;Product&gt;("Products").ToList();
     /// </code>
     /// </example>
-    public sealed class ExcelReader : IDisposable
+    public sealed partial class ExcelReader : IDisposable
     {
         private readonly ZipArchive _zip;
         private readonly Stream _stream;
