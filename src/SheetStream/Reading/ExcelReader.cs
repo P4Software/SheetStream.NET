@@ -574,7 +574,8 @@ namespace SheetStream.Reading
                     return v != null && DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var iso) ? iso : (object?)v;
                 default:
                     if (v == null || !double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return v;
-                    var kind = styleIndex < _styleKinds.Count ? _styleKinds[styleIndex] : CellKind.Number;
+                    // A damaged file can carry s="-1"; treat any index outside the style table as a plain number.
+                    var kind = styleIndex >= 0 && styleIndex < _styleKinds.Count ? _styleKinds[styleIndex] : CellKind.Number;
                     if (kind == CellKind.Date)
                     {
                         if (_date1904) number += 1462; // 1904 epoch: shift to the 1900 serial Excel's OADate expects.

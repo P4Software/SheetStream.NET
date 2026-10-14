@@ -53,6 +53,17 @@ public class ReaderFuzzTests
                     _ = row.GetString(c);
     }
 
+    [Fact]
+    public void NegativeStyleIndex_ReadsAsPlainValue()
+    {
+        // Regression: s="-1" passed the "< Count" guard and indexed the style table at -1. Found by the fuzzer in CI.
+        var mutated = MutatePart(Seed(), "xl/worksheets/sheet1.xml", text => text.Replace("<c r=", "<c s=\"-1\" r="));
+        using var reader = ExcelReader.Open(new MemoryStream(mutated));
+        var rows = reader.ReadRows(0).ToList();
+        Assert.NotEmpty(rows);
+        Assert.Contains(rows, r => r.Values.Any(v => v != null));
+    }
+
     [Theory]
     [InlineData("xl/worksheets/sheet1.xml")]
     [InlineData("xl/sharedStrings.xml")]
@@ -62,7 +73,11 @@ public class ReaderFuzzTests
     public async Task MutatedXml_FailsCleanlyOrReads(string part)
     {
         var seed = Seed();
-        var rng = new Random(part.GetHashCode() ^ 12345); // Deterministic per part, so failures reproduce.
+        // Deterministic per part, so failures reproduce. string.GetHashCode() is randomised per process on
+        // .NET Core, so a stable FNV-1a hash is used instead; the first run with a random seed found the s="-1" bug.
+        var seedHash = 2166136261u;
+        foreach (var ch in part) seedHash = (seedHash ^ ch) * 16777619u;
+        var rng = new Random(unchecked((int)seedHash) ^ 12345);
         // Fragments that stress the parser: huge or negative numbers, bad references, broken structure.
         string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400" };
 

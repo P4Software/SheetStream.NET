@@ -1,0 +1,9 @@
+/* Site-specific tweaks for the DocFX "modern" template (picked up from public/main.css). */
+
+/* The template shows the logo at the image's own size; keep it a navbar-sized icon, scaled
+   proportionally. The P4 Software logo must never be stretched. */
+#logo,
+.navbar-brand img {
+  height: 32px;
+  width: auto;
+}
