@@ -57,8 +57,11 @@ namespace SheetStream
             if (IsOpen) _observe = _sheet.ShouldObserveRow(RowIndex);
         }
 
-        /// <summary>Opens the <c>&lt;row&gt;</c> element.</summary>
-        internal void Begin(int rowIndex, RowOptions? options)
+        /// <summary>
+        /// Opens the <c>&lt;row&gt;</c> element. <paramref name="rawAttributes"/> are attributes copied from an
+        /// edited workbook's original row (height, hidden, outline, descent) and are written as they were.
+        /// </summary>
+        internal void Begin(int rowIndex, RowOptions? options, IReadOnlyList<RawAttribute>? rawAttributes = null)
         {
             RowIndex = rowIndex;
             NextColumn = 1;
@@ -71,6 +74,8 @@ namespace SheetStream
 
             _w.WriteStartElement("row");
             _w.WriteAttributeString("r", _rowText);
+            if (rawAttributes != null)
+                for (var i = 0; i < rawAttributes.Count; i++) rawAttributes[i].WriteTo(_w);
             if (_rowStyle != null)
             {
                 _w.WriteAttributeString("s", _rowStyle.Id.ToString(CultureInfo.InvariantCulture));
@@ -437,6 +442,29 @@ namespace SheetStream
             _w.WriteStartElement("f");
             _w.WriteString(XmlTextUtil.Sanitize(text));
             _w.WriteEndElement();
+        }
+
+        /// <summary>Writes an error cell (<c>#N/A</c>, <c>#DIV/0!</c>...), used when an edited workbook's error value is written back.</summary>
+        internal RowWriter WriteErrorValue(string errorCode, CellStyle? style)
+        {
+            EnsureOpen();
+            return WriteError(errorCode, style);
+        }
+
+        /// <summary>
+        /// Writes a cell loaded from an edited workbook exactly as it was: the type attribute, any attributes the
+        /// library does not model (<c>cm</c>, <c>vm</c>, <c>ph</c>) and the original inner XML (formula, cached
+        /// value, rich inline text). Only the style is taken from <paramref name="style"/>, so a style change
+        /// does not disturb the content.
+        /// </summary>
+        internal void WriteRawCell(string? type, IReadOnlyList<RawAttribute>? attributes, string innerXml, CellStyle? style)
+        {
+            EnsureOpen();
+            BeginCell(style, type);
+            if (attributes != null)
+                for (var i = 0; i < attributes.Count; i++) attributes[i].WriteTo(_w);
+            if (innerXml.Length > 0) _w.WriteRaw(innerXml);
+            EndCell(null);
         }
 
         private RowWriter WriteError(string errorCode, CellStyle? style)

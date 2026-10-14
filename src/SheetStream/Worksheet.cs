@@ -245,13 +245,16 @@ namespace SheetStream
         public RowWriter Row(int index, RowOptions? options)
         {
             if (_buffer != null)
-                throw new InvalidOperationException($"Worksheet '{Name}' is in random-access mode because Cells[...] was used. Write all of its cells through Cells, or use Row() on a sheet that never touches Cells.");
+                throw new InvalidOperationException($"Worksheet '{Name}' is in random-access mode because Cells[...] was used or the sheet was opened with Worksheets.Edit. Write all of its cells through Cells, or use Row() on a sheet that never touches Cells.");
             _streamedRows = true;
-            return RowCore(index, options);
+            return RowCore(index, options, null);
         }
 
-        /// <summary>Row start shared by streaming writes and the random-access buffer flush.</summary>
-        private RowWriter RowCore(int index, RowOptions? options)
+        /// <summary>
+        /// Row start shared by streaming writes and the random-access buffer flush. <paramref name="rawAttributes"/>
+        /// carries the original row attributes of an edited workbook (null everywhere else).
+        /// </summary>
+        private RowWriter RowCore(int index, RowOptions? options, IReadOnlyList<RawAttribute>? rawAttributes)
         {
             ValidateRow(index, nameof(index));
             EnsureNotSealed();
@@ -275,7 +278,7 @@ namespace SheetStream
                 if (options.OutlineLevel < 0 || options.OutlineLevel > 7) throw new ArgumentOutOfRangeException(nameof(options), options.OutlineLevel, "Outline level must be between 0 and 7.");
                 if (options.OutlineLevel > _maxRowOutlineLevel) _maxRowOutlineLevel = options.OutlineLevel;
             }
-            _row.Begin(index, options);
+            _row.Begin(index, options, rawAttributes);
             return _row;
         }
 

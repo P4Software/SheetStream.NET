@@ -111,7 +111,7 @@ namespace SheetStream.Reading
         private readonly List<CellKind> _styleKinds = new List<CellKind>();
         private bool _date1904;
 
-        private enum CellKind : byte { Number, Date, Duration }
+        internal enum CellKind : byte { Number, Date, Duration }
 
         private ExcelReader(Stream stream, bool leaveOpen)
         {
@@ -353,7 +353,7 @@ namespace SheetStream.Reading
             }
         }
 
-        private static CellKind Classify(int id, Dictionary<int, string> custom)
+        internal static CellKind Classify(int id, Dictionary<int, string> custom)
         {
             if (id == 46) return CellKind.Duration;
             if ((id >= 14 && id <= 22) || id == 45 || id == 47) return CellKind.Date;
@@ -541,7 +541,7 @@ namespace SheetStream.Reading
         /// Phonetic guides (<c>rPh</c>) are skipped because they are not part of the cell text. Must be called
         /// on a non-empty start element and returns positioned on its end element.
         /// </summary>
-        private static string ReadRichText(XmlReader xr)
+        internal static string ReadRichText(XmlReader xr)
         {
             var sb = new StringBuilder();
             var depth = xr.Depth;
@@ -564,7 +564,7 @@ namespace SheetStream.Reading
         }
 
         /// <summary>Reverses Excel's <c>_xHHHH_</c> escaping of characters XML cannot carry.</summary>
-        private static string Decode(string s)
+        internal static string Decode(string s)
         {
             if (s.IndexOf("_x", StringComparison.Ordinal) < 0) return s;
             var sb = new StringBuilder(s.Length);
@@ -588,7 +588,7 @@ namespace SheetStream.Reading
         /// Column number of an A1 reference. Rejects anything beyond Excel's 16,384 columns: an untrusted file
         /// could otherwise name column "ZZZZZZ" and make the row buffer grow to billions of entries.
         /// </summary>
-        private static int ColumnOf(string reference)
+        internal static int ColumnOf(string reference)
         {
             var column = 0;
             foreach (var ch in reference)

@@ -46,6 +46,33 @@ namespace SheetStream.Internal
         /// <summary>Plain-text shared strings and their indexes, so new cells can reuse them.</summary>
         public Dictionary<string, int> PlainSharedStrings { get; } = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        /// <summary>True when the workbook counts dates from 1904 (the old Mac convention) instead of 1900.</summary>
+        public bool Date1904 { get; private set; }
+
+        // Text of every shared string by index, loaded on first use because only edited sheets need it.
+        private List<string>? _sharedStringTexts;
+
+        /// <summary>
+        /// The text of every shared string item (rich text flattened), by index. Needed to show the value of a
+        /// <c>t="s"</c> cell when a sheet is edited; streaming fills never read cell values, so this is lazy.
+        /// </summary>
+        public IReadOnlyList<string> GetSharedStringTexts()
+        {
+            if (_sharedStringTexts != null) return _sharedStringTexts;
+            var texts = new List<string>(SharedStringCount);
+            if (SharedStringsPart != null)
+            {
+                using (var archive = OpenArchive())
+                using (var r = OpenXml(archive, SharedStringsPart))
+                {
+                    while (r != null && r.Read())
+                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "si")
+                            texts.Add(r.IsEmptyElement ? "" : Reading.ExcelReader.ReadRichText(r));
+                }
+            }
+            return _sharedStringTexts = texts;
+        }
+
         /// <summary>Loads a template from a stream (copied into memory) and parses its structure.</summary>
         public static TemplateSource Load(Stream stream)
         {
@@ -129,7 +156,14 @@ namespace SheetStream.Internal
                 {
                     while (r.Read())
                     {
-                        if (r.NodeType != XmlNodeType.Element || r.LocalName != "sheet") continue;
+                        if (r.NodeType != XmlNodeType.Element) continue;
+                        if (r.LocalName == "workbookPr")
+                        {
+                            var d = r.GetAttribute("date1904");
+                            Date1904 = d == "1" || string.Equals(d, "true", StringComparison.OrdinalIgnoreCase);
+                            continue;
+                        }
+                        if (r.LocalName != "sheet") continue;
                         var rid = r.GetAttribute("id", OpenXmlNamespaces.Relationships) ?? "";
                         if (targets.TryGetValue(rid, out var part)) Sheets.Add((r.GetAttribute("name") ?? "", part));
                     }

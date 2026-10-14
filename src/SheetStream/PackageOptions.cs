@@ -22,6 +22,13 @@ namespace SheetStream
         /// <summary>Size of the write buffer placed in front of each zip entry, in bytes.</summary>
         public int BufferSize { get; set; } = 64 * 1024;
 
+        /// <summary>
+        /// Largest number of cells a sheet may hold to be opened with <c>Worksheets.Edit</c>. Editing keeps the
+        /// whole sheet in memory, so this guards against loading a data dump by mistake: a sheet over the limit
+        /// throws and the message points at streaming or templates instead. Default 200,000 cells.
+        /// </summary>
+        public int MaxEditableCells { get; set; } = 200_000;
+
         internal static PackageOptions Default => new PackageOptions();
     }
 }

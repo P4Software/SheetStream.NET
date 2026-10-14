@@ -206,6 +206,17 @@ namespace SheetStream.Styles
         /// <summary>True when <paramref name="id"/> is a valid cell format index for this workbook.</summary>
         internal bool IsValidStyleId(int id) => id >= 0 && id < _xfBase + _xfs.Count;
 
+        /// <summary>
+        /// Custom number format codes by id, template ones included. Used when editing a workbook to tell
+        /// whether a numeric cell is displayed as a date, so its value can surface as a <see cref="System.DateTime"/>.
+        /// </summary>
+        internal Dictionary<int, string> CustomNumberFormatCodes()
+        {
+            var codes = new Dictionary<int, string>();
+            foreach (var pair in _numberFormatIndex) codes[pair.Value] = pair.Key;
+            return codes;
+        }
+
         /// <summary>Style applied to <see cref="DateTime"/> cells written without an explicit style (built-in format 14).</summary>
         internal CellStyle DateStyle => _dateStyle ??= Create(o => o.NumberFormat = "mm-dd-yy");
 

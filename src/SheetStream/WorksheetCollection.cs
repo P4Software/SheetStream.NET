@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using SheetStream.Internal;
 
 namespace SheetStream
 {
@@ -65,23 +66,75 @@ namespace SheetStream
         public Worksheet Open(string name)
         {
             var template = _workbook.Template ?? throw new InvalidOperationException("Worksheets.Open is for workbooks created with ExcelPackage.OpenTemplate. Use Worksheets.Add to create sheets.");
-            if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot open a worksheet after the package has been saved.");
+            return OpenCore(template, FindTemplateSheet(template, name), edit: false);
+        }
+
+        /// <summary>
+        /// Opens a sheet of the workbook being edited with every existing cell loaded into <see cref="Worksheet.Cells"/>
+        /// (edit mode), and makes it the current one; the previously current sheet is sealed. Read values with
+        /// <c>sheet.Cells["B2"].Value</c>, change them, add rows below <c>sheet.Cells.Dimension.LastRow</c>, and
+        /// <see cref="ExcelPackage.Save"/> writes the whole sheet back. Cells you do not touch are written exactly
+        /// as they were; sheets you do not open are copied unchanged. Meant for small workbooks: a sheet with
+        /// more than <see cref="PackageOptions.MaxEditableCells"/> cells is refused.
+        /// </summary>
+        /// <param name="name">The sheet's tab name (case-insensitive).</param>
+        /// <example>
+        /// <code>
+        /// using var package = ExcelPackage.Edit("budget.xlsx");
+        /// var sheet = package.Workbook.Worksheets.Edit("Q4");
+        /// sheet.Cells["B4"].Value = 1250;
+        /// package.Save();
+        /// </code>
+        /// </example>
+        public Worksheet Edit(string name)
+        {
+            var template = _workbook.Template ?? throw new InvalidOperationException("Worksheets.Edit is for workbooks opened with ExcelPackage.Edit (or OpenTemplate). Use Worksheets.Add to create sheets.");
+            return OpenCore(template, FindTemplateSheet(template, name), edit: true);
+        }
+
+        /// <summary>Opens a sheet for editing by its zero-based position in the workbook's tab order. See <see cref="Edit(string)"/>.</summary>
+        public Worksheet Edit(int index)
+        {
+            var template = _workbook.Template ?? throw new InvalidOperationException("Worksheets.Edit is for workbooks opened with ExcelPackage.Edit (or OpenTemplate). Use Worksheets.Add to create sheets.");
+            if (index < 0 || index >= template.Sheets.Count) throw new ArgumentOutOfRangeException(nameof(index), index, $"The workbook has {template.Sheets.Count} sheet(s).");
+            return OpenCore(template, index, edit: true);
+        }
+
+        private static int FindTemplateSheet(TemplateSource template, string name)
+        {
             var position = template.Sheets.FindIndex(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
-            if (position < 0)
-            {
-                var names = new List<string>();
-                foreach (var s in template.Sheets) names.Add(s.Name);
-                throw new ArgumentException($"The template has no sheet named '{name}'. Sheets: {string.Join(", ", names)}.", nameof(name));
-            }
-            if (!_names.Add(template.Sheets[position].Name))
-                throw new InvalidOperationException($"Sheet '{name}' has already been filled. Each template sheet can be opened once.");
+            if (position >= 0) return position;
+            var names = new List<string>();
+            foreach (var s in template.Sheets) names.Add(s.Name);
+            throw new ArgumentException($"The workbook has no sheet named '{name}'. Sheets: {string.Join(", ", names)}.", nameof(name));
+        }
+
+        /// <summary>
+        /// Opens template sheet <paramref name="position"/> for streaming (template mode) or, with
+        /// <paramref name="edit"/>, with its cells loaded (edit mode). The size check runs before the current
+        /// sheet is sealed so a refused sheet leaves the package exactly as it was.
+        /// </summary>
+        private Worksheet OpenCore(TemplateSource template, int position, bool edit)
+        {
+            if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot open a worksheet after the package has been saved.");
+            var (sheetName, part) = template.Sheets[position];
+            if (_names.Contains(sheetName))
+                throw new InvalidOperationException($"Sheet '{sheetName}' has already been opened. Each sheet of the workbook can be opened once.");
+            if (edit) Worksheet.EnsureEditable(template, part, sheetName, _workbook.Package.Options.MaxEditableCells);
+            _names.Add(sheetName);
 
             Current?.Seal();
-            var (sheetName, part) = template.Sheets[position];
             var writer = _workbook.Package.OpenPart(part);
             var sheet = new Worksheet(_workbook, position + 1, sheetName, writer);
             sheet.AttachTemplate(template, part);
             _sheets.Add(sheet);
+            if (edit)
+            {
+                // The sheet's part is already open in the archive; a load failure (damaged XML) must stop the
+                // package from saving a half-loaded sheet when the caller's using block disposes it.
+                try { sheet.LoadTemplateCells(); }
+                catch { _workbook.Package.MarkSaveFailed(); throw; }
+            }
             return sheet;
         }
 
