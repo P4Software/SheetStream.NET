@@ -133,6 +133,7 @@ namespace SheetStream
             try
             {
                 SaveCore();
+                CompleteInPlaceSave();
             }
             catch
             {
@@ -141,6 +142,12 @@ namespace SheetStream
                 throw;
             }
         }
+
+        /// <summary>
+        /// Marks the package as unsaveable after a failure while a part was being built (a sheet that could not
+        /// be loaded for editing), so disposing it does not write a half-finished workbook.
+        /// </summary>
+        internal void MarkSaveFailed() => _saveFailed = true;
 
         private void SaveCore()
         {
@@ -191,6 +198,7 @@ namespace SheetStream
                 _archive?.Dispose();
                 _archive = null;
                 if (!_leaveOpen) _output.Dispose();
+                DiscardInPlaceTemp(); // Only has something to do when an in-place save did not complete.
             }
         }
 

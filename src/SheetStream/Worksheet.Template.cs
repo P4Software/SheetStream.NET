@@ -33,8 +33,20 @@ namespace SheetStream
         /// </summary>
         public int ReplacedTemplateRows { get; private set; }
 
-        /// <summary>First and last rows written by the caller, or null when none were written.</summary>
-        internal (int First, int Last)? WrittenBand => _firstWrittenRow == 0 ? ((int, int)?)null : (_firstWrittenRow, CurrentRow);
+        /// <summary>
+        /// First and last rows written by the caller, or null when none were written. Template ranges (tables,
+        /// filters, validations, conditional formats) are stretched over this band. An edited sheet rewrites
+        /// every row, so there the band is only the rows appended below the original last row: a table that
+        /// ended on the last row grows over them, and nothing else moves.
+        /// </summary>
+        internal (int First, int Last)? WrittenBand
+        {
+            get
+            {
+                if (_editMode) return _editedLastRow > 0 && CurrentRow > _editedLastRow ? (_editedLastRow + 1, CurrentRow) : ((int, int)?)null;
+                return _firstWrittenRow == 0 ? ((int, int)?)null : (_firstWrittenRow, CurrentRow);
+            }
+        }
 
         internal void AttachTemplate(TemplateSource source, string part)
         {
@@ -115,6 +127,9 @@ namespace SheetStream
                     r.Read();
                     _templateInSheetData = !empty;
                     if (_templateInSheetData) ParkOnNextTemplateRow();
+                    // An edited sheet already holds every original row in its buffer and writes them from
+                    // there, so the reader skips the whole sheetData instead of merging row by row.
+                    if (_editMode) SkipAllTemplateRows();
                     return;
                 }
                 XmlCopy.CopySubtree(r, _part);
@@ -142,6 +157,17 @@ namespace SheetStream
                     return;
                 }
                 if (!r.Read()) { _templateInSheetData = false; return; }
+            }
+        }
+
+        /// <summary>Skips every remaining template row; afterwards the reader is parked after sheetData.</summary>
+        private void SkipAllTemplateRows()
+        {
+            var r = _templateReader!;
+            while (_templateRowAhead.HasValue)
+            {
+                r.Skip();
+                ParkOnNextTemplateRow();
             }
         }
 
