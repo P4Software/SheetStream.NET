@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <!-- Last LGPL release of EPPlus. The brackets pin the exact version so restore can never float to 5+,
+         which requires a commercial licence. -->
+    <PackageReference Include="EPPlus" Version="[4.5.3.3]" />
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <!-- 1.46.0 is the latest stable MiniExcel; 2.0 is still in preview. -->
+    <PackageReference Include="MiniExcel" Version="1.46.0" />
+    <!-- 2.7.6 is the last NPOI binary release under plain Apache-2.0. From 2.8.0 the NuGet binaries ship
+         under the "OSMF EULA" (requireLicenseAcceptance, a maintenance fee for revenue-generating users above
+         US$10,000/year), which, like EPPlus 5+, we do not accept on anyone's behalf. Pinned exactly. -->
+    <PackageReference Include="NPOI" Version="[2.7.6]" />
+    <!-- Used only by the correctness guard to read every library's output back.
+         ClosedXML 0.105.1 accepts DocumentFormat.OpenXml [3.1.1, 4.0.0). -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,2 @@
+# BenchmarkDotNet writes its raw reports here; the README carries the copied tables.
+BenchmarkDotNet.Artifacts/
