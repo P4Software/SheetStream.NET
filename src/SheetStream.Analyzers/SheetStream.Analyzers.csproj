@@ -31,8 +31,8 @@
 
   <ItemGroup>
     <!-- Release tracking files required by RS2008; new rules go to Unshipped until the package ships them. -->
-    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
-    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+    <!-- Microsoft.CodeAnalysis.Analyzers adds AnalyzerReleases.Shipped.md and .Unshipped.md as AdditionalFiles by
+         itself (its .props does it); listing them again here made docfx report duplicate source files. -->
   </ItemGroup>
 
 </Project>
