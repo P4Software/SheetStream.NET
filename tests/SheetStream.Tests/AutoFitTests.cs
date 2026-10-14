@@ -167,6 +167,67 @@ public class AutoFitTests
     public void NumberDisplayFormat_RendersWhatExcelShows(string code, double value, string expected)
         => Assert.Equal(expected, NumberDisplayFormat.Parse(code).Render(value));
 
+    [Theory]
+    [InlineData("\"unterminated")]
+    [InlineData("\"")]
+    [InlineData("#,##0\"")]
+    [InlineData("[")]
+    [InlineData("[Red")]
+    [InlineData("[$")]
+    [InlineData("[$€-")]
+    [InlineData("[h")]
+    [InlineData("[[h]]:mm")]
+    [InlineData("[[[]]]")]
+    [InlineData(";")]
+    [InlineData(";;;")]
+    [InlineData("\\")]
+    [InlineData("0\\")]
+    [InlineData("_")]
+    [InlineData("0_")]
+    [InlineData("*")]
+    [InlineData("0*")]
+    [InlineData("E+")]
+    [InlineData("0E")]
+    [InlineData("A")]
+    [InlineData("AM/P")]
+    [InlineData("G")]
+    [InlineData("Genera")]
+    [InlineData("\u0001\u0005")]   // The parser's own placeholder characters as input.
+    [InlineData("]]]]")]
+    [InlineData("\"\"\"\"")]
+    public void NumberDisplayFormat_NeverThrowsOnHostileCodes(string code)
+    {
+        var format = NumberDisplayFormat.Parse(code);
+        foreach (var value in new[] { 0.0, 1.5, -1234567.891, 1e300, -1e300, double.NaN, double.PositiveInfinity, double.Epsilon, 2958466.0, 1e30 })
+            Assert.NotNull(format.Render(value));
+    }
+
+    [Fact]
+    public void NumberDisplayFormat_SurvivesPathologicalLengths()
+    {
+        var codes = new[]
+        {
+            new string('d', 10_000),
+            new string('m', 10_000) + "/" + new string('y', 10_000),
+            new string('[', 10_000),
+            new string('"', 10_001),
+            new string('\\', 10_001),
+            new string('_', 10_001),
+            new string(';', 10_000),
+            new string('0', 100_000) + "." + new string('0', 100_000),
+            string.Concat(Enumerable.Repeat("[h]", 10_000)),
+            new string('#', 1_000_000),
+        };
+        foreach (var code in codes)
+        {
+            var format = NumberDisplayFormat.Parse(code);
+            foreach (var value in new[] { 0.0, 123.456, 1e300, double.NaN })
+                Assert.NotNull(format.Render(value));
+        }
+        // Elapsed digits are capped even for absurd serial values.
+        Assert.Equal(20, NumberDisplayFormat.Parse("[h]").Render(1e300).Length);
+    }
+
     [Fact]
     public void AccentedLetters_MeasureLikeTheirBaseLetter()
     {

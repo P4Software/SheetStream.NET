@@ -87,9 +87,12 @@ namespace SheetStream.Internal
                     case DayAbbreviation: sb.Append(CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedDayName(date.DayOfWeek)); break;
                     case Elapsed:
                     {
+                        // NaN, infinities and absurd serials would give a meaningless (or negative) digit count.
                         var total = Math.Floor(Math.Abs(value) * _elapsedPerDay);
-                        var digits = total < 1 ? 1 : (int)Math.Floor(Math.Log10(total)) + 1;
-                        sb.Append('0', Math.Max(digits, _elapsedDigits));
+                        var digits = !(total >= 1) ? 1
+                            : total >= 1e19 ? MaxElapsedDigits
+                            : (int)Math.Floor(Math.Log10(total)) + 1;
+                        sb.Append('0', Math.Min(MaxElapsedDigits, Math.Max(digits, Math.Min(_elapsedDigits, MaxElapsedDigits))));
                         break;
                     }
                     default: sb.Append(c); break;
@@ -112,11 +115,34 @@ namespace SheetStream.Internal
             return value.ToString("G10", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>Parses an Excel number format code. <c>null</c>, empty and <c>General</c> give <see cref="General"/>.</summary>
+        /// <summary>Longest run of one date letter that still changes the display (mmmm, dddd); longer runs are capped.</summary>
+        private const int MaxTokenRun = 8;
+
+        /// <summary>Longest digit string an elapsed-time token is allowed to expand to.</summary>
+        private const int MaxElapsedDigits = 20;
+
+        /// <summary>
+        /// Parses an Excel number format code. <c>null</c>, empty and <c>General</c> give <see cref="General"/>.
+        /// Never throws: codes come from user styles and, in edit and template mode, from files SheetStream did
+        /// not write, so anything the parser cannot interpret falls back to General.
+        /// </summary>
         public static NumberDisplayFormat Parse(string? code)
         {
             if (string.IsNullOrEmpty(code) || code == "General") return General;
-            var s = FirstSection(code!);
+            try
+            {
+                return ParseCore(code!);
+            }
+            catch (Exception)
+            {
+                // A width estimate is never worth failing a save over.
+                return General;
+            }
+        }
+
+        private static NumberDisplayFormat ParseCore(string code)
+        {
+            var s = FirstSection(code);
             if (s.Length == 0) return General;
 
             // Literals are collected twice: in display order for date formats (whose text is value-independent)
@@ -149,7 +175,8 @@ namespace SheetStream.Internal
                 {
                     case '"':
                     {
-                        var end = s.IndexOf('"', i + 1);
+                        // An unterminated quote runs to the end of the code.
+                        var end = i + 1 < s.Length ? s.IndexOf('"', i + 1) : -1;
                         if (end < 0) end = s.Length;
                         Literal(s.Substring(i + 1, end - i - 1));
                         i = end;
@@ -164,8 +191,9 @@ namespace SheetStream.Internal
                         break;
                     case '[':
                     {
+                        // An unterminated bracket runs to the end of the code.
                         var close = s.IndexOf(']', i);
-                        if (close < 0) close = s.Length - 1;
+                        if (close < 0) close = s.Length;
                         var inner = s.Substring(i + 1, close - i - 1);
                         if (inner.Length > 0 && inner[0] == '$')
                         {
@@ -232,7 +260,7 @@ namespace SheetStream.Internal
                         isDate = true;
                         var run = 1;
                         while (i + run < s.Length && char.ToLowerInvariant(s[i + run]) == char.ToLowerInvariant(c)) run++;
-                        dateText.Append(DateToken(char.ToLowerInvariant(c), run));
+                        dateText.Append(DateToken(char.ToLowerInvariant(c), Math.Min(run, MaxTokenRun)));
                         i += run - 1;
                         break;
                     }
@@ -309,7 +337,7 @@ namespace SheetStream.Internal
         }
 
         private static bool StartsWith(string s, int index, string token)
-            => string.Compare(s, index, token, 0, token.Length, StringComparison.OrdinalIgnoreCase) == 0
-               && index + token.Length <= s.Length;
+            => index + token.Length <= s.Length
+               && string.Compare(s, index, token, 0, token.Length, StringComparison.OrdinalIgnoreCase) == 0;
     }
 }
