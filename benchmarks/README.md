@@ -8,7 +8,7 @@ A reproducible comparison of SheetStream with the other .xlsx writers .NET devel
 | EPPlus | **4.5.3.3**, pinned `[4.5.3.3]` | LGPL | The last LGPL release. EPPlus 5 and later need a commercial licence for commercial use. |
 | ClosedXML | 0.105.1 | MIT | Latest stable. |
 | MiniExcel | 1.46.0 | Apache-2.0 | Latest stable. 2.0 is still in preview. |
-| NPOI | **2.7.6**, pinned `[2.7.6]` | Apache-2.0 | The last release whose NuGet binaries are plain Apache-2.0. From 2.8.0 the package ships under an "OSMF EULA" with `requireLicenseAcceptance`: users above US$10,000 a year in revenue owe the project a maintenance fee for the binaries. The build stops with a warning until you set `AcceptNPOIOSMFLicense`. As with EPPlus 5+, this suite does not accept that agreement on anyone's behalf. |
+| NPOI | **2.7.6**, pinned `[2.7.6]` | Apache-2.0 | The last release whose NuGet binaries are plain Apache-2.0. From 2.8.0 the package ships under an "OSMF EULA" with `requireLicenseAcceptance`: users above US$10,000 a year in revenue owe the project a maintenance fee for the binaries. The agreement says this fee is not a licence fee. 2.8.x still builds: it only prints a build warning until you set `AcceptNPOIOSMFLicense`. As with EPPlus 5+, this suite does not accept that agreement on anyone's behalf. |
 | DocumentFormat.OpenXml | 3.5.1 | MIT | Used only by the correctness guard, to read every library's output back. |
 | BenchmarkDotNet | 0.15.8 | MIT | |
 
@@ -69,7 +69,7 @@ Every library gets the same input. The input is built once, before timing, from 
   3. Reads `Process.PeakWorkingSet64`.
   4. Only then verifies the full-size output.
 
-  Each case runs in 3 fresh processes and the median is reported. A **Baseline** child builds the input and writes nothing. It shows the floor every library sits on: runtime, assemblies and input data. The output buffer's pages count only once they are written, so each library's figure includes roughly its output size.
+  Each case runs in 3 fresh processes and the median is reported. A **Baseline** child builds the input and writes nothing. It shows the floor every library sits on: the .NET runtime, the benchmark executable and the input data. The Baseline child never calls a writer, so the libraries' assemblies are not loaded or JIT-compiled in it. Each library's "above baseline" figure therefore includes loading and compiling its own code. The output buffer's pages count only once they are written, so each library's figure includes roughly its output size.
 
 ## Machine
 
