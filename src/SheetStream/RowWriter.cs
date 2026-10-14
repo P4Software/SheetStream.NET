@@ -316,8 +316,8 @@ namespace SheetStream
             _w.WriteValue(value.ToOADate());
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.ToOADate());
-            // Display width: "10/13/2026" or "10/13/2026 15:30".
-            EndCell(_observe ? (value.TimeOfDay == TimeSpan.Zero ? "00/00/0000" : "00/00/0000 00:00") : null);
+            // Display width follows the style's date format: "10/13/2026", "2026-10-13", "13-Oct-26"...
+            EndCell(_observe ? NumberText(value.ToOADate()) : null);
             return this;
         }
 
@@ -335,7 +335,7 @@ namespace SheetStream
             _w.WriteValue(value.TotalDays);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.TotalDays);
-            EndCell(_observe ? "000:00:00" : null);
+            EndCell(_observe ? NumberText(value.TotalDays) : null);
             return this;
         }
 
@@ -507,16 +507,11 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Approximates how a number will display, for AutoFit: the shortest round-trip text, widened when the
-        /// style adds thousands separators or fixed decimals. Exact rendering would need Excel's formatter.
+        /// Approximates how a number will display under the cell's number format, for AutoFit: General text for
+        /// unformatted numbers, the formatted digits plus literals (<c>$1,234.50</c>, <c>12.34%</c>) otherwise,
+        /// and a value-independent stand-in for dates and times (<c>00/00/0000</c>). See <see cref="NumberDisplayFormat"/>.
         /// </summary>
-        private string NumberText(double value)
-        {
-            var numFmt = _sheet.Workbook.Styles.NumberFormatId(_lastStyleId);
-            if (numFmt == 0) return value.ToString("G10", CultureInfo.InvariantCulture);
-            if ((numFmt >= 14 && numFmt <= 17) || numFmt == 22) return "00/00/0000 00:00".Substring(0, numFmt == 22 ? 16 : 10);
-            return value.ToString("#,##0.00", CultureInfo.InvariantCulture) + "  ";
-        }
+        private string NumberText(double value) => _sheet.Workbook.Styles.DisplayFormat(_lastStyleId).Render(value);
 
         /// <summary>
         /// Opens a <c>&lt;c&gt;</c> element. The reference is written as two strings (cached column letters,
