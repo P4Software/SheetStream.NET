@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write       # sign the build provenance attestation
+      attestations: write   # store the attestation on GitHub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -50,6 +52,21 @@ jobs:
         run: |
           dotnet pack src/SheetStream/SheetStream.csproj --no-build -c Release -o artifacts
           dotnet pack src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj --no-build -c Release -o artifacts
+
+      # A software bill of materials (SPDX 2.2) listing exactly what is inside the packages and what they
+      # were built from, attached to every release so procurement and security teams can check it.
+      - name: Generate SBOM
+        run: |
+          dotnet tool install --global Microsoft.Sbom.DotNetTool
+          sbom-tool generate -b artifacts -bc . -m sbom -pn SheetStream -pv "${GITHUB_REF_NAME#v}" -ps "P4 Software" -nsb https://p4.software/sbom -V Warning
+          cp sbom/_manifest/spdx_2.2/manifest.spdx.json "artifacts/SheetStream-${GITHUB_REF_NAME#v}.spdx.json"
+
+      # Signed statement that these exact package files were produced by this workflow from this commit.
+      # Anyone can verify it with `gh attestation verify SheetStream.x.y.z.nupkg --owner P4Software`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/*.nupkg
 
       - uses: actions/upload-artifact@v4
         with:

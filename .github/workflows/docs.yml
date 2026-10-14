@@ -28,6 +28,22 @@ jobs:
         run: dotnet tool restore
       - name: Build site
         run: dotnet docfx docs/docfx.json --warningsAsErrors
+
+      # The coverage badge in the README reads docs/_site/coverage.json through shields.io's endpoint
+      # badge. Serving it from the docs site keeps the number honest (it comes from a real test run on
+      # main) without a third-party coverage service or a stored token.
+      - name: Test with coverage
+        run: dotnet test -c Release --collect:"XPlat Code Coverage" --results-directory coverage
+      - name: Write coverage badge data
+        run: |
+          python3 - <<'PY'
+          import glob, json, xml.etree.ElementTree as ET
+          rate = max(float(ET.parse(f).getroot().get("line-rate")) for f in glob.glob("coverage/**/coverage.cobertura.xml", recursive=True)) * 100
+          color = "brightgreen" if rate >= 90 else "green" if rate >= 80 else "yellow" if rate >= 70 else "orange"
+          json.dump({"schemaVersion": 1, "label": "coverage", "message": f"{rate:.1f}%", "color": color}, open("docs/_site/coverage.json", "w"))
+          print(f"line coverage {rate:.1f}%")
+          PY
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/_site
