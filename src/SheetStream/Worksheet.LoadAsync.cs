@@ -1,6 +1,7 @@
 #if NET8_0_OR_GREATER
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +15,8 @@ namespace SheetStream
         /// Writes an <see cref="IAsyncEnumerable{T}"/> as rows, awaiting each item, so an EF Core query
         /// (<c>AsAsyncEnumerable()</c>) or a paged API streams straight into the sheet without ever being
         /// materialised. Columns, headers and options work exactly like
-        /// <see cref="LoadFromCollection{T}(IEnumerable{T}, LoadOptions?)"/>.
+        /// <see cref="LoadFromCollection{T}(IEnumerable{T}, LoadOptions?)"/>, including the use of a mapper
+        /// registered in <see cref="SheetMappers"/> before falling back to reflection.
         /// </summary>
         /// <remarks>Only available on .NET 8 and later; netstandard2.0 has no built-in IAsyncEnumerable.</remarks>
         /// <example>
@@ -22,19 +24,34 @@ namespace SheetStream
         /// await sheet.LoadFromAsyncEnumerable(db.Orders.AsNoTracking().AsAsyncEnumerable(), new LoadOptions { TableName = "Orders" }, ct);
         /// </code>
         /// </example>
-        public async Task<LoadResult> LoadFromAsyncEnumerable<T>(IAsyncEnumerable<T> items, LoadOptions? options = null, CancellationToken cancellationToken = default)
+        public Task<LoadResult> LoadFromAsyncEnumerable<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T>(IAsyncEnumerable<T> items, LoadOptions? options = null, CancellationToken cancellationToken = default)
         {
             if (items == null) throw new ArgumentNullException(nameof(items));
-            options ??= new LoadOptions();
+            if (SheetMappers.TryGet<T>(out var mapper)) return LoadFromAsyncEnumerable(items, mapper, options, cancellationToken);
             var members = MemberMap.For(typeof(T));
-            var memberStyles = new CellStyle?[members.Length];
-            for (var i = 0; i < members.Length; i++)
-            {
-                var format = members[i].NumberFormat;
-                if (format != null) memberStyles[i] = Workbook.Styles.Create(o => o.NumberFormat = format);
-            }
             var headers = members.Select(m => m.Header).ToArray();
+            var memberStyles = NumberFormatStyles(members.Length, i => members[i].NumberFormat);
+            return LoadFromAsyncEnumerableCore(items, headers, memberStyles, options ?? new LoadOptions(), cancellationToken, (item, row, styles) =>
+            {
+                for (var i = 0; i < styles.Length; i++) row.WriteCell(members[i].Getter(item!), styles[i]);
+            });
+        }
 
+        /// <summary>
+        /// Writes an <see cref="IAsyncEnumerable{T}"/> through an explicit <see cref="ISheetRowMapper{T}"/>, so
+        /// no reflection is involved: the overload to use in trimmed or Native AOT applications.
+        /// </summary>
+        public Task<LoadResult> LoadFromAsyncEnumerable<T>(IAsyncEnumerable<T> items, ISheetRowMapper<T> mapper, LoadOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            if (items == null) throw new ArgumentNullException(nameof(items));
+            if (mapper == null) throw new ArgumentNullException(nameof(mapper));
+            var headers = CopyHeaders(mapper);
+            var memberStyles = NumberFormatStyles(headers.Length, i => mapper.NumberFormats[i]);
+            return LoadFromAsyncEnumerableCore(items, headers, memberStyles, options ?? new LoadOptions(), cancellationToken, mapper.WriteRow);
+        }
+
+        private async Task<LoadResult> LoadFromAsyncEnumerableCore<T>(IAsyncEnumerable<T> items, string[] headers, CellStyle?[] memberStyles, LoadOptions options, CancellationToken cancellationToken, Action<T, RowWriter, CellStyle?[]> writeItem)
+        {
             // Pull the items asynchronously into a small hand-off: LoadCore is synchronous by design (XmlWriter
             // into a zip entry), so each await happens between rows, never in the middle of one.
             var enumerator = items.GetAsyncEnumerator(cancellationToken);
@@ -61,7 +78,13 @@ namespace SheetStream
                     var index = -1;
                     var batch = LoadCore(headers, memberStyles, batchOptions,
                         () => ++index < rowsBuffered.Count,
-                        i => rowsBuffered[index] == null ? null : members[i].Getter(rowsBuffered[index]!));
+                        (row, styles) =>
+                        {
+                            // A null item keeps its row with every column empty, like the synchronous path.
+                            var item = rowsBuffered[index];
+                            if (item == null) WriteEmptyRow(row, styles);
+                            else writeItem(item, row, styles);
+                        });
                     dataRows += batch.DataRows;
                     first = false;
                     if (!hasCurrent) break;

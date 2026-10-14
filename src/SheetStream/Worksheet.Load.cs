@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -24,29 +25,73 @@ namespace SheetStream
         /// sheet.LoadFromCollection(orders, new LoadOptions { HeaderStyle = header, TableName = "Orders" });
         /// </code>
         /// </example>
-        public LoadResult LoadFromCollection<T>(IEnumerable<T> items, LoadOptions? options = null)
+        /// <remarks>
+        /// A mapper registered in <see cref="SheetMappers"/> (generated for <c>[SheetRow]</c> types) is used
+        /// when present; otherwise the columns are discovered through reflection, which needs the public
+        /// properties and fields of <typeparamref name="T"/> to survive trimming.
+        /// </remarks>
+        public LoadResult LoadFromCollection<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T>(IEnumerable<T> items, LoadOptions? options = null)
         {
             if (items == null) throw new ArgumentNullException(nameof(items));
+            if (SheetMappers.TryGet<T>(out var mapper)) return LoadFromCollection(items, mapper, options);
             options ??= new LoadOptions();
 
             if (typeof(IDictionary<string, object?>).IsAssignableFrom(typeof(T)) || typeof(T) == typeof(object) && items is IEnumerable<IDictionary<string, object?>>)
                 return LoadDictionaries(items.Cast<IDictionary<string, object?>>(), options);
 
             var members = MemberMap.For(typeof(T));
-            var styles = new CellStyle?[members.Length];
-            for (var i = 0; i < members.Length; i++)
-            {
-                if (members[i].NumberFormat != null)
-                {
-                    var format = members[i].NumberFormat;
-                    styles[i] = Workbook.Styles.Create(o => o.NumberFormat = format);
-                }
-            }
+            var styles = NumberFormatStyles(members.Length, i => members[i].NumberFormat);
             var headers = members.Select(m => m.Header).ToArray();
             using (var e = items.GetEnumerator())
             {
                 return LoadCore(headers, styles, options, e.MoveNext, i => e.Current == null ? null : members[i].Getter(e.Current!));
             }
+        }
+
+        /// <summary>
+        /// Writes a collection as rows through an explicit <see cref="ISheetRowMapper{T}"/> (for example
+        /// <c>Order.SheetMapper</c> generated for a <c>[SheetRow]</c> type). No reflection is involved, so this
+        /// overload is safe for trimmed and Native AOT applications and never boxes a cell value.
+        /// </summary>
+        public LoadResult LoadFromCollection<T>(IEnumerable<T> items, ISheetRowMapper<T> mapper, LoadOptions? options = null)
+        {
+            if (items == null) throw new ArgumentNullException(nameof(items));
+            if (mapper == null) throw new ArgumentNullException(nameof(mapper));
+            options ??= new LoadOptions();
+            var headers = CopyHeaders(mapper);
+            var styles = NumberFormatStyles(headers.Length, i => mapper.NumberFormats[i]);
+            using (var e = items.GetEnumerator())
+            {
+                // Null items keep their row (all columns empty) exactly like the reflection path does.
+                return LoadCore(headers, styles, options, e.MoveNext, (row, s) => { if (e.Current != null) mapper.WriteRow(e.Current, row, s); else WriteEmptyRow(row, s); });
+            }
+        }
+
+        /// <summary>Snapshot of the mapper's headers; the writer indexes them in a tight loop and must not observe later changes.</summary>
+        private static string[] CopyHeaders<T>(ISheetRowMapper<T> mapper)
+        {
+            var headers = new string[mapper.Headers.Count];
+            for (var i = 0; i < headers.Length; i++) headers[i] = mapper.Headers[i] ?? throw new InvalidOperationException($"Mapper for {typeof(T).Name} returned a null header for column {i}.");
+            if (mapper.NumberFormats.Count != headers.Length)
+                throw new InvalidOperationException($"Mapper for {typeof(T).Name} has {headers.Length} headers but {mapper.NumberFormats.Count} number formats.");
+            return headers;
+        }
+
+        /// <summary>One style per column for the columns that carry a number format, null elsewhere.</summary>
+        private CellStyle?[] NumberFormatStyles(int count, Func<int, string?> numberFormat)
+        {
+            var styles = new CellStyle?[count];
+            for (var i = 0; i < count; i++)
+            {
+                var format = numberFormat(i);
+                if (format != null) styles[i] = Workbook.Styles.Create(o => o.NumberFormat = format);
+            }
+            return styles;
+        }
+
+        private static void WriteEmptyRow(RowWriter row, CellStyle?[] styles)
+        {
+            foreach (var style in styles) row.WriteEmpty(style);
         }
 
         /// <summary>Writes a <see cref="DataTable"/> as rows, with column captions as headers.</summary>
@@ -90,8 +135,19 @@ namespace SheetStream
             }
         }
 
-        /// <summary>Shared row writer behind every LoadFrom* method.</summary>
+        /// <summary>Row writer for sources that surface values as objects (DataTable, IDataReader, dictionaries, reflection).</summary>
         private LoadResult LoadCore(string[] headers, CellStyle?[] memberStyles, LoadOptions options, Func<bool> moveNext, Func<int, object?> value)
+            => LoadCore(headers, memberStyles, options, moveNext, (row, styles) =>
+            {
+                for (var i = 0; i < styles.Length; i++) row.WriteCell(value(i), styles[i]);
+            });
+
+        /// <summary>
+        /// Shared row writer behind every LoadFrom* method. <paramref name="writeRow"/> receives the open row
+        /// (already positioned at the start column) and the effective per-column styles, and writes exactly
+        /// one cell per header; a mapper does this with typed WriteCell calls so nothing is boxed.
+        /// </summary>
+        private LoadResult LoadCore(string[] headers, CellStyle?[] memberStyles, LoadOptions options, Func<bool> moveNext, Action<RowWriter, CellStyle?[]> writeRow)
         {
             if (options.StartColumn < 1 || options.StartColumn + Math.Max(headers.Length, 1) - 1 > Internal.CellReference.MaxColumns)
                 throw new ArgumentOutOfRangeException(nameof(options), "StartColumn plus the column count must fit within 16384 columns.");
@@ -116,7 +172,7 @@ namespace SheetStream
             {
                 var row = Row();
                 row.Skip(options.StartColumn - 1);
-                for (var i = 0; i < headers.Length; i++) row.WriteCell(value(i), styles[i]);
+                writeRow(row, styles);
                 rows++;
             }
 
@@ -136,9 +192,16 @@ namespace SheetStream
             return new LoadResult(firstRow, lastRow, options.StartColumn, lastColumn, rows);
         }
 
-        /// <summary>Cached, compiled member accessors per type, shared by the writer and <c>ExcelReader.Read&lt;T&gt;</c>.</summary>
+        /// <summary>
+        /// Cached, compiled member accessors per type: the reflection fallback used when no
+        /// <see cref="ISheetRowMapper{T}"/> is registered. Every entry point is annotated so the trimmer keeps
+        /// the public properties and fields of the types that flow in here.
+        /// </summary>
         internal sealed class MemberMap
         {
+            /// <summary>The members the reflection path looks at; shared with ExcelReader so both sides agree.</summary>
+            internal const DynamicallyAccessedMemberTypes RequiredMembers = DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields;
+
             private static readonly ConcurrentDictionary<Type, MemberMap[]> Cache = new ConcurrentDictionary<Type, MemberMap[]>();
 
             private MemberMap(MemberInfo member, Type type, string header, string? numberFormat, Func<object, object?> getter)
@@ -156,9 +219,14 @@ namespace SheetStream
             public string? NumberFormat { get; }
             public Func<object, object?> Getter { get; }
 
-            public static MemberMap[] For(Type type) => Cache.GetOrAdd(type, Build);
+            public static MemberMap[] For([DynamicallyAccessedMembers(RequiredMembers)] Type type)
+            {
+                // Not GetOrAdd(type, Build): handing an annotated method to a Func<Type, ...> loses the
+                // annotation and the trim analyzer flags it (IL2111). Building twice under a race is harmless.
+                return Cache.TryGetValue(type, out var cached) ? cached : Cache.GetOrAdd(type, Build(type));
+            }
 
-            private static MemberMap[] Build(Type type)
+            private static MemberMap[] Build([DynamicallyAccessedMembers(RequiredMembers)] Type type)
             {
                 var candidates = new List<(MemberMap Map, int Order, int Token)>();
                 const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;

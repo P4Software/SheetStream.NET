@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -101,7 +103,7 @@ namespace SheetStream.Reading
     /// var products = reader.Read&lt;Product&gt;("Products").ToList();
     /// </code>
     /// </example>
-    public sealed class ExcelReader : IDisposable
+    public sealed partial class ExcelReader : IDisposable
     {
         private readonly ZipArchive _zip;
         private readonly Stream _stream;
@@ -218,8 +220,10 @@ namespace SheetStream.Reading
         /// Values are converted to the member type; a value that cannot be converted throws a
         /// <see cref="FormatException"/> naming the row and column. Unmatched columns are ignored.
         /// </summary>
-        public IEnumerable<T> Read<T>(string sheetName) where T : new()
+        public IEnumerable<T> Read<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T>(string sheetName) where T : new()
         {
+            // A compile-time mapper (see ExcelReader.Mapping.cs) takes precedence over reflection.
+            if (SheetMappers.TryGet<T>(out var mapper)) { foreach (var mapped in Read(sheetName, mapper)) yield return mapped; yield break; }
             Binding[]? bindings = null;
             foreach (var row in ReadRows(sheetName))
             {
@@ -623,11 +627,12 @@ namespace SheetStream.Reading
             public Action<object, object?> Set { get; }
         }
 
-        private static Binding[] Bind(Type type, ExcelRow header)
+        private static Binding[] Bind([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] Type type, ExcelRow header)
         {
             var byName = new Dictionary<string, MemberInfo>(StringComparer.OrdinalIgnoreCase);
             const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
-            foreach (var m in type.GetMembers(flags))
+            // Properties then fields (not GetMembers) so the trimmer only has to keep those two member kinds.
+            foreach (var m in type.GetProperties(flags).Concat<MemberInfo>(type.GetFields(flags)))
             {
                 if (m is PropertyInfo p && (!p.CanWrite || p.GetIndexParameters().Length > 0)) continue;
                 if (!(m is PropertyInfo) && !(m is FieldInfo f && !f.IsInitOnly)) continue;
