@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Analyzers load inside the compiler, which only guarantees netstandard2.0. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- Marks the project as a Roslyn component (enables analyzer debugging in Visual Studio) and turns on the
+         extra RS* rules that catch APIs an analyzer must not use (file system, environment, threads...). -->
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+
+    <!-- The analyzer is not a package of its own: the SheetStream package carries it under analyzers/dotnet/cs
+         (see PACKAGING.md). IncludeBuildOutput=false keeps the dll out of lib/ should anyone pack this project. -->
+    <IsPackable>false</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <RootNamespace>SheetStream.Analyzers</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 4.8.0 is the oldest compiler the analyzer supports (VS 2022 17.8 / .NET SDK 8.0). Newer compilers load
+         analyzers built against older Microsoft.CodeAnalysis, so staying low maximises compatibility. PrivateAssets
+         keeps the compiler assemblies out of any package that references this project. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Release tracking files required by RS2008; new rules go to Unshipped until the package ships them. -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+</Project>
