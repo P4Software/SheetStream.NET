@@ -6,6 +6,8 @@
   href: templates.md
 - name: Editing existing workbooks
   href: editing-workbooks.md
+- name: Pivot tables
+  href: pivot-tables.md
 - name: Trimming, Native AOT and the source generator
   href: aot-and-source-generator.md
 - name: Analyzers

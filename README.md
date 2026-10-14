@@ -130,6 +130,19 @@ sheet.AddPicture("logo.png", row: 1, column: 8, widthPixels: 160);
 
 Chart types: column, bar (clustered, stacked, 100%), line, line with markers, stacked line, area, stacked area, pie, doughnut, scatter and scatter with lines. Pictures: PNG, JPEG and GIF.
 
+### Pivot tables
+
+```csharp
+var loaded = data.LoadFromCollection(orders, new LoadOptions { TableName = "Orders" });
+var pivot = workbook.Worksheets.Add("Pivot").AddPivotTable("SalesByRegion", loaded.Table!, row: 3, column: 1);
+pivot.AddRowField("Region");
+pivot.AddColumnField("Category");
+pivot.AddDataField("Amount", PivotFunction.Sum, numberFormat: "$#,##0.00");
+pivot.AddDataField("OrderId", PivotFunction.Count, displayName: "Orders");
+```
+
+The pivot sits over a table or range written earlier (`AddPivotTable("P", "Data", loaded.Range, 3, 1, loaded.Headers)` for a plain range) and is marked refresh-on-open, so Excel computes it when the file opens; the output is checked against real Excel in `tests/excel-check-pivot.ps1`. Viewers without a pivot engine show only the headers until Excel has opened and saved the file. Calculated fields, grouping and slicers are not supported. See [Pivot tables](docs/pivot-tables.md).
+
 ### Links, comments, rich text and formulas
 
 ```csharp
@@ -287,7 +300,7 @@ The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001**
 |---|---|
 | `ExcelPackage` | `Create(path)`, `new ExcelPackage(stream)`, `CreateBytes(build)`, `Save()`, `Dispose()` |
 | `Workbook` | `Worksheets.Add`, `Styles`, `DefinedNames`, `Properties`, `Protect` |
-| `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` |
+| `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddPivotTable`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `CacheFormulaResults`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` / `AsyncEnumerable` |
 | `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
 | `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
 | `ExcelReader` | `Open` / `OpenAsync`, `SheetNames`, `ReadRows` / `ReadRowsAsync`, `Read<T>` / `ReadAsync<T>`, `ReadDataTable` / `ReadDataTableAsync`, `ReadMergedRanges`, `ReadHyperlinks` |
@@ -308,7 +321,7 @@ The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001**
 | Edit and re-save an existing workbook | ✅ | ✅ | ❌ | ✅ (small workbooks, in memory) |
 | Read workbooks | ✅ | ✅ | ✅ streaming | ✅ streaming |
 | Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
-| Pivot tables | ✅ | ✅ | ❌ | ❌ |
+| Pivot tables | ✅ | ✅ | ❌ | ✅ (refreshed on open) |
 
 ### Benchmarks
 
@@ -337,7 +350,7 @@ Full results, the wide-sheet scenario, methodology, machine details and how to r
 
 - **You need to edit large workbooks in place.** SheetStream edits small workbooks (`ExcelPackage.Edit`) by holding the edited sheet in memory; for big files it fills templates or streams. Use ClosedXML (MIT) or EPPlus when you must rewrite a large arbitrary workbook.
 - **You need formulas evaluated in .NET**, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
-- **You need pivot tables, sparklines, macros or encryption.** These are not supported.
+- **You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers.** These are not supported.
 - **You only map simple objects to and from sheets** and want the smallest API. MiniExcel is excellent at that.
 
 SheetStream is the right fit when you write large or styled exports, fill branded templates, stream reports from ASP.NET Core, or read big imports with flat memory, under a licence you never have to think about.
