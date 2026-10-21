@@ -24,8 +24,8 @@
   <ItemGroup>
     <!-- 4.8.0 is the compiler shipped with .NET 8 / VS 17.8: the oldest host the generator supports.
          Newer SDKs (including .NET 10) load it unchanged. PrivateAssets keeps it out of any consumer's graph. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
