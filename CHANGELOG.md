@@ -2,6 +2,22 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.5.1 (2026-11-13)
+
+No change to the library's code or behaviour; this release updates what the packages carry and show.
+
+### Changed
+
+- **README rewritten** for both packages. The package pages on nuget.org now show a shorter README with plain headings, exact benchmark figures and links to the docs, and `SheetStream.AspNetCore` has a complete page of its own (what it solves, how the response behaves, options).
+- The OpenSSF Scorecard badge is served from a domain nuget.org allows, which removes the "images are not displayed as they are not from trusted domains" banner from the package page.
+
+### Security
+
+- The reader memory issue fixed in 0.5.0 is published as security advisory [GHSA-rvj5-c489-67jr](https://github.com/P4Software/SheetStream.NET/security/advisories/GHSA-rvj5-c489-67jr). It affects `SheetStream.NET` before 0.5.0 and the retired `SheetStream` package 0.2.0 to 0.3.0. If you read workbooks from untrusted users, upgrade.
+
+### Build
+
+- Package versions for the build, tests and samples are declared once in `Directory.Packages.props`. The web sample uses the published `SheetStream.NET` package.
 ## 0.5.0 (2026-11-13)
 
 A hardening release: it fixes defects found in a review of 0.4.0. Two behaviours change; both are listed first.
