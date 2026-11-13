@@ -112,7 +112,7 @@ DataTable table = reader.ReadDataTable("Products");
 await foreach (var row in reader.ReadRowsAsync("Products", ct)) { }   // .NET 8+, also OpenAsync and ReadAsync<T>
 ```
 
-Dates come back as `DateTime`, elapsed times as `TimeSpan`, errors as `ExcelErrorValue`, and formula cells as their cached result. `ReadMergedRanges` and `ReadHyperlinks` read only the end of the sheet part, so they are fast on large sheets.
+Dates come back as `DateTime`, elapsed times as `TimeSpan`, errors as `ExcelErrorValue`, and formula cells as their cached result. The full guide is [docs/reading-workbooks.md](docs/reading-workbooks.md). `ReadMergedRanges` and `ReadHyperlinks` read only the end of the sheet part, so they are fast on large sheets.
 
 ### Files from people you do not know
 

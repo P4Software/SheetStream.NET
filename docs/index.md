@@ -32,10 +32,19 @@ package.Save();
 
 `row.WriteFormula("SUM(C2:C101)")` writes the formula and asks Excel to calculate on open. Viewers that do not calculate (file previews, Quick Look, many mobile and web viewers, `ExcelReader`) show such a cell blank unless the file also carries the result. Turn on `sheet.CacheFormulaResults()` before the first row and SheetStream computes the result itself when the formula is simple enough: numbers, references to cells already written on the same sheet, ranges, `+ - * /`, `%`, parentheses and `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS`. Anything else (other functions, other sheets, rows not yet written, a division by zero) is written exactly as before, without a value; a wrong value is never written. The sheet keeps about 8 bytes per numeric cell to do this, which is why it is opt-in. When you already know the result, `WriteFormula(formula, cachedValue)` stores it directly.
 
+## Large exports
+
+Nothing needs switching on: rows are written as you produce them, so memory does not grow with the row count. Two things are held until the file is saved, the style table and the shared string table. The shared string table stops growing at `PackageOptions.MaxSharedStringChars` (16,000,000 by default, a few tens of megabytes); after that, strings it has not seen are written inline in the sheet and strings already in it stay shared. An export of millions of unique strings therefore stays flat, at the cost of a somewhat larger file. `PackageOptions.CompressionLevel = CompressionLevel.Fastest` roughly halves the write time in exchange for larger files. How much larger depends on the runtime: about a quarter on .NET 8 and about 80% on .NET 10 in our measurements, because newer runtimes compress less at that level.
+
 ## Where to go next
 
 - [Migrating from EPPlus](migrating-from-epplus.md): a real exporter converted line by line.
+- [Reading workbooks](reading-workbooks.md): rows, objects and DataTables, and the limits that make uploaded files safe to read.
 - [Filling templates](templates.md): design in Excel, fill from code.
+- [Editing existing workbooks](editing-workbooks.md): open a small workbook, change cells, save.
+- [Pivot tables](pivot-tables.md): pivots over a table or range, refreshed when Excel opens the file.
+- [Trimming, Native AOT and the source generator](aot-and-source-generator.md): object mapping without reflection.
+- [Analyzers](analyzers.md): build-time warnings for the streaming rules.
 - [API reference](api/SheetStream.yml): every public type, generated from the source.
 - [Benchmarks](https://github.com/P4Software/SheetStream.NET/tree/main/benchmarks): reproducible comparisons with EPPlus, ClosedXML, MiniExcel and NPOI.
 
