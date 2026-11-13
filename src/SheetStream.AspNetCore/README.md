@@ -1,12 +1,12 @@
 # SheetStream.AspNetCore
 
-ASP.NET Core helpers for [SheetStream.NET](https://www.nuget.org/packages/SheetStream.NET), the MIT-licensed, zero-dependency streaming `.xlsx` library.
+ASP.NET Core helpers for [SheetStream.NET](https://www.nuget.org/packages/SheetStream.NET), a zero-dependency, MIT-licensed library that writes and reads `.xlsx` files. It targets `net8.0`.
 
 ```bash
 dotnet add package SheetStream.AspNetCore
 ```
 
-## Return an Excel download in one line
+## Return an Excel download
 
 ```csharp
 using SheetStream;
@@ -28,6 +28,8 @@ app.MapGet("/orders.xlsx", (AppDb db) =>
 public IResult Export() => ExcelResults.Excel("report.xlsx", wb => BuildReport(wb));
 ```
 
-The workbook is built into a temporary file and copied to the response asynchronously, so memory stays flat for large exports, the response has an accurate `Content-Length`, and no synchronous I/O touches the response body. Non-ASCII file names are sent correctly through `filename*`.
+The workbook is built into a temporary file and copied to the response asynchronously. Memory stays flat for large exports, the response carries an accurate `Content-Length`, and nothing writes to the response body synchronously. Non-ASCII file names are sent through `filename*`.
 
-MIT licensed, published by P4 Software.
+You do not call `Save()` here: `ExcelResults.Excel` finishes the file after your build delegate returns.
+
+Documentation: https://p4software.github.io/SheetStream.NET/. MIT licensed, published by P4 Software.

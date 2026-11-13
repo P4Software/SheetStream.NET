@@ -1,40 +1,21 @@
-# 🚀 SheetStream.NET
+# SheetStream.NET
 
-A fast, zero-dependency, **MIT-licensed** .NET library for creating, filling, editing and reading Excel (`.xlsx`) files. (Not related to the Node.js package of the same name.)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![NuGet](https://img.shields.io/nuget/v/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET) [![Downloads](https://img.shields.io/nuget/dt/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET) [![Build](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml) [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream.NET%2Fcoverage.json)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/P4Software/SheetStream.NET?label=OpenSSF%20Scorecard)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream.NET) [![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream.NET/)
 
-SheetStream streams rows straight into the file instead of building the workbook in memory, so large exports stay fast and memory stays flat. It was built at P4 Software when EPPlus moved to a commercial licence, and it covers what business reports actually use: styles, tables, charts, conditional formatting, validation, templates designed in Excel, and a streaming reader for imports.
+SheetStream.NET is a zero-dependency, MIT-licensed .NET library that creates, fills, edits and reads Excel (`.xlsx`) files. It is not related to the Node.js package of the same name.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![NuGet](https://img.shields.io/nuget/v/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET)
-[![Build](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml/badge.svg)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
-[![Docs](https://img.shields.io/badge/docs-p4software.github.io-0A5FAD)](https://p4software.github.io/SheetStream.NET/)
-[![Downloads](https://img.shields.io/nuget/dt/SheetStream.NET.svg)](https://www.nuget.org/packages/SheetStream.NET)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fp4software.github.io%2FSheetStream.NET%2Fcoverage.json)](https://github.com/P4Software/SheetStream.NET/actions/workflows/build.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/P4Software/SheetStream.NET/badge)](https://scorecard.dev/viewer/?uri=github.com/P4Software/SheetStream.NET)
+P4 Software built it when EPPlus moved to a commercial licence. Rows are written straight into the zip archive through an `XmlWriter`, so memory stays flat however many rows you export. It targets `netstandard2.0` and `net8.0`, which covers .NET Framework 4.7.2 and later, and .NET 8 and later. The namespace and assembly are `SheetStream`.
 
-## ✨ Why SheetStream?
-
-* **⚖️ MIT licensed:** free for commercial use with no licence keys or seat counts.
-* **📦 Zero Dependencies:** Built entirely on native .NET `System.IO.Compression` and `System.Xml` APIs. Targets `netstandard2.0` and `net8.0`, so it runs on .NET Framework 4.7.2+ as well as modern .NET.
-* **⚡ Streaming with flat memory:** rows go straight through an `XmlWriter` into the zip archive. In the [benchmarks](benchmarks/README.md) SheetStream allocates about 13× less than the next library, and 10 million cells write in about 5 seconds with a 41 MB peak working set, whether the sheet is long or wide.
-* **🧰 The features real reports use:** tables, charts, pictures, conditional formatting, data validation, hyperlinks, comments, rich text, protection, print setup, outlining, AutoFit, template filling, async loading, and a streaming reader for imports.
-* **🌐 ASP.NET Core ready:** the optional `SheetStream.AspNetCore` package returns a streamed Excel download in one line.
-* **✅ Verified output:** every feature is validated against the ECMA-376 schema with the Open XML SDK validator in CI, and showcase workbooks are opened in real Excel before each release. The reader is fuzz-tested against damaged files.
-
-## 📦 Installation
+## Install
 
 ```bash
 dotnet add package SheetStream.NET
-dotnet add package SheetStream.AspNetCore   # optional: one-line Excel downloads
+dotnet add package SheetStream.AspNetCore   # optional: Excel downloads from ASP.NET Core
 ```
 
-Upgrading from the 0.3.x `SheetStream` package: `dotnet remove package SheetStream`, then add `SheetStream.NET`. The namespace is still `SheetStream`, so no code changes.
+Coming from the 0.3.x `SheetStream` package: run `dotnet remove package SheetStream` and add `SheetStream.NET`. The namespace did not change. Documentation and API reference: https://p4software.github.io/SheetStream.NET/
 
-Full documentation and API reference: **https://p4software.github.io/SheetStream.NET/**
-
-Try it in your browser without installing anything: **[DotNetFiddle: write a styled Excel file and read it back](https://dotnetfiddle.net/BR59ju)**.
-
-## 💻 Quick Start
+## Quick start
 
 ```csharp
 using SheetStream;
@@ -68,377 +49,146 @@ using (var package = ExcelPackage.Create("FinancialReport.xlsx"))
     {
         sheet.Row(i + 1)
             .WriteCell(i)
-            .WriteCell($"Enterprise SKU-{i}")          // Shared string (auto-deduplicated)
+            .WriteCell($"Enterprise SKU-{i}")          // Shared string, de-duplicated
             .WriteCell(1500.50 * i, currencyStyle);
     }
 
     sheet.Row(102).WriteCell("Total", headerStyle).WriteEmpty(headerStyle).WriteFormula("SUM(C2:C101)", currencyStyle);
-    package.Save(); // Also happens automatically when the package is disposed
+    package.Save();
 }
 ```
 
-Need bytes for a web download, like EPPlus' `GetAsByteArray()`?
+To get bytes for a web response, or to load a whole collection or query in one call:
 
 ```csharp
 byte[] bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Export").LoadFromCollection(orders));
-byte[] bytes = await ExcelPackage.CreateBytesAsync(async wb =>            // Await a query per sheet
+byte[] fromQuery = await ExcelPackage.CreateBytesAsync(async wb =>
     wb.Worksheets.Add("Export").LoadFromCollection(await db.Orders.ToListAsync()));
 ```
 
-## 🧭 Feature tour
+## What it can do
 
-### Load data in one call
+The API reference on the docs site lists every member. These are the entry points.
 
-```csharp
-var result = sheet.LoadFromCollection(orders, new LoadOptions
-{
-    HeaderStyle = headerStyle,
-    TableName = "Orders",              // Becomes an Excel table with filter buttons and banding
-    TableStyle = "TableStyleMedium2",
-});
-sheet.LoadFromDataTable(dataTable);
-sheet.LoadFromDataReader(sqlCommand.ExecuteReader()); // Streams a large query row by row
-sheet.LoadFromArrays(listOfObjectArrays);              // First array is the header row (EPPlus LoadFromArrays)
-```
+| Area | Entry point | More |
+|---|---|---|
+| Load data | `LoadFromCollection`, `LoadFromDataTable`, `LoadFromDataReader`, `LoadFromArrays`, `LoadFromAsyncEnumerable` (.NET 8+) | [docs site](https://p4software.github.io/SheetStream.NET/) |
+| Styles, tables, conditional formatting, validation | `Styles.Create`, `AddTable`, `AddConditionalFormatting`, `AddDataValidation` | [docs site](https://p4software.github.io/SheetStream.NET/) |
+| Charts and pictures | `AddChart`, `AddPicture` | [docs site](https://p4software.github.io/SheetStream.NET/) |
+| Pivot tables | `AddPivotTable` | [pivot-tables.md](docs/pivot-tables.md) |
+| Links, comments, rich text, formulas | `WriteHyperlink`, `AddComment`, `WriteRichText`, `WriteFormula`, `CacheFormulaResults` | [docs index](docs/index.md) |
+| Layout, printing, protection | `AutoFitColumns`, `FreezePanes`, `PageSetup`, `Protect` | [docs site](https://p4software.github.io/SheetStream.NET/) |
+| Fill a template designed in Excel | `ExcelPackage.OpenTemplate` | [templates.md](docs/templates.md) |
+| Edit a small existing workbook | `ExcelPackage.Edit` | [editing-workbooks.md](docs/editing-workbooks.md) |
+| Trimming and Native AOT | `[SheetRow]` source generator | [aot-and-source-generator.md](docs/aot-and-source-generator.md) |
+| Build-time warnings for streaming mistakes | Roslyn analyzers SS0001 to SS0003 | [analyzers.md](docs/analyzers.md) |
+| Download from ASP.NET Core | `ExcelResults.Excel(fileName, build)` | [SheetStream.AspNetCore](src/SheetStream.AspNetCore/README.md) |
 
-Control columns with attributes: `[SheetColumn("Invoice #", Order = 0, NumberFormat = "$#,##0.00")]`, `[SheetColumn(Ignore = true)]`, or `[DisplayName("...")]`. `IDictionary<string, object>` rows (ExpandoObject, Dapper) work too.
+Formula cells show blank in file previews and in `ExcelReader` unless the file stores a result. `CacheFormulaResults()` computes simple formulas (`+ - * / %`, `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS` over cells already written on the sheet) and writes nothing for anything else.
 
-### Tables, conditional formatting and validation
-
-```csharp
-var table = sheet.AddTable("Sales", "A1:D101");      // Add before writing the header row
-table.StyleName = "TableStyleMedium9";
-
-var bad = workbook.Styles.CreateDifferential(o => { o.Font.Color = "#9C0006"; o.Fill.BackgroundColor = "#FFC7CE"; });
-sheet.AddConditionalFormatting("D2:D101")
-     .CellValue(ConditionalOperator.LessThan, "0", bad)
-     .DataBar("#638EC6");
-sheet.AddConditionalFormatting("E2:E101").IconSet(IconSetType.ThreeTrafficLights);
-
-sheet.AddDataValidation("C2:C101").List("Open", "Closed", "On hold").WithError("Invalid", "Pick from the list.");
-sheet.AddDataValidation("F2:F101").WholeNumber(ValidationOperator.Between, 1, 100);
-```
-
-Conditional formatting covers cell value, expression, contains text, duplicates, unique, top / bottom N, above / below average, two- and three-colour scales, data bars and icon sets. Validation covers lists (inline or from a range), whole numbers, decimals, dates, text length and custom formulas.
-
-### Charts and pictures
+Editing a file in place commits only on an explicit `Save()`:
 
 ```csharp
-var chart = sheet.AddChart(ChartType.Column, "H2:P20");
-chart.Title = "Revenue by month";
-chart.YAxisTitle = "USD";
-chart.ValueAxisNumberFormat = "$#,##0";
-chart.AddSeries(values: "C2:C13", categories: "A2:A13", name: "=C1", color: "#4F81BD");
-
-sheet.AddPicture("logo.png", row: 1, column: 8, widthPixels: 160);
-```
-
-Chart types: column, bar (clustered, stacked, 100%), line, line with markers, stacked line, area, stacked area, pie, doughnut, scatter and scatter with lines. Pictures: PNG, JPEG and GIF.
-
-### Pivot tables
-
-```csharp
-var loaded = data.LoadFromCollection(orders, new LoadOptions { TableName = "Orders" });
-var pivot = workbook.Worksheets.Add("Pivot").AddPivotTable("SalesByRegion", loaded.Table!, row: 3, column: 1);
-pivot.AddRowField("Region");
-pivot.AddColumnField("Category");
-pivot.AddDataField("Amount", PivotFunction.Sum, numberFormat: "$#,##0.00");
-pivot.AddDataField("OrderId", PivotFunction.Count, displayName: "Orders");
-```
-
-The pivot sits over a table or range written earlier (`AddPivotTable("P", "Data", loaded.Range, 3, 1, loaded.Headers)` for a plain range) and is marked refresh-on-open, so Excel computes it when the file opens; the output is checked against real Excel in `tests/excel-check-pivot.ps1`. Viewers without a pivot engine show only the headers until Excel has opened and saved the file. Calculated fields, grouping and slicers are not supported. See [Pivot tables](docs/pivot-tables.md).
-
-### Links, comments, rich text and formulas
-
-```csharp
-sheet.Row()
-     .WriteHyperlink("Open the portal", "https://example.com/orders/42")
-     .WriteInternalLink("Go to summary", "'Summary'!A1")
-     .WriteRichText("Status: ", new RichText("LATE") { Bold = true, Color = "#C00000" })
-     .WriteFormula("B2*TaxRate", cachedValue: 7.0);   // Cached result for viewers that do not calculate
-sheet.AddComment(2, 3, "Checked by finance", author: "Glenn");
-workbook.DefinedNames.Add("TaxRate", "'Settings'!B2");
-```
-
-### Formula results for viewers that do not calculate
-
-```csharp
-sheet.CacheFormulaResults();                                      // Before the first row; about 8 bytes per numeric cell
-sheet.Row().WriteCell("Total").WriteFormula("SUM(C2:C101)");      // Written with its result
-sheet.Row().WriteCell("Avg").WriteFormula("ROUND(AVERAGE(C2:C101), 2)");
-```
-
-File previews, Quick Look, some mobile viewers and `ExcelReader` show formula cells blank unless the file carries a cached result. Opt in per sheet and SheetStream evaluates `+ - * / %`, `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND` and `ABS` over cells already written on that sheet. Anything else (other sheets, `IF`, forward references, names) is written as before, with no value and Excel calculating on open: never a wrong value.
-
-### Layout, printing and protection
-
-```csharp
-sheet.AutoFitColumns();                       // Widths measured like Excel's own AutoFit, at save time
-sheet.AutoFitColumns((text, bold) => paint.MeasureText(text) / digitWidth); // Or plug in real font metrics
-sheet.TabColor = "#C00000";
-sheet.ShowGridLines = false;
-sheet.Columns(5, 8).SetOutlineLevel(1);       // Collapsible column group
-sheet.Row(10, new RowOptions { OutlineLevel = 1, Hidden = true });
-
-sheet.PageSetup.Orientation = PageOrientation.Landscape;
-sheet.PageSetup.FitToWidth = 1;
-sheet.PageSetup.PrintTitleRows = (1, 1);
-sheet.PageSetup.Footer = "Page &P of &N";
-
-var input = workbook.Styles.Create(o => o.Protection.Locked = false);
-sheet.Protect("password", o => o.AllowSort = true);   // Salted SHA-512, like Excel 2013+
-workbook.Protect("password");                         // Lock the sheet structure
-sheet.Visibility = SheetVisibility.Hidden;
-```
-
-`AutoFitColumns()` sizes columns the way Excel's AutoFit does: each cell is measured as displayed (formatted numbers, dates, bold, font size) with a Calibri 11 glyph table calibrated against Excel, so "Description" comes out 11.2 wide and ten digits 11.1. For another default font or non-Latin text, pass a measurer (`sheet.AutoFitColumns((text, bold) => ...)` or `PackageOptions.TextMeasurer`) that returns widths in Excel's column unit: one digit of the default font, so `"0000000000"` must measure 10.
-
-### Fill templates designed in Excel
-
-```csharp
-using var package = ExcelPackage.OpenTemplate("invoice-template.xlsx", "invoice-1042.xlsx");
-var sheet = package.Workbook.Worksheets.Open("Lines");
-var money = sheet.TemplateStyle("D5");            // Reuse the designer's formatting
-var row = 5;
-foreach (var line in lines)
-    sheet.Row(row++).WriteCell(line.Sku).WriteCell(line.Description).WriteCell(line.Qty).WriteCell(line.Amount, money);
-package.Save();
-```
-
-Logos, header styles, formulas, charts and print settings come from the template. Tables, filters, validations and conditional formats that start on the first data row stretch over the new rows, and formulas like `=SUM(Lines[Amount])` are recalculated when the file opens. See [Filling templates](docs/templates.md).
-
-### Edit a small existing workbook
-
-```csharp
-using var package = ExcelPackage.Edit("budget.xlsx");            // In place; or Edit(input, output)
+using var package = ExcelPackage.Edit("budget.xlsx");           // or Edit(input, output)
 var sheet = package.Workbook.Worksheets.Edit("Summary");
-var current = sheet.Cells["B4"].Value;                            // Typed: double, DateTime, string, bool...
-sheet.Cells["B4"].Value = 1400;                                   // Keeps the cell's number format
+sheet.Cells["B4"].Value = 1400;                                  // keeps the cell's number format
 sheet.Cells["C4"].Formula = "B4*1.21";
-var next = sheet.Cells.Dimension.LastRow + 1;
-sheet.Cells[next, 1].Value = "Added by code";
-package.Save();                                                   // Atomic replace; the original is untouched if saving fails
+package.Save();                                                  // atomic replace
 ```
 
-Call `Save()` to commit: an in-place edit that is disposed without it leaves the file as it was. Untouched cells, rows, charts, pictures, tables and other sheets are written back exactly as they were, and formulas recalculate on open. This is meant for small files (default limit 200,000 cells per sheet, `PackageOptions.MaxEditableCells`); large files keep using streaming or templates. See [Editing existing workbooks](docs/editing-workbooks.md).
+Editing holds the edited sheet in memory and refuses sheets above `PackageOptions.MaxEditableCells` (200,000 cells by default).
 
-### Async and ASP.NET Core
-
-```csharp
-// Stream an EF Core query into a sheet without materialising it (.NET 8+)
-await sheet.LoadFromAsyncEnumerable(db.Orders.AsNoTracking().AsAsyncEnumerable(), new LoadOptions { TableName = "Orders" }, ct);
-
-// Minimal API download (SheetStream.AspNetCore)
-app.MapGet("/orders.xlsx", (AppDb db) => ExcelResults.Excel("orders.xlsx", async (wb, ct) =>
-    await wb.Worksheets.Add("Orders").LoadFromAsyncEnumerable(db.Orders.AsAsyncEnumerable(), null, ct)));
-```
-
-The download is built into a temporary file and copied to the response asynchronously: flat memory, an accurate `Content-Length`, and no synchronous I/O on the response.
-
-### Trimming and Native AOT
-
-```csharp
-[SheetRow]                                   // The bundled source generator writes the column mapping at compile time
-public partial class Order
-{
-    [SheetColumn("Invoice #", Order = 0)] public int Id { get; set; }
-    [SheetColumn(NumberFormat = "$#,##0.00")] public decimal Total { get; set; }
-}
-
-sheet.LoadFromCollection(orders);            // Uses Order.SheetMapper automatically on .NET 5+
-sheet.LoadFromCollection(orders, Order.SheetMapper);   // Or pass it explicitly
-```
-
-The `net8.0` build is `IsTrimmable` and `IsAotCompatible`. Types marked `[SheetRow] partial` get a generated mapper, so `LoadFromCollection<T>`, `LoadFromAsyncEnumerable<T>` and `ExcelReader.Read<T>` need no reflection and no `Expression.Compile`; `[SheetColumn]` and `[DisplayName]` work exactly as before, and reflection remains the fallback for unmarked types. See [Trimming, Native AOT and the source generator](docs/aot-and-source-generator.md).
-
-### Random access, EPPlus style
-
-```csharp
-sheet.Cells[3, 2].Value = 42;          // Any order
-sheet.Cells["B4"].Formula = "SUM(B1:B3)";
-sheet.Cells["B4"].Style = boldStyle;
-```
-
-Random-access mode keeps the sheet's cells in memory until it is saved, which is convenient for small, irregular layouts. Use `Row()` streaming for big exports. A sheet uses one mode or the other.
-
-### Reading workbooks
+## Reading
 
 ```csharp
 using SheetStream.Reading;
 
 using var reader = ExcelReader.Open("import.xlsx");
-foreach (var row in reader.ReadRows("Products"))           // Streams; constant memory
+foreach (var row in reader.ReadRows("Products"))                      // streams, constant memory
     Console.WriteLine($"{row.GetString(0)}: {row.GetDouble(2)}");
 
-List<Product> products = reader.Read<Product>("Products").ToList();   // Header row maps to properties
+List<Product> products = reader.Read<Product>("Products").ToList();   // header row maps to properties
 DataTable table = reader.ReadDataTable("Products");
+await foreach (var row in reader.ReadRowsAsync("Products", ct)) { }   // .NET 8+, also OpenAsync and ReadAsync<T>
 ```
 
-Dates come back as `DateTime` (built-in and custom date formats, 1904 date system included), elapsed times as `TimeSpan`, errors as `ExcelErrorValue`, and formula cells as their cached result.
+Dates come back as `DateTime`, elapsed times as `TimeSpan`, errors as `ExcelErrorValue`, and formula cells as their cached result. `ReadMergedRanges` and `ReadHyperlinks` read only the end of the sheet part, so they are fast on large sheets.
 
-```csharp
-foreach (var merge in reader.ReadMergedRanges("Report"))      // e.g. A1:D1
-    Console.WriteLine($"{merge.Range} covers B1: {merge.Contains(1, 2)}");
-foreach (var link in reader.ReadHyperlinks("Report"))         // Url for web/mail links, Location for in-workbook links
-    Console.WriteLine($"{link.Address}: {link.Url ?? link.Location} ({link.Tooltip})");
-```
+### Files from people you do not know
 
-Merged ranges and hyperlinks are read from the sheet's trailer only, so the rows are skipped and the call is instant even on a million-row sheet.
-
-**Files from people you do not know.** An .xlsx is a zip archive, so a 200 KB upload can unpack into gigabytes. The reader refuses such files instead of running out of memory: a cell over 1,048,576 characters, a row over 16 million, a shared string table or styles part over 256 MB unpacked, or XML nested absurdly deep ends in an `InvalidDataException` that names the limit. The defaults are far above anything Excel writes; tighten or loosen them with `ReaderOptions`:
+An `.xlsx` is a zip archive, so a small upload can unpack into gigabytes. `ExcelReader` rejects such files with an `InvalidDataException` that names the limit. The defaults sit far above anything Excel writes; change them with `ReaderOptions`:
 
 ```csharp
 using var reader = ExcelReader.Open(upload, leaveOpen: false, new ReaderOptions { MaxCellTextLength = 32_767 }); // Excel's own cell limit
 ```
 
-A non-seekable stream is copied before reading (the zip directory is at the end): up to 64 MB in memory, beyond that into a temporary file deleted with the reader.
+A stream that cannot seek is copied first: up to 64 MB in memory, beyond that to a temporary file that is deleted with the reader. `OpenTemplate` and `Edit` load the whole source workbook and do not apply `ReaderOptions`; use them on files your application owns. See [SECURITY.md](SECURITY.md).
 
-```csharp
-// Async reading (.NET 8+): buffer an upload without blocking, then stream rows or objects.
-using var reader = await ExcelReader.OpenAsync(Request.Body, cancellationToken: ct); // Non-seekable: copied async, >64 MB spills to a temp file
-await foreach (var row in reader.ReadRowsAsync("Products", ct))                      // Cancellation checked between rows
-    Console.WriteLine($"{row.GetString(0)} = {row.GetDouble(2)}");
-await foreach (var p in reader.ReadAsync<Product>("Products", ct)) db.Products.Add(p); // Or ReadAsync(sheet, Product.SheetMapper, ct) for AOT
-var table = await reader.ReadDataTableAsync("Products", firstRowIsHeader: true, ct);
-```
+## Streaming rules
 
-### Design-time analyzer
+SheetStream.NET writes while you go, which is why memory stays flat. The cost is a few forward-only rules, each enforced with a clear exception (and, where the analyzer can prove it, a build warning):
 
-The package ships a Roslyn analyzer, so the IDE warns before you run: **SS0001** layout (`FreezePanes`, `Column`, `TabColor`...) set after rows were written, **SS0002** `Row()` and `Cells[]` mixed on one sheet, **SS0003** rows written out of order. It only reports what it can prove inside one method, so a warning means the code will throw. Nothing to install, nothing added to your output. Details, before/after snippets and how to suppress: [docs/analyzers.md](docs/analyzers.md).
+1. One sheet at a time. Adding a worksheet seals the previous one.
+2. Rows ascend. `Row(n)` must be the current row or a later one; gaps are fine.
+3. Layout first. Column widths, frozen panes, tab colour, gridlines and fit-to-page are stored before the data, so set them before the first row. `AutoFitColumns()` and `Cells[...]` defer the header and lift this rule for that sheet.
+4. A sheet uses `Row()` or `Cells[r, c]`, not both. `Cells[r, c]` gives EPPlus-style random access and buffers that one sheet in memory, so use it for small, irregular layouts.
+5. Dispose saves, except an in-place edit. Leaving a `using` block without `Save()` still finishes a file you are creating. `ExcelPackage.Edit(path)` replaces an existing file, so it commits only on an explicit `Save()`; if your code throws first, the original stays untouched.
 
-### Web sample
+## Benchmarks
 
-[`samples/SheetStream.Sample.Web`](samples/SheetStream.Sample.Web) is a minimal API that streams a 50,000-row styled export (`GET /orders.xlsx?rows=N`) and a `Cells[...]` summary with charts (`GET /report.xlsx`) through `ExcelResults.Excel`. Double-click `run.cmd` (or `dotnet run --project samples/SheetStream.Sample.Web --urls http://localhost:5178`) and open http://localhost:5178. Its README has the six lines to copy into your own app and how to call the same endpoint from a Blazor button.
+Writing 100,000 rows of 10 mixed, formatted columns. BenchmarkDotNet on .NET 8.0.31, Intel Core i7-8700, Windows 11, measured on one developer workstation (2026-10-13). Peak memory is the peak working set above an empty baseline process, from separate fresh-process runs.
 
-## 📚 API overview
-
-| Area | What you get |
-|---|---|
-| `ExcelPackage` | `Create(path)`, `new ExcelPackage(stream)`, `CreateBytes(build)`, `Save()`, `Dispose()` |
-| `Workbook` | `Worksheets.Add`, `Styles`, `DefinedNames`, `Properties`, `Protect` |
-| `Worksheet` | `Row()`, `Cells[r, c]`, `Column` / `Columns`, `AutoFitColumns`, `FreezePanes`, `AutoFilter`, `MergeCells`, `AddTable`, `AddChart`, `AddPicture`, `AddPivotTable`, `AddConditionalFormatting`, `AddDataValidation`, `AddHyperlink`, `AddComment`, `CacheFormulaResults`, `Protect`, `PageSetup`, `TabColor`, `Visibility`, `LoadFromCollection` / `DataTable` / `DataReader` / `AsyncEnumerable` |
-| `RowWriter` | `WriteCell` (string, numbers, bool, dates, TimeSpan, object), `WriteCells`, `WriteFormula` (with or without cached value), `WriteRichText`, `WriteHyperlink`, `WriteInternalLink`, `WriteInlineString`, `WriteEmpty`, `Skip` |
-| `StyleSheet` | `Create` (font, fill, border, number format, alignment, wrap, indent, rotation, shrink, protection), `CreateDifferential`, `Hyperlink` |
-| `ExcelReader` | `Open` / `OpenAsync`, `SheetNames`, `ReadRows` / `ReadRowsAsync`, `Read<T>` / `ReadAsync<T>`, `ReadDataTable` / `ReadDataTableAsync`, `ReadMergedRanges`, `ReadHyperlinks` |
-| Templates | `ExcelPackage.OpenTemplate(template, output)`, `Worksheets.Open(name)`, `Worksheet.TemplateStyle(cell)`, `ReplacedTemplateRows` |
-| Editing | `ExcelPackage.Edit(path)` / `Edit(input, output)`, `Worksheets.Edit(name)`, `Cells.Existing`, `Cells.Dimension`, `ExcelCell.Clear()` |
-| `SheetStream.AspNetCore` | `ExcelResults.Excel(fileName, build)`, `Results.Extensions.Excel(...)`, `ExcelResult` |
-
-## ⚖️ How it compares
-
-| | EPPlus 8 | ClosedXML | MiniExcel | SheetStream |
-|---|---|---|---|---|
-| Licence | Commercial for business use | MIT | Apache 2.0 | MIT |
-| Package dependencies | Several | Several | None | None |
-| Write model | In memory | In memory | Streaming | Streaming |
-| Styles, tables, conditional formatting, validation | ✅ | ✅ | Limited | ✅ |
-| Charts and pictures | ✅ | Pictures only | ❌ | ✅ (common chart types) |
-| Fill a template designed in Excel | ✅ | ✅ | ✅ | ✅ (streaming) |
-| Edit and re-save an existing workbook | ✅ | ✅ | ❌ | ✅ (small workbooks, in memory) |
-| Read workbooks | ✅ | ✅ | ✅ streaming | ✅ streaming |
-| Formula calculation engine | ✅ | ✅ | ❌ | ❌ (Excel calculates on open) |
-| Pivot tables | ✅ | ✅ | ❌ | ✅ (refreshed on open) |
-
-### Benchmarks
-
-Writing 100,000 rows × 10 mixed, formatted columns (BenchmarkDotNet, .NET 8, Intel i7-8700, Windows 11):
-
-| Library | Time | Allocated | Peak memory above baseline | File size |
+| Library | Time | Allocated | Peak above baseline | File size |
 |---|--:|--:|--:|--:|
-| **SheetStream** (default compression) | 1,013 ms | **27 MB** | **30 MB** | 5.7 MB |
-| **SheetStream** (`CompressionLevel.Fastest`) | **534 ms** | **27 MB** | 31 MB | 6.8 MB |
-| MiniExcel 1.46 | 596 ms | 343 MB | 37 MB | 7.2 MB |
-| NPOI 2.7.6 SXSSF | 2,040 ms | 704 MB | 65 MB | 5.4 MB |
-| EPPlus 4.5.3.3 | 2,287 ms | 390 MB | 184 MB | 5.5 MB |
-| ClosedXML 0.105 | 3,103 ms | 1,104 MB | 231 MB | 5.9 MB |
-| NPOI 2.7.6 XSSF | 4,658 ms | 1,186 MB | 545 MB | 5.2 MB |
+| SheetStream.NET (default compression) | 1,012.6 ms | 26.67 MB | 29.6 MB | 5,798 KB |
+| SheetStream.NET (`CompressionLevel.Fastest`) | 534.1 ms | 26.67 MB | 31.0 MB | 7,006 KB |
+| MiniExcel 1.46.0 | 596.4 ms | 343.36 MB | 37.3 MB | 7,421 KB |
+| NPOI 2.7.6 SXSSF | 2,039.7 ms | 704.22 MB | 65.2 MB | 5,518 KB |
+| EPPlus 4.5.3.3 | 2,286.7 ms | 390.19 MB | 183.8 MB | 5,601 KB |
+| ClosedXML 0.105.1 | 3,103.2 ms | 1,104.16 MB | 231.1 MB | 6,030 KB |
+| NPOI 2.7.6 XSSF | 4,658.4 ms | 1,186.16 MB | 545.1 MB | 5,304 KB |
 
-What the numbers say, including where SheetStream does not win:
+- At default settings MiniExcel is faster. SheetStream.NET defaults to the smallest files (`CompressionLevel.Optimal`); with `Fastest` the two are level on this sheet (534 ms against 596 ms is inside the error bars).
+- Allocation is where SheetStream.NET is clearly ahead: about 13 times less than the next library, and the same at both compression levels.
+- NPOI and EPPlus write slightly smaller files on this sheet.
+- Reading the same 100,000-row file: SheetStream.NET 532.7 ms and 118.62 MB allocated, ExcelDataReader 915.9 ms and 211.03 MB, EPPlus 4.5.3.3 1,205.8 ms and 787.26 MB, MiniExcel 1,829.3 ms and 2,369.07 MB, ClosedXML 3,034.0 ms and 1,598.17 MB. These were measured before 0.5.0, whose reader limit checks make reading up to about 10% slower and allocate about 10% less.
+- At 1,000,000 rows, SheetStream.NET with `Fastest` takes 4.8 s and allocates 275 MB; MiniExcel takes 5.3 s and 3.3 GB. The default setting takes 12.8 s for a file 17% smaller.
+- The read benchmarks use a file SheetStream.NET wrote, and MiniExcel cannot bold the header, so its file carries slightly less formatting.
 
-- **Memory is SheetStream's clearest advantage.** It allocates about 13 times less than the next library and keeps the lowest peak in both the long and the wide (1,000 × 1,000) scenarios.
-- **MiniExcel is faster than SheetStream's default.** SheetStream defaults to the smallest file (`CompressionLevel.Optimal`). With `Fastest` compression SheetStream is quickest in both scenarios, though on the long sheet the lead over MiniExcel is within the margin of error.
-- **NPOI and EPPlus produce slightly smaller files** on the long sheet.
-- **Reading** the same 100,000-row file: SheetStream 0.53 s and 119 MB allocated; ExcelDataReader 0.92 s and 211 MB; EPPlus 4.5.3.3 1.2 s and 787 MB; MiniExcel 1.8 s and 2.4 GB; ClosedXML 3.0 s and 1.6 GB.
-- **At a million rows** (1,000,000 × 10) SheetStream writes in 4.8 s with `Fastest` compression (12.8 s with the default, smaller-file setting) and allocates 275 MB with a 200 MB peak working set; MiniExcel takes 5.3 s and 3.3 GB, EPPlus 4.5.3.3 26 s and 3.9 GB with a 1.5 GB peak, ClosedXML 37 s and 11.6 GB with a 2.4 GB peak. A 1,000 × 10,000 sheet costs SheetStream the same as a 10,000 × 1,000 one.
-- MiniExcel cannot bold the header, so its file carries slightly less formatting.
+EPPlus and NPOI are pinned to their last plain open-source releases. Methodology, the wide-sheet scenarios and how to rerun everything: [benchmarks/README.md](benchmarks/README.md). Rerun it on your own hardware before relying on the numbers.
 
-Full results, the wide-sheet scenario, methodology, machine details and how to rerun everything are in [benchmarks/README.md](benchmarks/README.md). EPPlus is pinned to 4.5.3.3 and NPOI to 2.7.6, their last releases under plain open-source licences. Numbers come from a developer workstation, so expect some noise; rerun them on your own hardware.
+## When to choose something else
 
-### When to choose something else
+- You need to edit large workbooks in place. `ExcelPackage.Edit` holds the edited sheet in memory and is meant for small files. Use ClosedXML (MIT) or EPPlus.
+- You need formulas evaluated in .NET, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
+- You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers. Not supported. See the [gap analysis](docs/gap-analysis-epplus-8.md) for the full list against EPPlus 8.
+- You only map simple objects to and from sheets and want the smallest API. MiniExcel does that well.
 
-- **You need to edit large workbooks in place.** SheetStream edits small workbooks (`ExcelPackage.Edit`) by holding the edited sheet in memory; for big files it fills templates or streams. Use ClosedXML (MIT) or EPPlus when you must rewrite a large arbitrary workbook.
-- **You need formulas evaluated in .NET**, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
-- **You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers.** These are not supported.
-- **You only map simple objects to and from sheets** and want the smallest API. MiniExcel is excellent at that.
+## Migrating from EPPlus
 
-SheetStream is the right fit when you write large or styled exports, fill branded templates, stream reports from ASP.NET Core, or read big imports with flat memory, under a licence you never have to think about.
+[docs/migrating-from-epplus.md](docs/migrating-from-epplus.md) converts a real exporter line by line and has a quick-reference table.
 
-### Migrating from EPPlus
-
-The full guide, with a real exporter converted line by line, is in [docs/migrating-from-epplus.md](docs/migrating-from-epplus.md).
-
-| EPPlus | SheetStream |
-|---|---|
-| `new ExcelPackage()` + `package.SaveAs(file)` | `ExcelPackage.Create(path)` + `package.Save()` |
-| `package.GetAsByteArray()` | `ExcelPackage.CreateBytes(wb => ...)` |
-| `ws.Cells[r, c].Value = x` | `ws.Cells[r, c].Value = x`, or stream with `ws.Row(r).WriteCell(x)` |
-| `cell.Style.Font.Bold = true` | `Styles.Create(o => o.Font.Bold = true)` once, pass the style to `WriteCell` |
-| `cell.Style.Fill.BackgroundColor.SetColor(Color.FromArgb(79,129,189))` | `o.Fill.BackgroundColor = Colors.Rgb(79, 129, 189)` |
-| `cell.Style.Numberformat.Format = "#,##0.00"` | `o.NumberFormat = NumberFormats.Decimal2` |
-| `ws.Column(c).Width = 15` | `ws.Column(c).SetWidth(15)` |
-| `ws.Cells[...].AutoFitColumns()` | `ws.AutoFitColumns()` before writing |
-| `ws.Cells["A1"].LoadFromCollection(list, true, TableStyles.Medium2)` | `ws.LoadFromCollection(list, new LoadOptions { TableName = "T" })` |
-| `ws.Tables.Add(range, "Sales")` | `ws.AddTable("Sales", "A1:D101")` |
-| `ws.Drawings.AddChart("c", eChartType.ColumnClustered)` | `ws.AddChart(ChartType.Column, "H2:P20")` |
-| `ws.Cells["A1"].Hyperlink = new Uri(url)` | `row.WriteHyperlink(text, url)` |
-| `new ExcelPackage(file).Workbook.Worksheets[0].Cells[r, c].Value` | `ExcelReader.Open(file).ReadRows(0)` |
-
-### Streaming rules
-
-SheetStream writes directly into the zip archive, which is what keeps memory flat. Each rule is enforced with a clear exception:
-
-1. **One sheet at a time.** Adding a worksheet seals the previous one.
-2. **Rows ascend.** `Row(n)` must be the current row or a later one. Gaps are fine. Use `Cells[r, c]` on a sheet that needs random access.
-3. **Layout first.** Column widths, frozen panes, tab colour, gridlines and fit-to-page live before the data in the file, so set them before the first row. `AutoFitColumns()` and `Cells[...]` defer the header, which lifts this rule for that sheet.
-4. **Dispose saves, except an in-place edit.** Leaving a `using` block without calling `Save()` still finishes a file you are creating. A save that fails is not retried by `Dispose`, so the original exception is the one you see. `ExcelPackage.Edit(path)` is the exception: it replaces an existing file, so it commits only on an explicit `Save()`, and leaving the block without one (your code threw, say) keeps the original untouched.
-
-## 🛠️ Architecture
-
-1. **Package (`ExcelPackage`):** owns the `ZipArchive`, streams each worksheet part as it is written, and on save emits the content types, relationships, workbook, styles, shared strings and document properties.
-2. **Streaming writer (`Worksheet` / `RowWriter`):** rows go through an `XmlWriter` into the compressed stream. Column letters are cached and the row number is formatted once per row, so writing a cell allocates nothing. Tables, drawings, charts and comments are separate parts written right after their sheet.
-3. **Shared strings (`SharedStringTable`):** de-duplicates text across all sheets, as Excel does.
-4. **Styles (`StyleSheet`):** de-duplicates fonts, fills, borders, number formats, cell formats and differential formats, written in the exact element order Excel demands.
-5. **Reader (`ExcelReader`):** an `XmlReader` pass over each sheet that resolves shared strings and date styles, with DTD processing disabled for untrusted files.
-
-## 🧪 Building and testing
+## Building and testing
 
 ```bash
 dotnet build
 dotnet test
-dotnet test tests/SheetStream.NetFx.Tests                             # .NET Framework 4.8 run of the netstandard2.0 build (Windows only)
-dotnet run --project samples/SheetStream.Sample                         # FinancialReport.xlsx
-dotnet run --project samples/SheetStream.Sample -- showcase              # Showcase.xlsx: every feature
-dotnet run -c Release --project samples/SheetStream.Sample -- 1000000    # 1M-row stress run
-dotnet run -c Release --project samples/SheetStream.Sample -- 5000 2000  # 10M-cell wide stress run
-dotnet run -c Release --project benchmarks/SheetStream.Benchmarks          # comparison benchmarks
-dotnet tool restore && dotnet docfx docs/docfx.json --serve                 # documentation site on localhost
+dotnet test tests/SheetStream.NetFx.Tests                          # .NET Framework 4.8 run of the netstandard2.0 build (Windows only)
+dotnet run --project samples/SheetStream.Sample -- showcase        # Showcase.xlsx with every feature
+dotnet run -c Release --project benchmarks/SheetStream.Benchmarks # comparison benchmarks
+dotnet tool restore && dotnet docfx docs/docfx.json --serve        # documentation site on localhost
 ```
 
-## 🚢 Releasing
+`samples/SheetStream.Sample.Web` is a minimal API that streams a 50,000-row export; see its README.
 
-Bump `<Version>` in `src/SheetStream/SheetStream.csproj`, add a `CHANGELOG.md` entry, commit, then:
+## Releasing
 
-```bash
-git tag v0.2.0
-git push --tags
-```
+Bump `<Version>` in `src/SheetStream/SheetStream.csproj` (and in `src/SheetStream.AspNetCore/SheetStream.AspNetCore.csproj`), add a `CHANGELOG.md` entry, commit, then tag and push, for example `git tag v1.2.3` and `git push --tags`. The `Release` workflow stops if the tag and the csproj version disagree, and publishes through nuget.org Trusted Publishing, so no API key is stored in the repository.
 
-The `Release` workflow refuses to run if the tag and the csproj version disagree. It publishes through nuget.org Trusted Publishing, so no API key is stored in the repository.
+## Contributing
 
-## 🤝 Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md). Questions go to [Discussions](https://github.com/P4Software/SheetStream.NET/discussions); security reports go through [SECURITY.md](SECURITY.md).
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), the [good first issues](https://github.com/P4Software/SheetStream.NET/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), and [Discussions](https://github.com/P4Software/SheetStream.NET/discussions) for questions. Security reports go through [SECURITY.md](SECURITY.md).
+## Licence
 
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).

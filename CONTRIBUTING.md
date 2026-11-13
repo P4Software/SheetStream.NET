@@ -1,39 +1,32 @@
-# Contributing to SheetStream 🚀
+# Contributing to SheetStream.NET
 
-First off, thank you for considering contributing to SheetStream! We are on a mission to build a completely free, lightning-fast, and open-source alternative to bloated commercial .NET Excel libraries—and we can't do it without the community.
+Thank you for helping. Bug reports, fixes, tests and documentation are all welcome.
 
-By contributing, you help make software licensing fair and accessible for developers everywhere.
+## Ground rules
 
-## 📐 Ground Rules & Principles
+1. Zero external dependencies. Library code uses only APIs available on `netstandard2.0` and `net8.0` (`System.IO.Compression`, `System.Xml` and so on). The test project may reference `DocumentFormat.OpenXml` to validate output; the library never does.
+2. The hot path stays allocation-free. `RowWriter.WriteCell` must not allocate, and the writer must not build a whole-document model in memory.
+3. Output follows ECMA-376. Every new element must be covered by the schema-validation test, so Excel, Google Sheets and LibreOffice open the file.
+4. Public types and members carry XML doc comments, and non-obvious logic has a comment that explains why.
 
-Before writing any code, please keep our core architectural pillars in mind:
+## Reporting a bug or requesting a feature
 
-1. **Zero External Dependencies:** Every line of library code must rely purely on native .NET APIs available on `netstandard2.0` and `net8.0` (`System.IO.Compression`, `System.Xml`, etc.). Do not pull in third-party packages. The test project may reference `DocumentFormat.OpenXml` to validate output; the library itself never does.
-2. **Performance First:** SheetStream is built around low memory overhead and sequential streaming XML writers. Avoid loading full documents or heavy tracking tables into memory (`DOM` patterns). The hot path (`RowWriter.WriteCell`) must stay allocation-free.
-3. **Strict Compliance:** All outputs must stringently follow the **ECMA-376 OpenXML standard** to guarantee compatibility with native Microsoft Excel, Google Sheets and LibreOffice. Every new element must be covered by the schema-validation test.
-4. **Documented as built:** Public types and members carry XML doc comments; non-obvious logic explains *why* in a comment.
+Search the open issues first, then open a new one with the steps to reproduce it or the OpenXML use case you need. For a security problem, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
-## 🛠️ How to Contribute
+## Sending a pull request
 
-### 1. Reporting Bugs or Requesting Features
+1. Fork the repository and branch from `main`, for example `fix/sst-memory-leak`.
+2. Add a test with every feature or fix. For output changes, the test confirms that `OpenXmlValidator` reports zero errors.
+3. Run the suite before you push:
 
-* Check the **Issues** tab to make sure your topic hasn't already been reported.
-* Open a new issue using our structured templates, detailing reproduction steps or specific OpenXML implementation use cases.
+   ```bash
+   dotnet build
+   dotnet test
+   dotnet test tests/SheetStream.NetFx.Tests   # .NET Framework 4.8 run of the netstandard2.0 build (Windows only)
+   ```
 
-### 2. Submitting a Pull Request (PR)
+4. Describe what changed and why in the pull request.
 
-* Fork the repository and create your branch from `main` (e.g., `feature/add-borders` or `fix/sst-memory-leak`).
-* Write clean, commented C# adhering to modern standard conventions (PascalCase for methods, camelCase for local variables).
-* **Add Tests:** If you are adding a feature or fixing a bug, please include a test confirming that the generated Excel output remains valid (`OpenXmlValidator` reports zero errors) and doesn't get corrupted.
-* Run the full suite before pushing:
+## Licensing
 
-  ```bash
-  dotnet build
-  dotnet test
-  ```
-
-* Submit your PR with a clear summary of what changed and why.
-
-## 📜 Legal Note (DCO)
-
-By contributing to this repository, you explicitly agree that your code will be licensed under the project's **MIT License**. You certify that you wrote the code yourself or have the legal right to submit it as open source.
+By contributing you agree that your work is licensed under the project's [MIT licence](LICENSE), and you confirm that you wrote it or have the right to submit it.

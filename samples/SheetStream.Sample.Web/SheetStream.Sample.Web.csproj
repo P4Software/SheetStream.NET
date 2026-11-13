@@ -14,8 +14,8 @@
   <ItemGroup>
     <!--
       Your own app would reference the two NuGet packages instead:
-        <PackageReference Include="SheetStream" Version="0.3.0" />
-        <PackageReference Include="SheetStream.AspNetCore" Version="0.3.0" />
+        <PackageReference Include="SheetStream.NET" />
+        <PackageReference Include="SheetStream.AspNetCore" />
       The sample lives inside the repository, so it references the projects directly.
     -->
     <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
