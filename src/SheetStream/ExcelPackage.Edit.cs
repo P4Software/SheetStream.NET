@@ -40,9 +40,11 @@ namespace SheetStream
 
         /// <summary>
         /// Opens an existing workbook for editing in place. The edited copy is written to a temporary file next
-        /// to <paramref name="path"/> and replaces the original only when <see cref="Save"/> (or the disposing
-        /// <c>using</c> block) completes; if saving throws, the original is left untouched and the temporary
-        /// file is removed. The whole workbook is re-written, see <see cref="Edit(string, string, PackageOptions?)"/>.
+        /// to <paramref name="path"/> and replaces the original only when <see cref="Save"/> completes. You must
+        /// call <see cref="Save"/>: leaving the <c>using</c> block without it (because your code threw, say)
+        /// discards the changes, so a half-finished edit never overwrites the file. If saving throws, the
+        /// original is likewise left untouched and the temporary file is removed. The whole workbook is
+        /// re-written, see <see cref="Edit(string, string, PackageOptions?)"/>.
         /// </summary>
         /// <example>
         /// <code>

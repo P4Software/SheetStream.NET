@@ -166,7 +166,10 @@ namespace SheetStream
         private RowWriter WriteSharedString(string value, CellStyle? style)
         {
             EnsureOpen();
-            var index = _sheet.Workbook.SharedStrings.GetOrAdd(XmlTextUtil.Sanitize(value));
+            // A new string that no longer fits the table's memory budget is written inline instead; strings
+            // already in the table keep being shared.
+            if (!_sheet.Workbook.SharedStrings.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index))
+                return WriteInlineString(value, style);
             BeginCell(style, "s");
             _w.WriteStartElement("v");
             _w.WriteValue(index);
@@ -298,7 +301,7 @@ namespace SheetStream
 
         /// <summary>
         /// Writes a date cell. Excel stores dates as serial numbers, so the value is written as
-        /// <see cref="DateTime.ToOADate"/> and, when no style is given, formatted with a built-in date or
+        /// Excel's serial for that moment and, when no style is given, formatted with a built-in date or
         /// date-time format depending on whether the value has a time component.
         /// </summary>
         public RowWriter WriteCell(DateTime value, CellStyle? style = null)
@@ -311,13 +314,15 @@ namespace SheetStream
             // A row style (e.g. zebra fill) must not turn the date into a serial number: merge in a date format.
             else if (value.TimeOfDay == TimeSpan.Zero) effective = _rowDateStyle ??= styles.WithNumberFormat(_rowStyle, "mm-dd-yy");
             else effective = _rowDateTimeStyle ??= styles.WithNumberFormat(_rowStyle, "m/d/yy h:mm");
+            // Not ToOADate: Excel's serials differ from OLE dates before 1 March 1900 (see ExcelDate).
+            var serial = ExcelDate.ToSerial(value);
             BeginCell(effective, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value.ToOADate());
+            _w.WriteValue(serial);
             _w.WriteEndElement();
-            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.ToOADate());
+            if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, serial);
             // Display width follows the style's date format: "10/13/2026", "2026-10-13", "13-Oct-26"...
-            EndCell(_observe ? NumberText(value.ToOADate()) : null);
+            EndCell(_observe ? NumberText(serial) : null);
             return this;
         }
 

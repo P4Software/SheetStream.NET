@@ -2,6 +2,34 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.5.0 (2026-11-13)
+
+A hardening release: it fixes defects found in a review of 0.4.0. Two behaviours change; both are listed first.
+
+### Changed
+
+- **In-place edits commit only on `Save()`.** `ExcelPackage.Edit(path)` used to save when the package was disposed, like every other package. Dispose also runs when your code throws half-way through its changes, so a half-finished edit replaced the original file. Now leaving the `using` block without calling `Save()` discards the changes and leaves the file untouched. **If you relied on dispose to save an in-place edit, add `package.Save()`.** Creating a file, filling a template and `Edit(input, output)` still save on dispose.
+- **The shared string table has a memory budget.** `PackageOptions.MaxSharedStringChars` (default 16,000,000) caps what the table holds until the save. Once it is full, strings it has not seen are written inline and strings already in it stay shared, so repeated values still de-duplicate while an export of millions of unique strings no longer grows memory without limit (it used to retain about 122 MB per million short unique strings). Files are identical for exports under the budget.
+
+### Fixed
+
+- **The reader could be made to exhaust memory by a small file.** A 192 KB workbook holding one 200-million-character cell drove a reading process to 1.5 GB. `ExcelReader` now reads cell text in chunks against limits and rejects such a file with an `InvalidDataException` as soon as a value passes its limit; the same file now peaks at 32 MB. New `ReaderOptions` (`MaxCellTextLength`, `MaxRowTextLength`, `MaxLoadedPartBytes`) on new `ExcelReader.Open` / `OpenAsync` overloads; oversized tags and absurdly deep XML are rejected too, and merged-range and hyperlink lists are capped. The defaults sit far above anything Excel writes.
+- **`ExcelReader.Open(Stream)` buffered a non-seekable upload entirely in memory.** It now spills to a self-deleting temporary file above 64 MB, as `OpenAsync` already did.
+- **A duration-formatted cell holding `NaN` threw `ArgumentException`**, outside the exception types the reader promises for damaged files. `NaN` and infinities now read as text, and durations or dates too large for their type as the raw number.
+- **Cached `ROUND` results disagreed with Excel** (`ROUND(1.005, 2)` cached 1, Excel shows 1.01; `ROUND(0.285, 2)` cached 0.28, Excel shows 0.29). The evaluator now rounds the 15-significant-digit decimal value the way Excel does; verified against Excel 16 on 4,000 generated cases. A number too large to round exactly gets no cached value.
+- **Dates before 1 March 1900 were written one day late.** Excel's serials differ from OLE dates there (it counts a 29 February 1900 that never existed): 1 January 1900 is now written as serial 1, and the reader applies the same rule in reverse.
+
+### Known limits
+
+- `ExcelPackage.OpenTemplate` and `ExcelPackage.Edit` still load the whole source workbook into memory and do not apply `ReaderOptions`; they are for workbooks your application owns. See `SECURITY.md`.
+- Reading is up to about 10% slower than 0.4.0 on the 100,000-row benchmark file (and allocates about 10% less), the cost of the limit checks. The read benchmark tables predate this release.
+
+### Added
+
+- A `.NET Framework 4.8` test project (`tests/SheetStream.NetFx.Tests`) and a Windows CI job, so the netstandard2.0 build and Windows are covered by CI; the main tests now also run on .NET 8.
+- Packing checks the public API against the previous release (`EnablePackageValidation`), so a breaking change cannot ship by accident.
+- `global.json` pins the .NET 10 SDK.
+
 ## 0.4.0 (2026-10-14)
 
 ### Changed

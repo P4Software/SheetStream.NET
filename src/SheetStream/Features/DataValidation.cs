@@ -136,7 +136,7 @@ namespace SheetStream
 
         /// <summary>Restricts the cells to dates.</summary>
         public DataValidation Date(ValidationOperator op, DateTime value1, DateTime? value2 = null)
-            => Set("date", op, Num(value1.Date.ToOADate()), value2.HasValue ? Num(value2.Value.Date.ToOADate()) : null);
+            => Set("date", op, Num(ExcelDate.ToSerial(value1.Date)), value2.HasValue ? Num(ExcelDate.ToSerial(value2.Value.Date)) : null);
 
         /// <summary>Restricts the number of characters typed into the cells.</summary>
         public DataValidation TextLength(ValidationOperator op, int value1, int? value2 = null)

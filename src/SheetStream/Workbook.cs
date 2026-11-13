@@ -18,7 +18,7 @@ namespace SheetStream
         {
             Package = package;
             Styles = new StyleSheet();
-            SharedStrings = new SharedStringTable();
+            SharedStrings = new SharedStringTable(package.Options.MaxSharedStringChars);
             Worksheets = new WorksheetCollection(this);
             DefinedNames = new DefinedNameCollection();
             Properties = new WorkbookProperties();

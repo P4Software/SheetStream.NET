@@ -20,6 +20,17 @@ namespace SheetStream
         /// </summary>
         public bool UseSharedStrings { get; set; } = true;
 
+        /// <summary>
+        /// Memory budget of the shared string table, in characters (each entry also counts a small fixed
+        /// overhead). While the table is under the budget it behaves as always; once it is full, strings it
+        /// has not seen before are written inline in the sheet and strings already in it keep being shared.
+        /// Repeated values (status codes, names) therefore still de-duplicate, while an export of millions of
+        /// unique strings stops growing the table instead of holding them all until the save. The default of
+        /// 16,000,000 keeps the table to a few tens of megabytes. Raise it for the smallest possible file when
+        /// memory is no concern; it has no effect when <see cref="UseSharedStrings"/> is <c>false</c>.
+        /// </summary>
+        public long MaxSharedStringChars { get; set; } = 16_000_000;
+
         /// <summary>Size of the write buffer placed in front of each zip entry, in bytes.</summary>
         public int BufferSize { get; set; } = 64 * 1024;
 

@@ -62,12 +62,14 @@ namespace SheetStream.Internal
             var texts = new List<string>(SharedStringCount);
             if (SharedStringsPart != null)
             {
+                // A template is a file the application chose, held in memory whole already, so no limits apply.
+                var state = Reading.ExcelReader.TextState.Unlimited();
                 using (var archive = OpenArchive())
                 using (var r = OpenXml(archive, SharedStringsPart))
                 {
                     while (r != null && r.Read())
                         if (r.NodeType == XmlNodeType.Element && r.LocalName == "si")
-                            texts.Add(r.IsEmptyElement ? "" : Reading.ExcelReader.ReadRichText(r));
+                            texts.Add(r.IsEmptyElement ? "" : Reading.ExcelReader.ReadRichText(r, state));
                 }
             }
             return _sharedStringTexts = texts;
