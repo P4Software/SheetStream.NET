@@ -1,17 +1,17 @@
-# Gap analysis: SheetStream 0.4.0 versus EPPlus 8
+# Gap analysis: SheetStream.NET 0.5.0 versus EPPlus 8
 
-*Written 2026-10-14 against EPPlus 8.7.1 (NuGet, 2026-09-22) and SheetStream main at `2bcb8fa` (0.4.0, unreleased). EPPlus facts come from EPPlus Software's own feature page, wiki, API reference, release notes and licence pages; the source list is at the end. SheetStream facts come from the repository and its tests. Nothing here is a benchmark of EPPlus 8 itself: its licence does not allow P4 Software to run it, so timings use the last LGPL release, 4.5.3.3.*
+*Written 2026-10-14 against EPPlus 8.7.1 (NuGet, 2026-09-22) and SheetStream 0.4.0; revised 2026-11-13 for SheetStream.NET 0.5.0 (the SheetStream side only: the EPPlus facts were not re-checked for the revision). EPPlus facts come from EPPlus Software's own feature page, wiki, API reference, release notes and licence pages; the source list is at the end. SheetStream facts come from the repository and its tests. Nothing here is a benchmark of EPPlus 8 itself: its licence does not allow P4 Software to run it, so timings use the last LGPL release, 4.5.3.3.*
 
 The goal set for SheetStream is **as good as or better than EPPlus 8 in every aspect**. This document says, area by area, where that is already true, where it is not, how big each gap is, and in what order to close them. Effort is given in agent-days at the pace of the 0.4.0 work (roughly one of these days per feature of the size of pivot tables or edit mode).
 
 ## 1. Summary
 
-| Area | EPPlus 8 | SheetStream 0.4.0 | Verdict |
+| Area | EPPlus 8 | SheetStream.NET 0.5.0 | Verdict |
 |---|---|---|---|
 | Licence, dependencies, platforms | Commercial, US$569/dev/yr, 5 dependencies, 16 MB package | MIT, zero dependencies, 226 KB, Native AOT, bundled analyzer | **SheetStream better** |
 | Performance and memory | Whole workbook in memory; official: 100k × 200 cells in 29 s | Streaming; 100k × 10 in 1.0 s, 27 MB allocated; 1M rows at 200 MB peak | **SheetStream better** |
 | Writing cells, rows, layout | Random access anywhere | Streaming rows, plus `Cells[]` per sheet | Parity for exports; gap for in-place edits |
-| Reading | Load whole package; typed values; `Text` | Streaming, async, fuzz-tested; typed values | **SheetStream better** for imports; gaps: `.xls`, CSV, formatted `Text`, reading definitions |
+| Reading | Load whole package; typed values; `Text` | Streaming, async, fuzz-tested, with limits against files built to exhaust memory (`ReaderOptions`); typed values | **SheetStream better** for imports; gaps: `.xls`, CSV, formatted `Text`, reading definitions |
 | Templates and editing | Open and edit any workbook | Template filling (streaming); edit small workbooks | Gap: large edits, insert/delete rows and columns, copy ranges and sheets |
 | Styling | Named styles, gradients, themes, 45 conditional-format rules | Cell styles, differential styles, 15 conditional-format rules | Gap: medium |
 | Data loading and export | 7 loaders, CSV/text, HTML, JSON, `ToDataTable`, `ToCollection` | 6 loaders incl. async enumerable and AOT mapper; readers | Gap: CSV, HTML, JSON export; range-to-object |
@@ -38,6 +38,7 @@ These are the reasons to choose SheetStream today, and they must be protected wh
 - **Design-time safety.** A Roslyn analyzer in the package turns the three streaming mistakes into IDE warnings. EPPlus validates nothing at design time, and by its own docs does not validate formulas or number formats on write either.
 - **ASP.NET Core.** `ExcelResults.Excel` streams a download with accurate `Content-Length` and no synchronous I/O; `LoadFromAsyncEnumerable` feeds an EF Core query straight into a sheet.
 - **Supply chain.** SHA-pinned actions, SBOM and signed build provenance on every release, Trusted Publishing, OpenSSF Scorecard, fuzz tests. EPPlus code-signs its assemblies with a certificate (which SheetStream does not, see 3.1).
+- **Reading files from strangers.** Since 0.5.0 `ExcelReader` bounds what a crafted file can make it allocate: text per cell and per row, the unpacked size of parts held in memory, tag length and XML nesting depth. A 192 KB file that unpacked to a 200-million-character cell is rejected at a 32 MB peak. (Templates and edit mode load the whole source workbook and are for files the application owns.)
 - **Template filling at scale.** Streaming rows into an Excel-designed template keeps memory flat; EPPlus loads the template.
 
 ## 3. Gaps, by area
@@ -48,7 +49,7 @@ Each table lists what EPPlus 8 has, what SheetStream has, and the plan. "Busines
 
 | Feature | EPPlus 8 | SheetStream | Gap | Plan (days) |
 |---|---|---|---|---|
-| Target frameworks | net35, net462, netstandard2.0/2.1, net8/9/10 | netstandard2.0, net8.0 (covers .NET Framework 4.7.2+, .NET 8/9/10) | None in practice; net35 is not a goal | — |
+| Target frameworks | net35, net462, netstandard2.0/2.1, net8/9/10 | netstandard2.0, net8.0 (covers .NET Framework 4.7.2+, .NET 8 and later). CI runs the tests on .NET 8, .NET 10 and .NET Framework 4.8 | None in practice; net35 is not a goal | — |
 | Code-signed assemblies | GlobalSign certificate | Signed build provenance (Sigstore), repository-signed by nuget.org | Small, Business (some procurement checklists ask for Authenticode) | Buy a code-signing certificate (~US$200/yr) and sign in the release job: 0.5 |
 | Commercial support with SLA | 48-hour response, CET | GitHub issues and Discussions | By design | Offer a paid support option from P4 Software if demand appears |
 | Configuration via appsettings | Licence only | Nothing to configure | None | — |
@@ -58,7 +59,7 @@ Each table lists what EPPlus 8 has, what SheetStream has, and the plan. "Busines
 | Feature | EPPlus 8 | SheetStream | Gap | Plan (days) |
 |---|---|---|---|---|
 | Create, save, streams, byte arrays, async save | Yes | Yes (`Create`, `CreateBytes`, `CreateBytesAsync`, ASP.NET result) | None | — |
-| Open and edit any workbook in place | Yes (whole package in memory) | Small workbooks (`Edit`, 200,000 cells per sheet by default); large ones as templates | **Medium, Business** | Raise the practical limit by keeping untouched rows as raw XML and only materialising touched rows: 3. True large-file editing by streaming rewrite with a row-transform API: 4 |
+| Open and edit any workbook in place | Yes (whole package in memory) | Small workbooks (`Edit`, 200,000 cells per sheet by default; an in-place edit commits only on an explicit `Save()`); large ones as templates | **Medium, Business** | Raise the practical limit by keeping untouched rows as raw XML and only materialising touched rows: 3. True large-file editing by streaming rewrite with a row-transform API: 4 |
 | Insert and delete rows, columns and ranges with reference shifting | Yes, adjusts formulas, tables, pivots, validations, drawings | No | **Medium, Business** | In edit mode: shift cells, merges, tables, validations, conditional formats and formulas on the same sheet: 3 |
 | Copy ranges and worksheets (with styles, across workbooks) | Yes, many options | No | Medium, Business | Copy range within a sheet and copy sheet within a workbook in edit mode: 2 |
 | Password-protected files (encryption), read and write | Standard and Agile, AES 128/192/256 | No | **Medium, Business** (users upload encrypted files) | Read (Agile and Standard, AES/SHA with .NET inbox crypto): 2.5; write: 2 |
@@ -76,7 +77,7 @@ Each table lists what EPPlus 8 has, what SheetStream has, and the plan. "Busines
 | Random access, multi-area ranges, LINQ over cells | Yes | `Cells[r, c]` and `Cells["A1"]` per sheet; `Cells.Existing` | Small | Range object (`Cells["A1:D10"]`) with `Value`, `Style`, `Formula` setters over the buffer: 1 |
 | Merged cells, hyperlinks, comments, rich text | Yes | Yes (reader returns merges and links) | None | — |
 | Threaded comments | Yes | No (legacy notes only) | Small, Niche | 1.5 |
-| AutoFit columns | Font-measured, pluggable `ITextMeasurer`, bundled fonts | Character count (width-table version in progress) | Small, Business | Width table for Calibri 11 plus bold factor and a measurer hook: in progress (0.4.0) |
+| AutoFit columns | Font-measured, pluggable `ITextMeasurer`, bundled fonts | Calibri 11 glyph table calibrated against Excel's own AutoFit (bold, font size, formatted numbers and dates), plus a measurer hook for real font metrics | None for Latin text in the default font; other fonts and scripts need the hook | Done (0.4.0) |
 | AutoFit rows | Yes | No | Small | Estimate wrapped-text height from the width table: 1 |
 | Freeze panes | Yes | Yes | None | — |
 | Split panes | Yes | No | Niche | 0.3 |
@@ -224,12 +225,13 @@ Ordered by business value divided by cost, with the first production migration's
 
 | Phase | Content | Days | Release |
 |---|---|---|---|
-| **0 (in progress)** | AutoFit with font width table and measurer hook; benchmark tables; v0.4.0 | 1 | 0.4.0 |
-| **1. Replace ExcelDataReader** | CSV read and write; BIFF8 `.xls` reader; lenient header matching, `[DisplayName]` already, conversion-failure strategy; range and table scope for `Read<T>`/`ReadDataTable`; encrypted `.xlsx` reading; `.xlsm` round-trip test; `GetValue<T>` | 11 | 0.5.0 |
-| **2. Editing parity for everyday files** | Insert/delete rows and columns with reference shifting; copy ranges and sheets; larger in-place edits by keeping untouched rows raw; named styles; gradient fills; theme colours; remaining conditional-format rules; sheet reorder; protected ranges; page breaks; header/footer variants and pictures; time validation and validation flags | 13 | 0.6.0 |
-| **3. Tables, pivots, sparklines** | Table totals and calculated columns; filter criteria and `sortState`; pivot cache with data; grouping; calculated fields; Show Values As; pivot filters and sorting; slicers (table and pivot); sparklines; pivot charts (after phase 4A) | 15 | 0.7.0 |
-| **4. Charts** | A: 2D type parity; B: secondary axis and combination charts; chart options (trendlines, error bars, axis control, label layout); more image formats; text boxes and common shapes; two-cell anchors | 11 | 0.8.0 |
-| **5. Export and reading definitions** | JSON and CSV export; formatted `Text`; read tables, names, comments, validations, conditional formats; HTML export; compatibility test against EPPlus 4.5.3.3 samples; samples folder and per-area guides | 11 | 0.9.0 |
+| **0 (done)** | AutoFit with font width table and measurer hook; benchmark tables | 1 | 0.4.0 |
+| **Hardening (done)** | Reader limits for untrusted files; in-place edits commit on `Save()` only; shared string memory budget; `ROUND` and early-date results matching Excel; .NET Framework 4.8 and Windows in CI; public API check on pack | — | 0.5.0 |
+| **1. Replace ExcelDataReader** | CSV read and write; BIFF8 `.xls` reader; lenient header matching, `[DisplayName]` already, conversion-failure strategy; range and table scope for `Read<T>`/`ReadDataTable`; encrypted `.xlsx` reading; `.xlsm` round-trip test; `GetValue<T>` | 11 | 0.6.0 |
+| **2. Editing parity for everyday files** | Insert/delete rows and columns with reference shifting; copy ranges and sheets; larger in-place edits by keeping untouched rows raw; named styles; gradient fills; theme colours; remaining conditional-format rules; sheet reorder; protected ranges; page breaks; header/footer variants and pictures; time validation and validation flags | 13 | 0.7.0 |
+| **3. Tables, pivots, sparklines** | Table totals and calculated columns; filter criteria and `sortState`; pivot cache with data; grouping; calculated fields; Show Values As; pivot filters and sorting; slicers (table and pivot); sparklines; pivot charts (after phase 4A) | 15 | 0.8.0 |
+| **4. Charts** | A: 2D type parity; B: secondary axis and combination charts; chart options (trendlines, error bars, axis control, label layout); more image formats; text boxes and common shapes; two-cell anchors | 11 | 0.9.0 |
+| **5. Export and reading definitions** | JSON and CSV export; formatted `Text`; read tables, names, comments, validations, conditional formats; HTML export; compatibility test against EPPlus 4.5.3.3 samples; samples folder and per-area guides | 11 | 0.10.0 |
 | **6. Formula engine** | Phase 1 engine (120 functions, cross-sheet, names, dependency order) for write-time results and `ReadCalculated`; then statistical/financial breadth; then dynamic arrays and `LAMBDA`; pivot calculation | 12 + 10 + 10 + 5 | 1.0.0 |
 | **7. Long tail** | 3D and extended chart types, chart presets and templates, threaded comments, digital signatures (net8.0), form controls, in-cell pictures | 15 | after 1.0 |
 

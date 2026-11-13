@@ -35,7 +35,7 @@
     <!-- Packing compares the public API with the last release and fails on a removed or changed member, so a
          breaking change cannot ship by accident. Raise the baseline after each release. -->
     <EnablePackageValidation>true</EnablePackageValidation>
-    <PackageValidationBaselineVersion>0.4.0</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>0.5.0</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <!--

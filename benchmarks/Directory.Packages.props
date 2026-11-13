@@ -1,0 +1,9 @@
+<Project>
+
+  <!-- The benchmark project pins other libraries to specific releases for licence reasons (see README.md here)
+       and keeps its versions in its own project file, outside the repository's central package management. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>
