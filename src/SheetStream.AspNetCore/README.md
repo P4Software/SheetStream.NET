@@ -70,7 +70,7 @@ app.MapGet("/sales.xlsx", (SalesService sales) => ExcelResults.Excel("sales.xlsx
 Both overloads take an optional `PackageOptions`, the same class the core library uses. The setting most worth knowing for web exports:
 
 ```csharp
-// About twice as fast to produce, files roughly 20% larger.
+// About twice as fast to produce, in exchange for larger files (about a quarter larger on .NET 8, about 80% on .NET 10).
 ExcelResults.Excel("big.xlsx", build, new PackageOptions { CompressionLevel = CompressionLevel.Fastest });
 ```
 

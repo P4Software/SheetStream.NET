@@ -141,7 +141,7 @@ The file is built into a temporary file and streamed to the response, so memory 
 | `await package.GetAsByteArrayAsync()` with queries awaited between sheets | `await ExcelPackage.CreateBytesAsync(async wb => { … await db.QueryAsync(…) … })` |
 | `new ExcelPackage(file)` … `SaveAs(file)` | `ExcelPackage.Create(path)` … `Save()` |
 | `new ExcelPackage(templateFile)` to fill a template | `ExcelPackage.OpenTemplate(template, output)` + `Worksheets.Open("Sheet")` |
-| `new ExcelPackage(file)`, change cells, `Save()` (small files) | `ExcelPackage.Edit(path)` + `Worksheets.Edit("Sheet")` + `Cells[…]` |
+| `new ExcelPackage(file)`, change cells, `Save()` (small files) | `ExcelPackage.Edit(path)` + `Worksheets.Edit("Sheet")` + `Cells[…]` + `Save()`. The `Save()` is required: an in-place edit that is disposed without it leaves the file unchanged |
 | `ws.Cells["A1"].LoadFromCollection(list, true)` | `ws.LoadFromCollection(list)` |
 | `ws.Cells["A1"].LoadFromDataTable(table, true)` | `ws.LoadFromDataTable(table)` |
 | `ws.Cells["A1"].LoadFromArrays(listOfObjectArrays)` | `ws.LoadFromArrays(listOfObjectArrays)` (first array = header row, styled with `HeaderStyle`) |
@@ -163,7 +163,7 @@ The file is built into a temporary file and streamed to the response, so memory 
 | `ws.Comments.Add(cell, text, author)` | `ws.AddComment(row, column, text, author)` |
 | `ws.Protection.IsProtected = true` | `ws.Protect(password)` |
 | `ws.PrinterSettings.Orientation = eOrientation.Landscape` | `ws.PageSetup.Orientation = PageOrientation.Landscape` |
-| Reading: `ws.Cells[r, c].Value` | `ExcelReader.Open(file).ReadRows("Sheet")` or `.Read<T>("Sheet")` |
+| Reading: `ws.Cells[r, c].Value` | `ExcelReader.Open(file).ReadRows("Sheet")` or `.Read<T>("Sheet")`; see [Reading workbooks](reading-workbooks.md), including the limits for uploaded files |
 
 ## What does not translate
 
