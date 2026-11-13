@@ -74,7 +74,7 @@ namespace SheetStream.Reading
             null => null,
             double d => d,
             bool b => b ? 1 : 0,
-            DateTime dt => dt.ToOADate(),
+            DateTime dt => ExcelDate.ToSerial(dt),
             TimeSpan ts => ts.TotalDays,
             string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var p) => p,
             var other => throw new FormatException($"Row {Index}, column {CellReference.ColumnLetters(column + 1)}: '{other}' is not a number."),
@@ -85,7 +85,7 @@ namespace SheetStream.Reading
         {
             null => null,
             DateTime dt => dt,
-            double d => DateTime.FromOADate(d),
+            double d => ExcelDate.FromSerial(d),
             string s when DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var p) => p,
             var other => throw new FormatException($"Row {Index}, column {CellReference.ColumnLetters(column + 1)}: '{other}' is not a date."),
         };
@@ -111,14 +111,26 @@ namespace SheetStream.Reading
         private readonly List<(string Name, string Part, SheetVisibility Visibility)> _sheets = new List<(string, string, SheetVisibility)>();
         private readonly List<string> _sharedStrings = new List<string>();
         private readonly List<CellKind> _styleKinds = new List<CellKind>();
+        private readonly ReaderOptions _options;
         private bool _date1904;
 
         internal enum CellKind : byte { Number, Date, Duration }
 
-        private ExcelReader(Stream stream, bool leaveOpen)
+        /// <summary>
+        /// Deepest element nesting accepted in any part. SpreadsheetML nests about a dozen levels at most; the
+        /// XML parser keeps a stack entry per open element, so a part made of millions of unclosed tags would
+        /// otherwise grow that stack without bound.
+        /// </summary>
+        internal const int MaxXmlDepth = 256;
+
+        /// <summary>Most merged ranges or hyperlinks returned for one sheet; a list beyond this is not a genuine workbook.</summary>
+        internal const int MaxSheetAnnotations = 1_000_000;
+
+        private ExcelReader(Stream stream, bool leaveOpen, ReaderOptions? options)
         {
             _stream = stream;
             _leaveOpen = leaveOpen;
+            _options = options ?? ReaderOptions.Default;
             try
             {
                 _zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
@@ -131,26 +143,86 @@ namespace SheetStream.Reading
         }
 
         /// <summary>Opens a workbook file for reading. The file is shared for reading so Excel can keep it open.</summary>
-        public static ExcelReader Open(string path)
+        public static ExcelReader Open(string path) => Open(path, (ReaderOptions?)null);
+
+        /// <summary>Opens a workbook file for reading with explicit safety limits; see <see cref="ReaderOptions"/>.</summary>
+        public static ExcelReader Open(string path, ReaderOptions? options)
         {
             var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16);
-            try { return new ExcelReader(fs, false); }
+            try { return new ExcelReader(fs, false, options); }
             catch { fs.Dispose(); throw; }
         }
 
         /// <summary>
-        /// Opens a workbook from a stream. A non-seekable stream (an HTTP upload, say) is first copied into
-        /// memory, because the zip directory sits at the end of the file.
+        /// Opens a workbook from a stream. A non-seekable stream (an HTTP upload, say) is first copied, because
+        /// the zip directory sits at the end of the file: into memory up to 64 MB, and into a temporary file
+        /// that is deleted with the reader beyond that, so a large upload never sits in memory whole.
         /// </summary>
-        public static ExcelReader Open(Stream stream, bool leaveOpen = false)
+        public static ExcelReader Open(Stream stream, bool leaveOpen = false) => Open(stream, leaveOpen, null);
+
+        /// <summary>Opens a workbook from a stream with explicit safety limits; see <see cref="ReaderOptions"/>.</summary>
+        public static ExcelReader Open(Stream stream, bool leaveOpen, ReaderOptions? options)
         {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
-            if (stream.CanSeek) return new ExcelReader(stream, leaveOpen);
-            var copy = new MemoryStream();
-            stream.CopyTo(copy);
-            copy.Position = 0;
-            if (!leaveOpen) stream.Dispose();
-            return new ExcelReader(copy, false);
+            if (stream.CanSeek) return new ExcelReader(stream, leaveOpen, options);
+            var copy = Buffer(stream, InMemoryBufferLimit);
+            try
+            {
+                if (!leaveOpen) stream.Dispose();
+                return new ExcelReader(copy, false, options);
+            }
+            catch
+            {
+                copy.Dispose(); // Also deletes a spilled temp file.
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// How much of a non-seekable stream is kept in memory before the rest spills into a temporary file:
+        /// 64 MB. Below the limit the whole upload sits in a <see cref="MemoryStream"/>; above it the bytes
+        /// already buffered plus everything that follows go to a file opened with
+        /// <see cref="FileOptions.DeleteOnClose"/>, so the file disappears when the reader is disposed.
+        /// </summary>
+        internal const long InMemoryBufferLimit = 64L * 1024 * 1024;
+
+        /// <summary>
+        /// Copies a non-seekable stream into a seekable one positioned at zero: a <see cref="MemoryStream"/>
+        /// while the content fits in <paramref name="memoryLimit"/> bytes, otherwise a self-deleting temporary
+        /// file. The synchronous twin of <c>BufferAsync</c>; internal so tests can use a small limit.
+        /// </summary>
+        internal static Stream Buffer(Stream source, long memoryLimit)
+        {
+            var memory = new MemoryStream();
+            var buffer = new byte[81920]; // Below the large-object threshold.
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                if (memory.Length + read > memoryLimit)
+                {
+                    // GetRandomFileName + CreateNew instead of GetTempFileName: the latter caps at 65,535
+                    // files per folder and creates the file twice.
+                    var path = Path.Combine(Path.GetTempPath(), "sheetstream-" + Path.GetRandomFileName());
+                    var file = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.DeleteOnClose);
+                    try
+                    {
+                        memory.WriteTo(file);
+                        file.Write(buffer, 0, read);
+                        source.CopyTo(file);
+                        file.Flush();
+                        file.Position = 0;
+                        return file;
+                    }
+                    catch
+                    {
+                        file.Dispose();
+                        throw;
+                    }
+                }
+                memory.Write(buffer, 0, read);
+            }
+            memory.Position = 0;
+            return memory;
         }
 
         /// <summary>Sheet names in tab order (hidden sheets included).</summary>
@@ -311,7 +383,7 @@ namespace SheetStream.Reading
 
             using (var xr = OpenXml(workbookPart) ?? throw new InvalidDataException("The package has no workbook part."))
             {
-                while (xr.Read())
+                while (Advance(xr))
                 {
                     if (xr.NodeType != XmlNodeType.Element) continue;
                     if (xr.LocalName == "workbookPr")
@@ -339,10 +411,15 @@ namespace SheetStream.Reading
             using (var xr = OpenXml(part))
             {
                 if (xr == null) return;
-                while (xr.Read())
+                // The table as a whole is bounded by MaxLoadedPartBytes; each item by the cell text limit.
+                var text = new TextState(_options.MaxCellTextLength, long.MaxValue);
+                while (!xr.EOF)
                 {
-                    if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "si")
-                        _sharedStrings.Add(xr.IsEmptyElement ? "" : ReadRichText(xr));
+                    if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "si") { Advance(xr); continue; }
+                    text.BeginCell();
+                    if (xr.IsEmptyElement) _sharedStrings.Add("");
+                    else _sharedStrings.Add(ReadRichText(xr, text)); // Leaves the reader on </si>.
+                    Advance(xr);
                 }
             }
         }
@@ -359,7 +436,7 @@ namespace SheetStream.Reading
             {
                 if (xr == null) return;
                 var inCellXfs = false;
-                while (xr.Read())
+                while (Advance(xr))
                 {
                     if (xr.NodeType == XmlNodeType.Element)
                     {
@@ -419,7 +496,7 @@ namespace SheetStream.Reading
             using (var xr = OpenXml(part))
             {
                 if (xr == null) return list;
-                while (xr.Read())
+                while (Advance(xr))
                     if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "Relationship")
                         list.Add((xr.GetAttribute("Id") ?? "", xr.GetAttribute("Type") ?? "", xr.GetAttribute("Target") ?? ""));
             }
@@ -439,19 +516,23 @@ namespace SheetStream.Reading
             return string.Join("/", parts);
         }
 
+        /// <summary>
+        /// Opens a part that is loaded into memory as a whole (workbook, relationships, shared strings,
+        /// styles), capped at <see cref="ReaderOptions.MaxLoadedPartBytes"/>. Returns null when the part does not exist.
+        /// </summary>
         private XmlReader? OpenXml(string part)
         {
             var entry = _zip.GetEntry(part);
             if (entry == null) return null;
-            return XmlReader.Create(entry.Open(), new XmlReaderSettings
-            {
-                IgnoreComments = true,
-                IgnoreWhitespace = false,
-                DtdProcessing = DtdProcessing.Prohibit, // Never resolve DTDs from untrusted files.
-                XmlResolver = null,
-                CloseInput = true,
-            });
+            return XmlReader.Create(Guard(entry, _options.MaxLoadedPartBytes), SheetSettings(async: false));
         }
+
+        /// <summary>
+        /// Wraps the unpacked bytes of a part in the limits of <see cref="GuardedPartStream"/>.
+        /// <paramref name="maxBytes"/> is <see cref="long.MaxValue"/> for sheets, which are streamed and may be any size.
+        /// </summary>
+        private Stream Guard(ZipArchiveEntry entry, long maxBytes)
+            => new GuardedPartStream(entry.Open(), entry.FullName, maxBytes, _options.MaxTokenBytes);
 
         // ------------------------------------------------------------------ rows and cells
 
@@ -461,27 +542,153 @@ namespace SheetStream.Reading
         /// methods used by <c>ReadRowsAsync</c>; the sync reader leaves it off because it costs a little per call.
         /// </summary>
         private static XmlReaderSettings SheetSettings(bool async)
-            => new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, CloseInput = true, IgnoreComments = true, Async = async };
+            => new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                CloseInput = true,
+                // Comments and processing instructions carry nothing a workbook reader needs; ignoring them
+                // also means the parser skips their content instead of buffering it.
+                IgnoreComments = true,
+                IgnoreProcessingInstructions = true,
+                Async = async,
+            };
+
+        /// <summary>
+        /// Moves to the next node and rejects absurd nesting. Every loop over untrusted XML goes through this
+        /// (or its async twin) instead of calling <see cref="XmlReader.Read"/> directly.
+        /// </summary>
+        internal static bool Advance(XmlReader xr)
+        {
+            var more = xr.Read();
+            if (xr.Depth > MaxXmlDepth) ThrowTooDeep();
+            return more;
+        }
+
+        private static void ThrowTooDeep()
+            => throw new InvalidDataException($"The workbook XML is nested more than {MaxXmlDepth} levels deep. The file is damaged or not a genuine workbook.");
+
+        /// <summary>
+        /// Skips the element the reader is on, with its whole subtree, and leaves the reader on the node after
+        /// it. Same contract as <see cref="XmlReader.Skip"/>, but depth-checked.
+        /// </summary>
+        internal static void SkipElement(XmlReader xr)
+        {
+            if (!xr.IsEmptyElement)
+            {
+                var depth = xr.Depth;
+                while (Advance(xr) && xr.Depth > depth) { }
+            }
+            Advance(xr); // Past the end tag, or past the empty element.
+        }
+
+        /// <summary>
+        /// Scratch space and running totals for reading text out of untrusted XML. One instance serves a whole
+        /// enumeration, so reading a cell allocates nothing but its final string.
+        /// </summary>
+        internal sealed class TextState
+        {
+            private readonly long _maxCell;
+            private readonly long _maxRow;
+            private long _cell;
+            private long _row;
+
+            public TextState(long maxCellChars, long maxRowChars)
+            {
+                _maxCell = maxCellChars;
+                _maxRow = maxRowChars;
+            }
+
+            /// <summary>For parts of a workbook the application owns (templates), where no limit applies.</summary>
+            public static TextState Unlimited() => new TextState(long.MaxValue, long.MaxValue);
+
+            /// <summary>Chunk buffer for <see cref="XmlReader.ReadValueChunk"/>.</summary>
+            public readonly char[] Buffer = new char[1024];
+
+            /// <summary>Assembles a value that arrives in more than one chunk.</summary>
+            public readonly StringBuilder Chunks = new StringBuilder();
+
+            /// <summary>Assembles the runs of a rich-text item.</summary>
+            public readonly StringBuilder Runs = new StringBuilder();
+
+            public void BeginRow() => _row = 0;
+
+            public void BeginCell() => _cell = 0;
+
+            /// <summary>Accounts for characters just read and rejects a cell or row that has grown past its limit.</summary>
+            public void Count(int chars)
+            {
+                _cell += chars;
+                _row += chars;
+                if (_cell > _maxCell)
+                    throw new InvalidDataException($"A cell holds more than {_maxCell:N0} characters of text. The file is damaged or was built to exhaust memory. If it is genuine, raise ReaderOptions.MaxCellTextLength.");
+                if (_row > _maxRow)
+                    throw new InvalidDataException($"A row holds more than {_maxRow:N0} characters of text. The file is damaged or was built to exhaust memory. If it is genuine, raise ReaderOptions.MaxRowTextLength.");
+            }
+        }
+
+        /// <summary>
+        /// Reads the text of the element the reader is on (not empty) and leaves the reader on the node after
+        /// its end tag, like <see cref="XmlReader.ReadElementContentAsString()"/>. Unlike that method the text
+        /// is pulled in chunks and counted against the limits as it arrives, so an oversized value is rejected
+        /// as soon as it passes its limit instead of after the whole of it has been materialised.
+        /// </summary>
+        internal static string ReadElementText(XmlReader xr, TextState state)
+        {
+            var depth = xr.Depth;
+            string? single = null;
+            StringBuilder? sb = null;
+            Advance(xr);
+            while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
+            {
+                switch (xr.NodeType)
+                {
+                    case XmlNodeType.Text:
+                    case XmlNodeType.CDATA:
+                    case XmlNodeType.Whitespace:
+                    case XmlNodeType.SignificantWhitespace:
+                        int n;
+                        while ((n = xr.ReadValueChunk(state.Buffer, 0, state.Buffer.Length)) > 0)
+                        {
+                            state.Count(n);
+                            if (single == null && sb == null) { single = new string(state.Buffer, 0, n); continue; }
+                            if (sb == null) { sb = state.Chunks; sb.Clear(); sb.Append(single); }
+                            sb.Append(state.Buffer, 0, n);
+                        }
+                        Advance(xr);
+                        break;
+                    case XmlNodeType.Element:
+                        throw new InvalidDataException($"Element '{xr.LocalName}' is not allowed inside a cell value. The file is damaged.");
+                    default:
+                        Advance(xr);
+                        break;
+                }
+            }
+            Advance(xr);
+            return sb != null ? sb.ToString() : single ?? "";
+        }
 
         private IEnumerable<ExcelRow> ReadRowsCore(ZipArchiveEntry entry)
         {
-            using (var xr = XmlReader.Create(entry.Open(), SheetSettings(async: false)))
+            using (var xr = XmlReader.Create(Guard(entry, long.MaxValue), SheetSettings(async: false)))
             {
                 var lastRow = 0;
                 var values = new List<object?>();
-                while (xr.Read())
+                var text = new TextState(_options.MaxCellTextLength, _options.MaxRowTextLength);
+                while (Advance(xr))
                 {
                     if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "row") continue;
                     var rowIndex = ParseInt(xr.GetAttribute("r")) ?? lastRow + 1;
                     lastRow = rowIndex;
                     values.Clear();
+                    text.BeginRow();
                     if (!xr.IsEmptyElement)
                     {
                         // Cursor discipline: every branch leaves the reader on the next unread node, so the
-                        // loop never calls Read() after a method that already advanced it.
+                        // loop never advances after a method that already did.
                         var depth = xr.Depth;
                         var nextColumn = 1;
-                        xr.Read();
+                        Advance(xr);
                         while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
                         {
                             if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "c")
@@ -489,12 +696,12 @@ namespace SheetStream.Reading
                                 var reference = xr.GetAttribute("r");
                                 var column = reference != null ? ColumnOf(reference) : nextColumn;
                                 nextColumn = column + 1;
-                                var value = ReadCell(xr); // Leaves the reader on </c> or on an empty <c/>.
-                                xr.Read();
+                                var value = ReadCell(xr, text); // Leaves the reader on </c> or on an empty <c/>.
+                                Advance(xr);
                                 if (value != null) PlaceCell(values, column, value);
                                 continue;
                             }
-                            xr.Read();
+                            Advance(xr);
                         }
                     }
                     yield return new ExcelRow(rowIndex, values.ToArray());
@@ -514,7 +721,7 @@ namespace SheetStream.Reading
         }
 
         /// <summary>Reads one <c>c</c> element (positioned on its start) and returns its typed value.</summary>
-        private object? ReadCell(XmlReader xr)
+        private object? ReadCell(XmlReader xr, TextState text)
         {
             var type = xr.GetAttribute("t");
             var styleIndex = ParseInt(xr.GetAttribute("s")) ?? 0;
@@ -523,28 +730,29 @@ namespace SheetStream.Reading
             string? v = null;
             string? inline = null;
             var depth = xr.Depth;
-            xr.Read();
+            text.BeginCell();
+            Advance(xr);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element)
                 {
                     if (xr.LocalName == "v")
                     {
-                        if (xr.IsEmptyElement) { v = ""; xr.Read(); }
-                        else v = xr.ReadElementContentAsString(); // Advances past </v>.
+                        if (xr.IsEmptyElement) { v = ""; Advance(xr); }
+                        else v = ReadElementText(xr, text); // Advances past </v>.
                         continue;
                     }
                     if (xr.LocalName == "is")
                     {
                         if (xr.IsEmptyElement) inline = "";
-                        else inline = ReadRichText(xr); // Leaves the reader on </is>.
-                        xr.Read();
+                        else inline = ReadRichText(xr, text); // Leaves the reader on </is>.
+                        Advance(xr);
                         continue;
                     }
-                    xr.Skip(); // <f> and anything else: skip the whole element.
+                    SkipElement(xr); // <f> and anything else: skip the whole element.
                     continue;
                 }
-                xr.Read();
+                Advance(xr);
             }
 
             return CellValue(type, styleIndex, v, inline);
@@ -574,46 +782,60 @@ namespace SheetStream.Reading
                     return v != null && DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var iso) ? iso : (object?)v;
                 default:
                     if (v == null || !double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return v;
+                    // double.TryParse accepts "NaN" and "Infinity", which no spreadsheet stores as a number;
+                    // surface them as the text they are rather than as a value arithmetic cannot use.
+                    if (double.IsNaN(number) || double.IsInfinity(number)) return v;
                     // A damaged file can carry s="-1"; treat any index outside the style table as a plain number.
                     var kind = styleIndex >= 0 && styleIndex < _styleKinds.Count ? _styleKinds[styleIndex] : CellKind.Number;
                     if (kind == CellKind.Date)
                     {
-                        if (_date1904) number += 1462; // 1904 epoch: shift to the 1900 serial Excel's OADate expects.
-                        if (number >= -657435 && number < 2958466) return DateTime.FromOADate(number);
+                        if (_date1904) number += 1462; // 1904 epoch: shift to the 1900 serial.
+                        if (number >= -657435 && number < 2958466) return ExcelDate.FromSerial(number);
                     }
-                    else if (kind == CellKind.Duration)
+                    else if (kind == CellKind.Duration && Math.Abs(number) < MaxDurationDays)
                     {
                         return TimeSpan.FromDays(number);
                     }
-                    return number;
+                    return number; // Also a date or duration too large for its type: the raw number is the honest answer.
             }
         }
+
+        /// <summary>Largest magnitude, in days, that fits a <see cref="TimeSpan"/> (its range is about 10,675,199 days).</summary>
+        internal const double MaxDurationDays = 10_675_199;
 
         /// <summary>
         /// Concatenates the text of a string item (<c>si</c> or <c>is</c>): either one <c>t</c> or several runs.
         /// Phonetic guides (<c>rPh</c>) are skipped because they are not part of the cell text. Must be called
         /// on a non-empty start element and returns positioned on its end element.
         /// </summary>
-        internal static string ReadRichText(XmlReader xr)
+        internal static string ReadRichText(XmlReader xr, TextState state)
         {
-            var sb = new StringBuilder();
+            // The common item is a single <t>; only build a string from runs when there is more than one.
+            string? single = null;
+            StringBuilder? sb = null;
             var depth = xr.Depth;
-            xr.Read();
+            Advance(xr);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element)
                 {
-                    if (xr.LocalName == "rPh") { xr.Skip(); continue; }
+                    if (xr.LocalName == "rPh") { SkipElement(xr); continue; }
                     if (xr.LocalName == "t")
                     {
-                        if (xr.IsEmptyElement) xr.Read();
-                        else sb.Append(xr.ReadElementContentAsString()); // Advances past </t>.
+                        if (xr.IsEmptyElement) { Advance(xr); continue; }
+                        var run = ReadElementText(xr, state); // Advances past </t>.
+                        if (single == null && sb == null) single = run;
+                        else
+                        {
+                            if (sb == null) { sb = state.Runs; sb.Clear(); sb.Append(single); }
+                            sb.Append(run);
+                        }
                         continue;
                     }
                 }
-                xr.Read();
+                Advance(xr);
             }
-            return Decode(sb.ToString()); // The reader is now on the container's end element.
+            return Decode(sb != null ? sb.ToString() : single ?? ""); // The reader is now on the container's end element.
         }
 
         /// <summary>Reverses Excel's <c>_xHHHH_</c> escaping of characters XML cannot carry.</summary>
@@ -716,7 +938,7 @@ namespace SheetStream.Reading
             if (type == typeof(DateTime))
                 return value switch
                 {
-                    double num => DateTime.FromOADate(num),
+                    double num => ExcelDate.FromSerial(num),
                     string str => DateTime.Parse(str, CultureInfo.InvariantCulture),
                     _ => throw new InvalidCastException(),
                 };
@@ -739,7 +961,7 @@ namespace SheetStream.Reading
                 if (t == "0" || t.Equals("no", StringComparison.OrdinalIgnoreCase) || t.Equals("n", StringComparison.OrdinalIgnoreCase)) return false;
                 return bool.Parse(t);
             }
-            if (value is DateTime dtv && (type == typeof(double) || type == typeof(decimal))) value = dtv.ToOADate();
+            if (value is DateTime dtv && (type == typeof(double) || type == typeof(decimal))) value = ExcelDate.ToSerial(dtv);
             return System.Convert.ChangeType(value, type, CultureInfo.InvariantCulture);
         }
     }
