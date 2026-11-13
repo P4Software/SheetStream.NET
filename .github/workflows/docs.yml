@@ -26,6 +26,10 @@ jobs:
             10.0.x
       - name: Restore tools
         run: dotnet tool restore
+      # DocFX reads the API from the library project, which loads the source generator and analyzer as
+      # built DLLs. Without a Release build they are missing, DocFX warns, and --warningsAsErrors fails the job.
+      - name: Build library
+        run: dotnet build src/SheetStream/SheetStream.csproj -c Release
       - name: Build site
         run: dotnet docfx docs/docfx.json --warningsAsErrors
 
