@@ -2,6 +2,8 @@
   href: index.md
 - name: Migrating from EPPlus
   href: migrating-from-epplus.md
+- name: Reading workbooks
+  href: reading-workbooks.md
 - name: Filling templates
   href: templates.md
 - name: Editing existing workbooks

@@ -46,4 +46,4 @@ New cell styles are fine: `package.Workbook.Styles.Create(...)` appends to the t
 
 ## Untrusted templates
 
-Templates are parsed with DTD processing and external entities disabled. The template file is never modified: `OpenTemplate` refuses to write to the same path it reads.
+A template is meant to be a file your application owns. `OpenTemplate` loads the whole template into memory and does not apply the limits `ExcelReader` enforces on untrusted files (see [Reading workbooks](reading-workbooks.md)), so do not pass it a workbook a user uploaded without checking it first. Templates are parsed with DTD processing and external entities disabled, and the template file is never modified: `OpenTemplate` refuses to write to the same path it reads.
