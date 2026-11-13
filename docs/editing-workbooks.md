@@ -24,8 +24,8 @@ Three ways to open:
 | Call | Writes to |
 |---|---|
 | `ExcelPackage.Edit("in.xlsx", "out.xlsx")` | A new file; the input is never touched |
-| `ExcelPackage.Edit("book.xlsx")` | The same file. The copy is built next to it as a temporary file and swapped in only when the save succeeds; if saving throws, the original is untouched and the temporary file is removed |
-| `ExcelPackage.Edit(inputStream, outputStream)` | A stream, for uploads and downloads |
+| `ExcelPackage.Edit("book.xlsx")` | The same file. The copy is built next to it as a temporary file and swapped in only when `Save()` succeeds. Without a `Save()` call (your code threw half-way, or you forgot it) nothing is written: the original is untouched and the temporary file is removed. The same holds when saving itself throws |
+| `ExcelPackage.Edit(inputStream, outputStream)` | A stream, for workbooks your application keeps somewhere other than disk (blob storage, a database). The whole input is loaded into memory and the reader's safety limits do not apply, so check the size of anything a user uploaded before passing it here |
 
 ## What happens on save
 

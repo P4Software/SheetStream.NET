@@ -424,13 +424,36 @@ namespace SheetStream.Internal
 
             private static bool IsLetter(char c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 
-            /// <summary>Excel's ROUND: half away from zero, negative digits round to tens, hundreds...</summary>
+            /// <summary>
+            /// Excel's ROUND: half away from zero, negative digits round to tens, hundreds...
+            /// </summary>
+            /// <remarks>
+            /// Excel rounds the number as it shows it, to 15 significant decimal digits, not the binary double
+            /// behind it. 1.005 is stored as 1.00499999999999989..., so rounding the double gives 1.00 where
+            /// Excel gives 1.01. Going through the 15-digit decimal text reproduces Excel's answer. A value too
+            /// large for <see cref="decimal"/> yields NaN, which the caller turns into "no cached value":
+            /// leaving the cell for Excel to calculate is better than caching a guess.
+            /// </remarks>
             private static double Round(double value, double digits)
             {
+                if (digits > 15) return value;   // Nothing left to round within 15 significant digits.
+                if (digits < -28) return 0;      // Rounds everything a decimal can hold away.
                 var n = (int)Math.Truncate(digits);
-                if (n >= 0) return n > 15 ? value : Math.Round(value, n, MidpointRounding.AwayFromZero);
-                var scale = Math.Pow(10, -n);
-                return Math.Round(value / scale, MidpointRounding.AwayFromZero) * scale;
+                if (!decimal.TryParse(value.ToString("G15", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                    return double.NaN;
+                decimal rounded;
+                if (n >= 0)
+                {
+                    rounded = Math.Round(d, n, MidpointRounding.AwayFromZero);
+                }
+                else
+                {
+                    decimal scale = 1;
+                    for (var i = 0; i < -n; i++) scale *= 10;
+                    rounded = Math.Round(d / scale, 0, MidpointRounding.AwayFromZero) * scale;
+                }
+                // Through text rather than a cast: the decimal-to-double cast is not correctly rounded on .NET Framework.
+                return double.Parse(rounded.ToString(CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
             }
         }
     }

@@ -13,9 +13,10 @@ namespace SheetStream
     /// </summary>
     /// <remarks>
     /// The table lives in memory until the package is saved because its index must be known while the
-    /// sheets are being streamed. For data sets dominated by unique strings, set
-    /// <see cref="PackageOptions.UseSharedStrings"/> to <c>false</c> to write inline strings instead and
-    /// keep memory flat. When filling a template, the template's own strings keep their indexes and new
+    /// sheets are being streamed. It stops growing at <see cref="PackageOptions.MaxSharedStringChars"/>;
+    /// new strings beyond that are written inline, so an export dominated by unique strings cannot run the
+    /// process out of memory. Set <see cref="PackageOptions.UseSharedStrings"/> to <c>false</c> to write
+    /// every string inline from the start. When filling a template, the template's own strings keep their indexes and new
     /// strings are appended after them. Not thread-safe.
     /// </remarks>
     public sealed class SharedStringTable
@@ -27,8 +28,20 @@ namespace SheetStream
         // Template mode: the template's items occupy indexes 0..._templateCount-1 and are copied verbatim.
         private int _templateCount;
 
-        internal SharedStringTable()
+        // Memory budget, in characters, for the strings this package adds, and how much of it is used.
+        private readonly long _budget;
+        private long _used;
+
+        /// <summary>
+        /// What one entry costs beyond its characters, in the budget's character units: the dictionary
+        /// entry, the list slot and the string header. Without it a flood of very short unique strings
+        /// (ids, codes) would use far more memory than the budget suggests.
+        /// </summary>
+        private const int EntryOverhead = 32;
+
+        internal SharedStringTable(long budget)
         {
+            _budget = budget;
         }
 
         /// <summary>Number of distinct strings stored (template strings included).</summary>
@@ -48,17 +61,29 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Returns the index of <paramref name="value"/>, adding it on first sight. The value must already be
+        /// Looks up the index of <paramref name="value"/>, adding it on first sight. The value must already be
         /// sanitised with <see cref="XmlTextUtil.Sanitize"/>.
         /// </summary>
-        internal int GetOrAdd(string value)
+        /// <returns>
+        /// False when <paramref name="value"/> is new and the table has used up
+        /// <see cref="PackageOptions.MaxSharedStringChars"/>; the caller then writes the string inline, which
+        /// keeps memory flat however many unique strings the export has.
+        /// </returns>
+        internal bool TryGetOrAdd(string value, out int id)
         {
+            if (_index.TryGetValue(value, out id))
+            {
+                _references++;
+                return true;
+            }
+            var cost = value.Length + EntryOverhead;
+            if (_used + cost > _budget) return false;
+            _used += cost;
             _references++;
-            if (_index.TryGetValue(value, out var id)) return id;
             id = _templateCount + _strings.Count;
             _strings.Add(value);
             _index[value] = id;
-            return id;
+            return true;
         }
 
         /// <summary>Writes the <c>sharedStrings.xml</c> part.</summary>

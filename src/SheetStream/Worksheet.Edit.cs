@@ -385,13 +385,14 @@ namespace SheetStream
                     return v != null && DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var iso) ? iso : (object?)v;
                 default:
                     if (v == null || !double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return v;
+                    if (double.IsNaN(number) || double.IsInfinity(number)) return v; // Same rule as ExcelReader: not a number a sheet can hold.
                     var kind = ExcelReader.Classify(Workbook.Styles.NumberFormatId(styleIndex), context.NumberFormatCodes);
                     if (kind == ExcelReader.CellKind.Date)
                     {
                         if (context.Date1904) number += 1462;
-                        if (number >= -657435 && number < 2958466) return DateTime.FromOADate(number);
+                        if (number >= -657435 && number < 2958466) return ExcelDate.FromSerial(number);
                     }
-                    else if (kind == ExcelReader.CellKind.Duration)
+                    else if (kind == ExcelReader.CellKind.Duration && Math.Abs(number) < ExcelReader.MaxDurationDays)
                     {
                         return TimeSpan.FromDays(number);
                     }

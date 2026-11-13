@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Runs the netstandard2.0 build of the library on .NET Framework 4.8, the runtime the README promises
+    support for and the one the main test project (modern .NET only) cannot cover. Windows only, so this
+    project is deliberately not in SheetStream.slnx: the Linux build would have nothing to run it on. The
+    Windows CI job and anyone on Windows run it with: dotnet test tests/SheetStream.NetFx.Tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- No analyzers here: the generator and analyzer are exercised by their own test projects. -->
+    <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
+  </ItemGroup>
+
+</Project>

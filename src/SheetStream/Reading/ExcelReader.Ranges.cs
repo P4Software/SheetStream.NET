@@ -131,18 +131,19 @@ namespace SheetStream.Reading
             var part = _sheets[sheetIndex].Part;
             Dictionary<string, string>? externalTargets = null; // Loaded lazily: only sheets with external links pay for the .rels read.
 
-            using (var xr = OpenXml(part) ?? throw new InvalidDataException($"Sheet '{_sheets[sheetIndex].Name}' points at missing part '{part}'."))
+            // A sheet is streamed, not loaded, so it gets the token guard but no size cap.
+            using (var xr = XmlReader.Create(Guard(SheetEntry(sheetIndex), long.MaxValue), SheetSettings(async: false)))
             {
                 // Cursor discipline: every branch leaves the reader on the next unread node, so the loop never
                 // calls Read() after a method that already advanced it (Skip and the collectors both do).
-                xr.Read();
+                Advance(xr);
                 while (!xr.EOF)
                 {
-                    if (xr.NodeType != XmlNodeType.Element) { xr.Read(); continue; }
+                    if (xr.NodeType != XmlNodeType.Element) { Advance(xr); continue; }
 
                     if (xr.LocalName == "sheetData")
                     {
-                        xr.Skip(); // The bulk of the file; Skip advances past </sheetData> without materialising cells.
+                        SkipElement(xr); // The bulk of the file: advances past </sheetData> without materialising cells.
                         continue;
                     }
                     if (merges != null && xr.LocalName == "mergeCells")
@@ -155,7 +156,7 @@ namespace SheetStream.Reading
                         CollectHyperlinks(xr, links, part, ref externalTargets);
                         continue;
                     }
-                    xr.Read();
+                    Advance(xr);
                 }
             }
         }
@@ -163,30 +164,33 @@ namespace SheetStream.Reading
         /// <summary>Reads the children of a <c>mergeCells</c> element (positioned on its start) and leaves the reader on the node after it.</summary>
         private static void CollectMerges(XmlReader xr, List<MergedRange> merges)
         {
-            if (xr.IsEmptyElement) { xr.Read(); return; }
+            if (xr.IsEmptyElement) { Advance(xr); return; }
             var depth = xr.Depth;
-            xr.Read();
+            Advance(xr);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "mergeCell")
                 {
                     var reference = xr.GetAttribute("ref");
                     if (reference != null && TryParseRange(reference, out var r))
+                    {
+                        if (merges.Count >= MaxSheetAnnotations) ThrowTooManyAnnotations("merged ranges");
                         merges.Add(new MergedRange(r.FromRow, r.FromColumn, r.ToRow, r.ToColumn, r.ToString()));
-                    xr.Skip(); // A mergeCell has no children we care about; Skip also handles the empty-element form.
+                    }
+                    SkipElement(xr); // A mergeCell has no children we care about; this also handles the empty-element form.
                     continue;
                 }
-                xr.Read();
+                Advance(xr);
             }
-            xr.Read(); // Step past </mergeCells>.
+            Advance(xr); // Step past </mergeCells>.
         }
 
         /// <summary>Reads the children of a <c>hyperlinks</c> element (positioned on its start) and leaves the reader on the node after it.</summary>
         private void CollectHyperlinks(XmlReader xr, List<ExcelHyperlink> links, string sheetPart, ref Dictionary<string, string>? externalTargets)
         {
-            if (xr.IsEmptyElement) { xr.Read(); return; }
+            if (xr.IsEmptyElement) { Advance(xr); return; }
             var depth = xr.Depth;
-            xr.Read();
+            Advance(xr);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "hyperlink")
@@ -205,17 +209,18 @@ namespace SheetStream.Reading
                         var location = xr.GetAttribute("location");
                         var tooltip = xr.GetAttribute("tooltip");
                         var display = xr.GetAttribute("display");
+                        if (links.Count >= MaxSheetAnnotations) ThrowTooManyAnnotations("hyperlinks");
                         links.Add(new ExcelHyperlink(r.FromRow, r.FromColumn, url,
                             string.IsNullOrEmpty(location) ? null : location,
                             tooltip == null ? null : Decode(tooltip),
                             display == null ? null : Decode(display)));
                     }
-                    xr.Skip();
+                    SkipElement(xr);
                     continue;
                 }
-                xr.Read();
+                Advance(xr);
             }
-            xr.Read(); // Step past </hyperlinks>.
+            Advance(xr); // Step past </hyperlinks>.
         }
 
         /// <summary>
@@ -233,6 +238,9 @@ namespace SheetStream.Reading
                 if (rel.Type.EndsWith("/hyperlink", StringComparison.Ordinal)) targets[rel.Id] = rel.Target;
             return targets;
         }
+
+        private static void ThrowTooManyAnnotations(string what)
+            => throw new InvalidDataException($"The sheet lists more than {MaxSheetAnnotations:N0} {what}. The file is damaged or not a genuine workbook.");
 
         /// <summary>Parses an A1 cell or range, returning false (instead of throwing) for anything malformed.</summary>
         private static bool TryParseRange(string text, out RangeReference range)

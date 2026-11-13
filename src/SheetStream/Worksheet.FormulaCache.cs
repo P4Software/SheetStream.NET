@@ -87,7 +87,7 @@ namespace SheetStream
                 case double d: _formulaValues.SetNumber(row, column, d); break;
                 case DateTime date:
                     // Mirror what the writer would store: a 1904-system workbook counts serial days from a later epoch.
-                    _formulaValues.SetNumber(row, column, date.ToOADate() - (_templateSource != null && _templateSource.Date1904 ? 1462 : 0));
+                    _formulaValues.SetNumber(row, column, _templateSource != null && _templateSource.Date1904 ? date.ToOADate() - 1462 : ExcelDate.ToSerial(date));
                     break;
                 case TimeSpan span: _formulaValues.SetNumber(row, column, span.TotalDays); break;
                 default: _formulaValues.SetText(row, column); break;

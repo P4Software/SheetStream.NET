@@ -22,14 +22,6 @@ namespace SheetStream.Reading
     /// </summary>
     public sealed partial class ExcelReader
     {
-        /// <summary>
-        /// How much of a non-seekable stream <see cref="OpenAsync(Stream, bool, CancellationToken)"/> keeps in
-        /// memory before spilling the rest into a temporary file: 64 MB. Below the limit the whole upload sits
-        /// in a <see cref="MemoryStream"/>; above it the bytes already buffered plus everything that follows go
-        /// to a file opened with <see cref="FileOptions.DeleteOnClose"/>, so a multi-hundred-megabyte upload
-        /// never doubles the process' managed heap and the file disappears when the reader is disposed.
-        /// </summary>
-        internal const long InMemoryBufferLimit = 64L * 1024 * 1024;
 
         /// <summary>
         /// Opens a workbook from a stream, buffering asynchronously when the stream cannot seek. A seekable stream
@@ -49,20 +41,27 @@ namespace SheetStream.Reading
         /// <param name="leaveOpen">True to leave <paramref name="stream"/> open when the reader is disposed (or, for a non-seekable stream, after it has been copied).</param>
         /// <param name="cancellationToken">Cancels the copy of a non-seekable stream.</param>
         public static Task<ExcelReader> OpenAsync(Stream stream, bool leaveOpen = false, CancellationToken cancellationToken = default)
+            => OpenAsync(stream, leaveOpen, null, cancellationToken);
+
+        /// <summary>
+        /// Opens a workbook from a stream with explicit safety limits; see <see cref="ReaderOptions"/> and
+        /// <see cref="OpenAsync(Stream, bool, CancellationToken)"/>.
+        /// </summary>
+        public static Task<ExcelReader> OpenAsync(Stream stream, bool leaveOpen, ReaderOptions? options, CancellationToken cancellationToken = default)
         {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
-            if (stream.CanSeek) return Task.FromResult(new ExcelReader(stream, leaveOpen));
-            return OpenBufferedAsync(stream, leaveOpen, cancellationToken);
+            if (stream.CanSeek) return Task.FromResult(new ExcelReader(stream, leaveOpen, options));
+            return OpenBufferedAsync(stream, options, leaveOpen, cancellationToken);
         }
 
-        private static async Task<ExcelReader> OpenBufferedAsync(Stream stream, bool leaveOpen, CancellationToken cancellationToken)
+        private static async Task<ExcelReader> OpenBufferedAsync(Stream stream, ReaderOptions? options, bool leaveOpen, CancellationToken cancellationToken)
         {
             var copy = await BufferAsync(stream, InMemoryBufferLimit, cancellationToken).ConfigureAwait(false);
             try
             {
                 // Same order as the synchronous Open: the source is released before the package is parsed.
                 if (!leaveOpen) await stream.DisposeAsync().ConfigureAwait(false);
-                return new ExcelReader(copy, false);
+                return new ExcelReader(copy, false, options);
             }
             catch
             {
@@ -81,13 +80,20 @@ namespace SheetStream.Reading
         /// shared for reading so Excel can keep it open.
         /// </summary>
         public static Task<ExcelReader> OpenAsync(string path, CancellationToken cancellationToken = default)
+            => OpenAsync(path, null, cancellationToken);
+
+        /// <summary>
+        /// Opens a workbook file for asynchronous reading with explicit safety limits; see
+        /// <see cref="ReaderOptions"/> and <see cref="OpenAsync(string, CancellationToken)"/>.
+        /// </summary>
+        public static Task<ExcelReader> OpenAsync(string path, ReaderOptions? options, CancellationToken cancellationToken = default)
         {
             if (path == null) throw new ArgumentNullException(nameof(path));
             if (cancellationToken.IsCancellationRequested) return Task.FromCanceled<ExcelReader>(cancellationToken);
             try
             {
                 var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16, FileOptions.Asynchronous);
-                try { return Task.FromResult(new ExcelReader(fs, false)); }
+                try { return Task.FromResult(new ExcelReader(fs, false, options)); }
                 catch { fs.Dispose(); throw; }
             }
             catch (Exception ex) when (!(ex is ArgumentException))
@@ -182,11 +188,12 @@ namespace SheetStream.Reading
         {
             // A plain using is enough: XmlReader is IDisposable only, and the async iterator runs this finally
             // block both on normal completion and when the consumer disposes the enumerator early.
-            using (var xr = XmlReader.Create(entry.Open(), SheetSettings(async: true)))
+            using (var xr = XmlReader.Create(Guard(entry, long.MaxValue), SheetSettings(async: true)))
             {
                 var lastRow = 0;
                 var values = new List<object?>();
-                while (await xr.ReadAsync().ConfigureAwait(false))
+                var text = new TextState(_options.MaxCellTextLength, _options.MaxRowTextLength);
+                while (await AdvanceAsync(xr).ConfigureAwait(false))
                 {
                     if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "row") continue;
                     // Between rows is the one place cancellation is honoured: a row is parsed whole or not at all.
@@ -194,11 +201,12 @@ namespace SheetStream.Reading
                     var rowIndex = ParseInt(xr.GetAttribute("r")) ?? lastRow + 1;
                     lastRow = rowIndex;
                     values.Clear();
+                    text.BeginRow();
                     if (!xr.IsEmptyElement)
                     {
                         var depth = xr.Depth;
                         var nextColumn = 1;
-                        await xr.ReadAsync().ConfigureAwait(false);
+                        await AdvanceAsync(xr).ConfigureAwait(false);
                         while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
                         {
                             if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "c")
@@ -206,12 +214,12 @@ namespace SheetStream.Reading
                                 var reference = xr.GetAttribute("r");
                                 var column = reference != null ? ColumnOf(reference) : nextColumn;
                                 nextColumn = column + 1;
-                                var value = await ReadCellAsync(xr).ConfigureAwait(false); // Leaves the reader on </c> or on an empty <c/>.
-                                await xr.ReadAsync().ConfigureAwait(false);
+                                var value = await ReadCellAsync(xr, text).ConfigureAwait(false); // Leaves the reader on </c> or on an empty <c/>.
+                                await AdvanceAsync(xr).ConfigureAwait(false);
                                 if (value != null) PlaceCell(values, column, value);
                                 continue;
                             }
-                            await xr.ReadAsync().ConfigureAwait(false);
+                            await AdvanceAsync(xr).ConfigureAwait(false);
                         }
                     }
                     yield return new ExcelRow(rowIndex, values.ToArray());
@@ -224,7 +232,7 @@ namespace SheetStream.Reading
         /// to the shared <see cref="CellValue"/>. Returns a <see cref="ValueTask{T}"/> because the XML buffer
         /// usually already holds the cell, so most calls complete synchronously without allocating a task.
         /// </summary>
-        private async ValueTask<object?> ReadCellAsync(XmlReader xr)
+        private async ValueTask<object?> ReadCellAsync(XmlReader xr, TextState text)
         {
             var type = xr.GetAttribute("t");
             var styleIndex = ParseInt(xr.GetAttribute("s")) ?? 0;
@@ -233,56 +241,118 @@ namespace SheetStream.Reading
             string? v = null;
             string? inline = null;
             var depth = xr.Depth;
-            await xr.ReadAsync().ConfigureAwait(false);
+            text.BeginCell();
+            await AdvanceAsync(xr).ConfigureAwait(false);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element)
                 {
                     if (xr.LocalName == "v")
                     {
-                        if (xr.IsEmptyElement) { v = ""; await xr.ReadAsync().ConfigureAwait(false); }
-                        else v = await xr.ReadElementContentAsStringAsync().ConfigureAwait(false); // Advances past </v>.
+                        if (xr.IsEmptyElement) { v = ""; await AdvanceAsync(xr).ConfigureAwait(false); }
+                        else v = await ReadElementTextAsync(xr, text).ConfigureAwait(false); // Advances past </v>.
                         continue;
                     }
                     if (xr.LocalName == "is")
                     {
                         if (xr.IsEmptyElement) inline = "";
-                        else inline = await ReadRichTextAsync(xr).ConfigureAwait(false); // Leaves the reader on </is>.
-                        await xr.ReadAsync().ConfigureAwait(false);
+                        else inline = await ReadRichTextAsync(xr, text).ConfigureAwait(false); // Leaves the reader on </is>.
+                        await AdvanceAsync(xr).ConfigureAwait(false);
                         continue;
                     }
-                    await xr.SkipAsync().ConfigureAwait(false); // <f> and anything else: skip the whole element.
+                    await SkipElementAsync(xr).ConfigureAwait(false); // <f> and anything else: skip the whole element.
                     continue;
                 }
-                await xr.ReadAsync().ConfigureAwait(false);
+                await AdvanceAsync(xr).ConfigureAwait(false);
             }
 
             return CellValue(type, styleIndex, v, inline);
         }
 
         /// <summary>Asynchronous twin of <see cref="ReadRichText"/> for inline strings; same contract, same decoding.</summary>
-        private static async ValueTask<string> ReadRichTextAsync(XmlReader xr)
+        private static async ValueTask<string> ReadRichTextAsync(XmlReader xr, TextState state)
         {
-            var sb = new StringBuilder();
+            string? single = null;
+            StringBuilder? sb = null;
             var depth = xr.Depth;
-            await xr.ReadAsync().ConfigureAwait(false);
+            await AdvanceAsync(xr).ConfigureAwait(false);
             while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
             {
                 if (xr.NodeType == XmlNodeType.Element)
                 {
-                    if (xr.LocalName == "rPh") { await xr.SkipAsync().ConfigureAwait(false); continue; }
+                    if (xr.LocalName == "rPh") { await SkipElementAsync(xr).ConfigureAwait(false); continue; }
                     if (xr.LocalName == "t")
                     {
-                        if (xr.IsEmptyElement) await xr.ReadAsync().ConfigureAwait(false);
-                        else sb.Append(await xr.ReadElementContentAsStringAsync().ConfigureAwait(false)); // Advances past </t>.
+                        if (xr.IsEmptyElement) { await AdvanceAsync(xr).ConfigureAwait(false); continue; }
+                        var run = await ReadElementTextAsync(xr, state).ConfigureAwait(false); // Advances past </t>.
+                        if (single == null && sb == null) single = run;
+                        else
+                        {
+                            if (sb == null) { sb = state.Runs; sb.Clear(); sb.Append(single); }
+                            sb.Append(run);
+                        }
                         continue;
                     }
                 }
-                await xr.ReadAsync().ConfigureAwait(false);
+                await AdvanceAsync(xr).ConfigureAwait(false);
             }
-            return Decode(sb.ToString()); // The reader is now on the container's end element.
+            return Decode(sb != null ? sb.ToString() : single ?? ""); // The reader is now on the container's end element.
         }
 
+        /// <summary>Asynchronous twin of <see cref="Advance"/>: next node, with the nesting check.</summary>
+        private static async ValueTask<bool> AdvanceAsync(XmlReader xr)
+        {
+            var more = await xr.ReadAsync().ConfigureAwait(false);
+            if (xr.Depth > MaxXmlDepth) ThrowTooDeep();
+            return more;
+        }
+
+        /// <summary>Asynchronous twin of <see cref="SkipElement"/>.</summary>
+        private static async ValueTask SkipElementAsync(XmlReader xr)
+        {
+            if (!xr.IsEmptyElement)
+            {
+                var depth = xr.Depth;
+                while (await AdvanceAsync(xr).ConfigureAwait(false) && xr.Depth > depth) { }
+            }
+            await AdvanceAsync(xr).ConfigureAwait(false); // Past the end tag, or past the empty element.
+        }
+
+        /// <summary>Asynchronous twin of <see cref="ReadElementText"/>: chunked, counted against the limits as it arrives.</summary>
+        private static async ValueTask<string> ReadElementTextAsync(XmlReader xr, TextState state)
+        {
+            var depth = xr.Depth;
+            string? single = null;
+            StringBuilder? sb = null;
+            await AdvanceAsync(xr).ConfigureAwait(false);
+            while (!xr.EOF && !(xr.NodeType == XmlNodeType.EndElement && xr.Depth == depth))
+            {
+                switch (xr.NodeType)
+                {
+                    case XmlNodeType.Text:
+                    case XmlNodeType.CDATA:
+                    case XmlNodeType.Whitespace:
+                    case XmlNodeType.SignificantWhitespace:
+                        int n;
+                        while ((n = await xr.ReadValueChunkAsync(state.Buffer, 0, state.Buffer.Length).ConfigureAwait(false)) > 0)
+                        {
+                            state.Count(n);
+                            if (single == null && sb == null) { single = new string(state.Buffer, 0, n); continue; }
+                            if (sb == null) { sb = state.Chunks; sb.Clear(); sb.Append(single); }
+                            sb.Append(state.Buffer, 0, n);
+                        }
+                        await AdvanceAsync(xr).ConfigureAwait(false);
+                        break;
+                    case XmlNodeType.Element:
+                        throw new InvalidDataException($"Element '{xr.LocalName}' is not allowed inside a cell value. The file is damaged.");
+                    default:
+                        await AdvanceAsync(xr).ConfigureAwait(false);
+                        break;
+                }
+            }
+            await AdvanceAsync(xr).ConfigureAwait(false);
+            return sb != null ? sb.ToString() : single ?? "";
+        }
         // ------------------------------------------------------------------ objects and tables
 
         /// <summary>
