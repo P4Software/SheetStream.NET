@@ -23,6 +23,3 @@ artifacts/
 docs/_site/
 docs/api/
 coverage/
-
-# Local Claude Code state (agent worktrees, settings)
-.claude/
