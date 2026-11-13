@@ -220,7 +220,7 @@ sheet.Cells[next, 1].Value = "Added by code";
 package.Save();                                                   // Atomic replace; the original is untouched if saving fails
 ```
 
-Untouched cells, rows, charts, pictures, tables and other sheets are written back exactly as they were, and formulas recalculate on open. This is meant for small files (default limit 200,000 cells per sheet, `PackageOptions.MaxEditableCells`); large files keep using streaming or templates. See [Editing existing workbooks](docs/editing-workbooks.md).
+Call `Save()` to commit: an in-place edit that is disposed without it leaves the file as it was. Untouched cells, rows, charts, pictures, tables and other sheets are written back exactly as they were, and formulas recalculate on open. This is meant for small files (default limit 200,000 cells per sheet, `PackageOptions.MaxEditableCells`); large files keep using streaming or templates. See [Editing existing workbooks](docs/editing-workbooks.md).
 
 ### Async and ASP.NET Core
 
@@ -284,6 +284,14 @@ foreach (var link in reader.ReadHyperlinks("Report"))         // Url for web/mai
 ```
 
 Merged ranges and hyperlinks are read from the sheet's trailer only, so the rows are skipped and the call is instant even on a million-row sheet.
+
+**Files from people you do not know.** An .xlsx is a zip archive, so a 200 KB upload can unpack into gigabytes. The reader refuses such files instead of running out of memory: a cell over 1,048,576 characters, a row over 16 million, a shared string table or styles part over 256 MB unpacked, or XML nested absurdly deep ends in an `InvalidDataException` that names the limit. The defaults are far above anything Excel writes; tighten or loosen them with `ReaderOptions`:
+
+```csharp
+using var reader = ExcelReader.Open(upload, leaveOpen: false, new ReaderOptions { MaxCellTextLength = 32_767 }); // Excel's own cell limit
+```
+
+A non-seekable stream is copied before reading (the zip directory is at the end): up to 64 MB in memory, beyond that into a temporary file deleted with the reader.
 
 ```csharp
 // Async reading (.NET 8+): buffer an upload without blocking, then stream rows or objects.
@@ -392,7 +400,7 @@ SheetStream writes directly into the zip archive, which is what keeps memory fla
 1. **One sheet at a time.** Adding a worksheet seals the previous one.
 2. **Rows ascend.** `Row(n)` must be the current row or a later one. Gaps are fine. Use `Cells[r, c]` on a sheet that needs random access.
 3. **Layout first.** Column widths, frozen panes, tab colour, gridlines and fit-to-page live before the data in the file, so set them before the first row. `AutoFitColumns()` and `Cells[...]` defer the header, which lifts this rule for that sheet.
-4. **Dispose saves.** Leaving a `using` block without calling `Save()` still finishes the file. A save that fails is not retried by `Dispose`, so the original exception is the one you see.
+4. **Dispose saves, except an in-place edit.** Leaving a `using` block without calling `Save()` still finishes a file you are creating. A save that fails is not retried by `Dispose`, so the original exception is the one you see. `ExcelPackage.Edit(path)` is the exception: it replaces an existing file, so it commits only on an explicit `Save()`, and leaving the block without one (your code threw, say) keeps the original untouched.
 
 ## 🛠️ Architecture
 
@@ -407,6 +415,7 @@ SheetStream writes directly into the zip archive, which is what keeps memory fla
 ```bash
 dotnet build
 dotnet test
+dotnet test tests/SheetStream.NetFx.Tests                             # .NET Framework 4.8 run of the netstandard2.0 build (Windows only)
 dotnet run --project samples/SheetStream.Sample                         # FinancialReport.xlsx
 dotnet run --project samples/SheetStream.Sample -- showcase              # Showcase.xlsx: every feature
 dotnet run -c Release --project samples/SheetStream.Sample -- 1000000    # 1M-row stress run

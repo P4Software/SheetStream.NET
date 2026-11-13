@@ -226,7 +226,8 @@ public class EditTests
             {
                 var s = package.Workbook.Worksheets.Edit("Data");
                 s.Cells["A1"].Value = "In place";
-            } // Disposing saves and swaps the file in.
+                package.Save(); // An in-place edit is only committed by an explicit Save.
+            }
 
             Assert.Single(Directory.GetFiles(dir));
             using (var reader = ExcelReader.Open(path))

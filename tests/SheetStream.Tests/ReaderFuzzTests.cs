@@ -24,7 +24,7 @@ public class ReaderFuzzTests
         s.Row().WriteCells("Name", "Qty", "When", "Ok");
         for (var i = 0; i < 20; i++)
             s.Row().WriteCell("Item " + i).WriteCell(i * 1.5).WriteCell(new DateTime(2026, 1, 1).AddDays(i), bold).WriteCell(i % 2 == 0)
-                .WriteRichText(new RichText("a") { Bold = true }, "b").WriteFormula("B2*2", 3.0);
+                .WriteRichText(new RichText("a") { Bold = true }, "b").WriteFormula("B2*2", 3.0).WriteCell(TimeSpan.FromMinutes(i * 7));
     });
 
     /// <summary>Rebuilds the package with one XML part mutated by <paramref name="mutate"/>.</summary>
@@ -83,7 +83,7 @@ public class ReaderFuzzTests
         foreach (var ch in part) seedHash = (seedHash ^ ch) * 16777619u;
         var rng = new Random(unchecked((int)seedHash) ^ 12345);
         // Fragments that stress the parser: huge or negative numbers, bad references, broken structure.
-        string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400" };
+        string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400", "NaN", "1E300", "<a><a><a>" };
 
         var rejected = 0;
         for (var iteration = 0; iteration < 150; iteration++)

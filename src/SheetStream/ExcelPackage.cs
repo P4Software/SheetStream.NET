@@ -210,7 +210,11 @@ namespace SheetStream
             _saved = true;
         }
 
-        /// <summary>Saves the package if it has not been saved yet, then releases the output stream unless it was left open.</summary>
+        /// <summary>
+        /// Saves the package if it has not been saved yet, then releases the output stream unless it was left open.
+        /// The one exception is an in-place edit (<see cref="Edit(string, PackageOptions?)"/>): disposing it
+        /// without calling <see cref="Save"/> discards the changes and leaves the original file as it was.
+        /// </summary>
         public void Dispose()
         {
             if (_disposed) return;
@@ -218,7 +222,10 @@ namespace SheetStream
             try
             {
                 // A save that already failed is not retried: its exception is the one the caller needs to see.
-                if (!_saved && !_saveFailed && _archive != null) Save();
+                // An in-place edit is never saved from here. Dispose also runs when the caller's code threw
+                // half-way through its changes, and committing that over the user's only copy of the file
+                // cannot be undone; overwriting an existing file takes an explicit Save().
+                if (!_saved && !_saveFailed && _archive != null && _inPlaceTemp == null) Save();
             }
             finally
             {
