@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A console program that opens every hostile workbook through every entry point. The test project runs it
+    with the runtime's hard heap limit set (DOTNET_GCHeapHardLimit), which proves peak memory in a way an
+    in-process test cannot. It can also be run by hand, with or without a limit, to see the table it prints.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Started with "dotnet exec", so no platform-specific launcher is needed beside the tests. -->
+    <UseAppHost>false</UseAppHost>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\HostileWorkbooks.cs" Link="HostileWorkbooks.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
+  </ItemGroup>
+
+</Project>

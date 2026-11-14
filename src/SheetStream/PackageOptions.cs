@@ -41,6 +41,23 @@ namespace SheetStream
         /// </summary>
         public int MaxEditableCells { get; set; } = 200_000;
 
+        private Reading.ReaderOptions _sourceLimits = new Reading.ReaderOptions();
+
+        /// <summary>
+        /// Limits applied to the workbook that <see cref="ExcelPackage.OpenTemplate(string, string, PackageOptions?)"/>
+        /// or <see cref="ExcelPackage.Edit(string, PackageOptions?)"/> loads, so a crafted file cannot exhaust
+        /// memory: the same limits <see cref="Reading.ExcelReader"/> applies, with the same defaults. A sheet
+        /// opened with <c>Worksheets.Edit</c> is held in memory and so counts as a loaded part, capped by
+        /// <see cref="Reading.ReaderOptions.MaxLoadedPartBytes"/> as well as by <see cref="MaxEditableCells"/>;
+        /// sheets that are filled or copied are streamed and may be any size.
+        /// <see cref="Reading.ReaderOptions.MaxRowTextLength"/> is not used here.
+        /// </summary>
+        public Reading.ReaderOptions SourceLimits
+        {
+            get => _sourceLimits;
+            set => _sourceLimits = value ?? throw new ArgumentNullException(nameof(value));
+        }
+
         /// <summary>
         /// Text measurer used by <see cref="Worksheet.AutoFitColumns(double, double)"/> on every sheet of the
         /// package: <c>(text, bold) =&gt; width</c>, where the width is in Excel's column unit, the width of one

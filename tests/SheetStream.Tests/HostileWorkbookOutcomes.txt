@@ -1,0 +1,596 @@
+# What each way of opening a workbook does with each hostile file. Recorded by HostileWorkbookTests;
+# see that class for how to update it. Reads = completed in bounded memory. Refused = a documented exception.
+cdata: in the shared strings | edit: change a cell | Refused
+cdata: in the shared strings | edit: save untouched | Refused
+cdata: in the shared strings | reader: data table | Refused
+cdata: in the shared strings | reader: hyperlinks | Refused
+cdata: in the shared strings | reader: merged ranges | Refused
+cdata: in the shared strings | reader: rows | Refused
+cdata: in the shared strings | reader: rows, async | Refused
+cdata: in the shared strings | template: fill rows | Refused
+cdata: in the shared strings | template: read a style | Refused
+cdata: many sections in one cell | edit: change a cell | Refused
+cdata: many sections in one cell | edit: save untouched | Reads
+cdata: many sections in one cell | reader: data table | Refused
+cdata: many sections in one cell | reader: hyperlinks | Reads
+cdata: many sections in one cell | reader: merged ranges | Reads
+cdata: many sections in one cell | reader: rows | Refused
+cdata: many sections in one cell | reader: rows, async | Refused
+cdata: many sections in one cell | template: fill rows | Reads
+cdata: many sections in one cell | template: read a style | Reads
+cdata: one section as cell text | edit: change a cell | Refused
+cdata: one section as cell text | edit: save untouched | Reads
+cdata: one section as cell text | reader: data table | Refused
+cdata: one section as cell text | reader: hyperlinks | Refused
+cdata: one section as cell text | reader: merged ranges | Refused
+cdata: one section as cell text | reader: rows | Refused
+cdata: one section as cell text | reader: rows, async | Refused
+cdata: one section as cell text | template: fill rows | Refused
+cdata: one section as cell text | template: read a style | Refused
+cdata: one section before the rows | edit: change a cell | Refused
+cdata: one section before the rows | edit: save untouched | Reads
+cdata: one section before the rows | reader: data table | Refused
+cdata: one section before the rows | reader: hyperlinks | Refused
+cdata: one section before the rows | reader: merged ranges | Refused
+cdata: one section before the rows | reader: rows | Refused
+cdata: one section before the rows | reader: rows, async | Refused
+cdata: one section before the rows | template: fill rows | Refused
+cdata: one section before the rows | template: read a style | Refused
+cdata: one section of closing brackets | edit: change a cell | Refused
+cdata: one section of closing brackets | edit: save untouched | Reads
+cdata: one section of closing brackets | reader: data table | Refused
+cdata: one section of closing brackets | reader: hyperlinks | Refused
+cdata: one section of closing brackets | reader: merged ranges | Refused
+cdata: one section of closing brackets | reader: rows | Refused
+cdata: one section of closing brackets | reader: rows, async | Refused
+cdata: one section of closing brackets | template: fill rows | Refused
+cdata: one section of closing brackets | template: read a style | Refused
+cdata: one section outside any cell | edit: change a cell | Refused
+cdata: one section outside any cell | edit: save untouched | Reads
+cdata: one section outside any cell | reader: data table | Refused
+cdata: one section outside any cell | reader: hyperlinks | Refused
+cdata: one section outside any cell | reader: merged ranges | Refused
+cdata: one section outside any cell | reader: rows | Refused
+cdata: one section outside any cell | reader: rows, async | Refused
+cdata: one section outside any cell | template: fill rows | Refused
+cdata: one section outside any cell | template: read a style | Refused
+collect: header of identical names | edit: change a cell | Refused
+collect: header of identical names | edit: save untouched | Reads
+collect: header of identical names | reader: data table | Refused
+collect: header of identical names | reader: hyperlinks | Reads
+collect: header of identical names | reader: merged ranges | Reads
+collect: header of identical names | reader: rows | Reads
+collect: header of identical names | reader: rows, async | Reads
+collect: header of identical names | template: fill rows | Reads
+collect: header of identical names | template: read a style | Reads
+collect: rows with one cell in the last column | edit: change a cell | Refused
+collect: rows with one cell in the last column | edit: save untouched | Reads
+collect: rows with one cell in the last column | reader: data table | Refused
+collect: rows with one cell in the last column | reader: hyperlinks | Reads
+collect: rows with one cell in the last column | reader: merged ranges | Reads
+collect: rows with one cell in the last column | reader: rows | Reads
+collect: rows with one cell in the last column | reader: rows, async | Reads
+collect: rows with one cell in the last column | template: fill rows | Reads
+collect: rows with one cell in the last column | template: read a style | Reads
+index: column far past the last one | edit: change a cell | Refused
+index: column far past the last one | edit: save untouched | Reads
+index: column far past the last one | reader: data table | Refused
+index: column far past the last one | reader: hyperlinks | Reads
+index: column far past the last one | reader: merged ranges | Reads
+index: column far past the last one | reader: rows | Refused
+index: column far past the last one | reader: rows, async | Refused
+index: column far past the last one | template: fill rows | Reads
+index: column far past the last one | template: read a style | Reads
+index: negative row number | edit: change a cell | Refused
+index: negative row number | edit: save untouched | Reads
+index: negative row number | reader: data table | Reads
+index: negative row number | reader: hyperlinks | Reads
+index: negative row number | reader: merged ranges | Reads
+index: negative row number | reader: rows | Reads
+index: negative row number | reader: rows, async | Reads
+index: negative row number | template: fill rows | Refused
+index: negative row number | template: read a style | Refused
+index: row number at the top of the integer range | edit: change a cell | Refused
+index: row number at the top of the integer range | edit: save untouched | Reads
+index: row number at the top of the integer range | reader: data table | Reads
+index: row number at the top of the integer range | reader: hyperlinks | Reads
+index: row number at the top of the integer range | reader: merged ranges | Reads
+index: row number at the top of the integer range | reader: rows | Reads
+index: row number at the top of the integer range | reader: rows, async | Reads
+index: row number at the top of the integer range | template: fill rows | Refused
+index: row number at the top of the integer range | template: read a style | Refused
+index: row number zero | edit: change a cell | Refused
+index: row number zero | edit: save untouched | Reads
+index: row number zero | reader: data table | Reads
+index: row number zero | reader: hyperlinks | Reads
+index: row number zero | reader: merged ranges | Reads
+index: row number zero | reader: rows | Reads
+index: row number zero | reader: rows, async | Reads
+index: row number zero | template: fill rows | Refused
+index: row number zero | template: read a style | Refused
+index: shared string far past the last one | edit: change a cell | Reads
+index: shared string far past the last one | edit: save untouched | Reads
+index: shared string far past the last one | reader: data table | Reads
+index: shared string far past the last one | reader: hyperlinks | Reads
+index: shared string far past the last one | reader: merged ranges | Reads
+index: shared string far past the last one | reader: rows | Reads
+index: shared string far past the last one | reader: rows, async | Reads
+index: shared string far past the last one | template: fill rows | Reads
+index: shared string far past the last one | template: read a style | Reads
+index: style far past the last one | edit: change a cell | Refused
+index: style far past the last one | edit: save untouched | Reads
+index: style far past the last one | reader: data table | Reads
+index: style far past the last one | reader: hyperlinks | Reads
+index: style far past the last one | reader: merged ranges | Reads
+index: style far past the last one | reader: rows | Reads
+index: style far past the last one | reader: rows, async | Reads
+index: style far past the last one | template: fill rows | Reads
+index: style far past the last one | template: read a style | Reads
+index: table range that is not a range | edit: change a cell | Reads
+index: table range that is not a range | edit: save untouched | Reads
+index: table range that is not a range | reader: data table | Reads
+index: table range that is not a range | reader: hyperlinks | Reads
+index: table range that is not a range | reader: merged ranges | Reads
+index: table range that is not a range | reader: rows | Reads
+index: table range that is not a range | reader: rows, async | Reads
+index: table range that is not a range | template: fill rows | Reads
+index: table range that is not a range | template: read a style | Reads
+many: cell formats in the styles | edit: change a cell | Refused
+many: cell formats in the styles | edit: save untouched | Refused
+many: cell formats in the styles | reader: data table | Refused
+many: cell formats in the styles | reader: hyperlinks | Refused
+many: cell formats in the styles | reader: merged ranges | Refused
+many: cell formats in the styles | reader: rows | Refused
+many: cell formats in the styles | reader: rows, async | Refused
+many: cell formats in the styles | template: fill rows | Refused
+many: cell formats in the styles | template: read a style | Refused
+many: cells without references in one row | edit: change a cell | Refused
+many: cells without references in one row | edit: save untouched | Reads
+many: cells without references in one row | reader: data table | Refused
+many: cells without references in one row | reader: hyperlinks | Reads
+many: cells without references in one row | reader: merged ranges | Reads
+many: cells without references in one row | reader: rows | Refused
+many: cells without references in one row | reader: rows, async | Refused
+many: cells without references in one row | template: fill rows | Reads
+many: cells without references in one row | template: read a style | Reads
+many: column definitions | edit: change a cell | Refused
+many: column definitions | edit: save untouched | Reads
+many: column definitions | reader: data table | Reads
+many: column definitions | reader: hyperlinks | Reads
+many: column definitions | reader: merged ranges | Reads
+many: column definitions | reader: rows | Reads
+many: column definitions | reader: rows, async | Reads
+many: column definitions | template: fill rows | Reads
+many: column definitions | template: read a style | Reads
+many: content types | edit: change a cell | Reads
+many: content types | edit: save untouched | Reads
+many: content types | reader: data table | Reads
+many: content types | reader: hyperlinks | Reads
+many: content types | reader: merged ranges | Reads
+many: content types | reader: rows | Reads
+many: content types | reader: rows, async | Reads
+many: content types | template: fill rows | Reads
+many: content types | template: read a style | Reads
+many: defined names in the workbook | edit: change a cell | Refused
+many: defined names in the workbook | edit: save untouched | Refused
+many: defined names in the workbook | reader: data table | Refused
+many: defined names in the workbook | reader: hyperlinks | Refused
+many: defined names in the workbook | reader: merged ranges | Refused
+many: defined names in the workbook | reader: rows | Refused
+many: defined names in the workbook | reader: rows, async | Refused
+many: defined names in the workbook | template: fill rows | Refused
+many: defined names in the workbook | template: read a style | Refused
+many: empty cells without references in one row | edit: change a cell | Refused
+many: empty cells without references in one row | edit: save untouched | Reads
+many: empty cells without references in one row | reader: data table | Refused
+many: empty cells without references in one row | reader: hyperlinks | Reads
+many: empty cells without references in one row | reader: merged ranges | Reads
+many: empty cells without references in one row | reader: rows | Refused
+many: empty cells without references in one row | reader: rows, async | Refused
+many: empty cells without references in one row | template: fill rows | Reads
+many: empty cells without references in one row | template: read a style | Reads
+many: empty rows with attributes | edit: change a cell | Refused
+many: empty rows with attributes | edit: save untouched | Reads
+many: empty rows with attributes | reader: data table | Refused
+many: empty rows with attributes | reader: hyperlinks | Reads
+many: empty rows with attributes | reader: merged ranges | Reads
+many: empty rows with attributes | reader: rows | Reads
+many: empty rows with attributes | reader: rows, async | Reads
+many: empty rows with attributes | template: fill rows | Reads
+many: empty rows with attributes | template: read a style | Reads
+many: hyperlinks with long tooltips | edit: change a cell | Refused
+many: hyperlinks with long tooltips | edit: save untouched | Reads
+many: hyperlinks with long tooltips | reader: data table | Reads
+many: hyperlinks with long tooltips | reader: hyperlinks | Refused
+many: hyperlinks with long tooltips | reader: merged ranges | Reads
+many: hyperlinks with long tooltips | reader: rows | Reads
+many: hyperlinks with long tooltips | reader: rows, async | Reads
+many: hyperlinks with long tooltips | template: fill rows | Reads
+many: hyperlinks with long tooltips | template: read a style | Reads
+many: kinds of collection in the styles | edit: change a cell | Refused
+many: kinds of collection in the styles | edit: save untouched | Refused
+many: kinds of collection in the styles | reader: data table | Refused
+many: kinds of collection in the styles | reader: hyperlinks | Refused
+many: kinds of collection in the styles | reader: merged ranges | Refused
+many: kinds of collection in the styles | reader: rows | Refused
+many: kinds of collection in the styles | reader: rows, async | Refused
+many: kinds of collection in the styles | template: fill rows | Refused
+many: kinds of collection in the styles | template: read a style | Refused
+many: merged ranges | edit: change a cell | Refused
+many: merged ranges | edit: save untouched | Reads
+many: merged ranges | reader: data table | Reads
+many: merged ranges | reader: hyperlinks | Reads
+many: merged ranges | reader: merged ranges | Refused
+many: merged ranges | reader: rows | Reads
+many: merged ranges | reader: rows, async | Reads
+many: merged ranges | template: fill rows | Reads
+many: merged ranges | template: read a style | Reads
+many: number formats in the styles | edit: change a cell | Refused
+many: number formats in the styles | edit: save untouched | Refused
+many: number formats in the styles | reader: data table | Refused
+many: number formats in the styles | reader: hyperlinks | Refused
+many: number formats in the styles | reader: merged ranges | Refused
+many: number formats in the styles | reader: rows | Refused
+many: number formats in the styles | reader: rows, async | Refused
+many: number formats in the styles | template: fill rows | Refused
+many: number formats in the styles | template: read a style | Refused
+many: rich text runs in one shared string | edit: change a cell | Refused
+many: rich text runs in one shared string | edit: save untouched | Refused
+many: rich text runs in one shared string | reader: data table | Refused
+many: rich text runs in one shared string | reader: hyperlinks | Refused
+many: rich text runs in one shared string | reader: merged ranges | Refused
+many: rich text runs in one shared string | reader: rows | Refused
+many: rich text runs in one shared string | reader: rows, async | Refused
+many: rich text runs in one shared string | template: fill rows | Refused
+many: rich text runs in one shared string | template: read a style | Refused
+many: rows | edit: change a cell | Refused
+many: rows | edit: save untouched | Reads
+many: rows | reader: data table | Refused
+many: rows | reader: hyperlinks | Reads
+many: rows | reader: merged ranges | Reads
+many: rows | reader: rows | Reads
+many: rows | reader: rows, async | Reads
+many: rows | template: fill rows | Reads
+many: rows | template: read a style | Reads
+many: shared strings | edit: change a cell | Refused
+many: shared strings | edit: save untouched | Refused
+many: shared strings | reader: data table | Refused
+many: shared strings | reader: hyperlinks | Refused
+many: shared strings | reader: merged ranges | Refused
+many: shared strings | reader: rows | Refused
+many: shared strings | reader: rows, async | Refused
+many: shared strings | template: fill rows | Refused
+many: shared strings | template: read a style | Refused
+many: sheet relationships | edit: change a cell | Reads
+many: sheet relationships | edit: save untouched | Reads
+many: sheet relationships | reader: data table | Reads
+many: sheet relationships | reader: hyperlinks | Reads
+many: sheet relationships | reader: merged ranges | Reads
+many: sheet relationships | reader: rows | Reads
+many: sheet relationships | reader: rows, async | Reads
+many: sheet relationships | template: fill rows | Refused
+many: sheet relationships | template: read a style | Reads
+many: sheets in the workbook | edit: change a cell | Refused
+many: sheets in the workbook | edit: save untouched | Refused
+many: sheets in the workbook | reader: data table | Refused
+many: sheets in the workbook | reader: hyperlinks | Refused
+many: sheets in the workbook | reader: merged ranges | Refused
+many: sheets in the workbook | reader: rows | Refused
+many: sheets in the workbook | reader: rows, async | Refused
+many: sheets in the workbook | template: fill rows | Refused
+many: sheets in the workbook | template: read a style | Refused
+many: table columns | edit: change a cell | Reads
+many: table columns | edit: save untouched | Reads
+many: table columns | reader: data table | Reads
+many: table columns | reader: hyperlinks | Reads
+many: table columns | reader: merged ranges | Reads
+many: table columns | reader: rows | Reads
+many: table columns | reader: rows, async | Reads
+many: table columns | template: fill rows | Reads
+many: table columns | template: read a style | Reads
+many: workbook relationships | edit: change a cell | Refused
+many: workbook relationships | edit: save untouched | Refused
+many: workbook relationships | reader: data table | Refused
+many: workbook relationships | reader: hyperlinks | Refused
+many: workbook relationships | reader: merged ranges | Refused
+many: workbook relationships | reader: rows | Refused
+many: workbook relationships | reader: rows, async | Refused
+many: workbook relationships | template: fill rows | Refused
+many: workbook relationships | template: read a style | Refused
+names: a few very long ones | edit: change a cell | Refused
+names: a few very long ones | edit: save untouched | Reads
+names: a few very long ones | reader: data table | Refused
+names: a few very long ones | reader: hyperlinks | Refused
+names: a few very long ones | reader: merged ranges | Refused
+names: a few very long ones | reader: rows | Refused
+names: a few very long ones | reader: rows, async | Refused
+names: a few very long ones | template: fill rows | Refused
+names: a few very long ones | template: read a style | Refused
+names: distinct attributes on many cells | edit: change a cell | Refused
+names: distinct attributes on many cells | edit: save untouched | Reads
+names: distinct attributes on many cells | reader: data table | Refused
+names: distinct attributes on many cells | reader: hyperlinks | Refused
+names: distinct attributes on many cells | reader: merged ranges | Refused
+names: distinct attributes on many cells | reader: rows | Refused
+names: distinct attributes on many cells | reader: rows, async | Refused
+names: distinct attributes on many cells | template: fill rows | Refused
+names: distinct attributes on many cells | template: read a style | Refused
+names: distinct elements after the rows | edit: change a cell | Refused
+names: distinct elements after the rows | edit: save untouched | Reads
+names: distinct elements after the rows | reader: data table | Refused
+names: distinct elements after the rows | reader: hyperlinks | Refused
+names: distinct elements after the rows | reader: merged ranges | Refused
+names: distinct elements after the rows | reader: rows | Refused
+names: distinct elements after the rows | reader: rows, async | Refused
+names: distinct elements after the rows | template: fill rows | Refused
+names: distinct elements after the rows | template: read a style | Refused
+names: distinct elements in the rows | edit: change a cell | Refused
+names: distinct elements in the rows | edit: save untouched | Reads
+names: distinct elements in the rows | reader: data table | Refused
+names: distinct elements in the rows | reader: hyperlinks | Refused
+names: distinct elements in the rows | reader: merged ranges | Refused
+names: distinct elements in the rows | reader: rows | Refused
+names: distinct elements in the rows | reader: rows, async | Refused
+names: distinct elements in the rows | template: fill rows | Refused
+names: distinct elements in the rows | template: read a style | Refused
+names: distinct elements in the shared strings | edit: change a cell | Refused
+names: distinct elements in the shared strings | edit: save untouched | Refused
+names: distinct elements in the shared strings | reader: data table | Refused
+names: distinct elements in the shared strings | reader: hyperlinks | Refused
+names: distinct elements in the shared strings | reader: merged ranges | Refused
+names: distinct elements in the shared strings | reader: rows | Refused
+names: distinct elements in the shared strings | reader: rows, async | Refused
+names: distinct elements in the shared strings | template: fill rows | Refused
+names: distinct elements in the shared strings | template: read a style | Refused
+names: distinct prefixes | edit: change a cell | Refused
+names: distinct prefixes | edit: save untouched | Reads
+names: distinct prefixes | reader: data table | Refused
+names: distinct prefixes | reader: hyperlinks | Refused
+names: distinct prefixes | reader: merged ranges | Refused
+names: distinct prefixes | reader: rows | Refused
+names: distinct prefixes | reader: rows, async | Refused
+names: distinct prefixes | template: fill rows | Refused
+names: distinct prefixes | template: read a style | Refused
+nesting: after the rows | edit: change a cell | Refused
+nesting: after the rows | edit: save untouched | Reads
+nesting: after the rows | reader: data table | Refused
+nesting: after the rows | reader: hyperlinks | Refused
+nesting: after the rows | reader: merged ranges | Refused
+nesting: after the rows | reader: rows | Refused
+nesting: after the rows | reader: rows, async | Refused
+nesting: after the rows | template: fill rows | Refused
+nesting: after the rows | template: read a style | Refused
+nesting: before the rows | edit: change a cell | Refused
+nesting: before the rows | edit: save untouched | Reads
+nesting: before the rows | reader: data table | Refused
+nesting: before the rows | reader: hyperlinks | Refused
+nesting: before the rows | reader: merged ranges | Refused
+nesting: before the rows | reader: rows | Refused
+nesting: before the rows | reader: rows, async | Refused
+nesting: before the rows | template: fill rows | Refused
+nesting: before the rows | template: read a style | Refused
+nesting: in the rows | edit: change a cell | Refused
+nesting: in the rows | edit: save untouched | Reads
+nesting: in the rows | reader: data table | Refused
+nesting: in the rows | reader: hyperlinks | Refused
+nesting: in the rows | reader: merged ranges | Refused
+nesting: in the rows | reader: rows | Refused
+nesting: in the rows | reader: rows, async | Refused
+nesting: in the rows | template: fill rows | Refused
+nesting: in the rows | template: read a style | Refused
+nesting: in the shared strings | edit: change a cell | Refused
+nesting: in the shared strings | edit: save untouched | Refused
+nesting: in the shared strings | reader: data table | Refused
+nesting: in the shared strings | reader: hyperlinks | Refused
+nesting: in the shared strings | reader: merged ranges | Refused
+nesting: in the shared strings | reader: rows | Refused
+nesting: in the shared strings | reader: rows, async | Refused
+nesting: in the shared strings | template: fill rows | Refused
+nesting: in the shared strings | template: read a style | Refused
+nesting: in the styles | edit: change a cell | Refused
+nesting: in the styles | edit: save untouched | Refused
+nesting: in the styles | reader: data table | Refused
+nesting: in the styles | reader: hyperlinks | Refused
+nesting: in the styles | reader: merged ranges | Refused
+nesting: in the styles | reader: rows | Refused
+nesting: in the styles | reader: rows, async | Refused
+nesting: in the styles | template: fill rows | Refused
+nesting: in the styles | template: read a style | Refused
+nesting: in the workbook | edit: change a cell | Refused
+nesting: in the workbook | edit: save untouched | Refused
+nesting: in the workbook | reader: data table | Refused
+nesting: in the workbook | reader: hyperlinks | Refused
+nesting: in the workbook | reader: merged ranges | Refused
+nesting: in the workbook | reader: rows | Refused
+nesting: in the workbook | reader: rows, async | Refused
+nesting: in the workbook | template: fill rows | Refused
+nesting: in the workbook | template: read a style | Refused
+nesting: inside a cell | edit: change a cell | Refused
+nesting: inside a cell | edit: save untouched | Reads
+nesting: inside a cell | reader: data table | Refused
+nesting: inside a cell | reader: hyperlinks | Refused
+nesting: inside a cell | reader: merged ranges | Refused
+nesting: inside a cell | reader: rows | Refused
+nesting: inside a cell | reader: rows, async | Refused
+nesting: inside a cell | template: fill rows | Refused
+nesting: inside a cell | template: read a style | Refused
+sheet: entity references | edit: change a cell | Refused
+sheet: entity references | edit: save untouched | Reads
+sheet: entity references | reader: data table | Refused
+sheet: entity references | reader: hyperlinks | Refused
+sheet: entity references | reader: merged ranges | Refused
+sheet: entity references | reader: rows | Refused
+sheet: entity references | reader: rows, async | Refused
+sheet: entity references | template: fill rows | Refused
+sheet: entity references | template: read a style | Refused
+sheet: long attribute | edit: change a cell | Refused
+sheet: long attribute | edit: save untouched | Reads
+sheet: long attribute | reader: data table | Refused
+sheet: long attribute | reader: hyperlinks | Refused
+sheet: long attribute | reader: merged ranges | Refused
+sheet: long attribute | reader: rows | Refused
+sheet: long attribute | reader: rows, async | Refused
+sheet: long attribute | template: fill rows | Refused
+sheet: long attribute | template: read a style | Refused
+sheet: long cached value | edit: change a cell | Refused
+sheet: long cached value | edit: save untouched | Reads
+sheet: long cached value | reader: data table | Refused
+sheet: long cached value | reader: hyperlinks | Refused
+sheet: long cached value | reader: merged ranges | Refused
+sheet: long cached value | reader: rows | Refused
+sheet: long cached value | reader: rows, async | Refused
+sheet: long cached value | template: fill rows | Refused
+sheet: long cached value | template: read a style | Refused
+sheet: long element name | edit: change a cell | Refused
+sheet: long element name | edit: save untouched | Reads
+sheet: long element name | reader: data table | Refused
+sheet: long element name | reader: hyperlinks | Refused
+sheet: long element name | reader: merged ranges | Refused
+sheet: long element name | reader: rows | Refused
+sheet: long element name | reader: rows, async | Refused
+sheet: long element name | template: fill rows | Refused
+sheet: long element name | template: read a style | Refused
+sheet: long formula | edit: change a cell | Refused
+sheet: long formula | edit: save untouched | Reads
+sheet: long formula | reader: data table | Refused
+sheet: long formula | reader: hyperlinks | Refused
+sheet: long formula | reader: merged ranges | Refused
+sheet: long formula | reader: rows | Refused
+sheet: long formula | reader: rows, async | Refused
+sheet: long formula | template: fill rows | Refused
+sheet: long formula | template: read a style | Refused
+sheet: long row attribute | edit: change a cell | Refused
+sheet: long row attribute | edit: save untouched | Reads
+sheet: long row attribute | reader: data table | Refused
+sheet: long row attribute | reader: hyperlinks | Refused
+sheet: long row attribute | reader: merged ranges | Refused
+sheet: long row attribute | reader: rows | Refused
+sheet: long row attribute | reader: rows, async | Refused
+sheet: long row attribute | template: fill rows | Refused
+sheet: long row attribute | template: read a style | Refused
+sheet: long text after the rows | edit: change a cell | Refused
+sheet: long text after the rows | edit: save untouched | Reads
+sheet: long text after the rows | reader: data table | Refused
+sheet: long text after the rows | reader: hyperlinks | Refused
+sheet: long text after the rows | reader: merged ranges | Refused
+sheet: long text after the rows | reader: rows | Refused
+sheet: long text after the rows | reader: rows, async | Refused
+sheet: long text after the rows | template: fill rows | Refused
+sheet: long text after the rows | template: read a style | Refused
+sheet: long text before the rows | edit: change a cell | Refused
+sheet: long text before the rows | edit: save untouched | Reads
+sheet: long text before the rows | reader: data table | Refused
+sheet: long text before the rows | reader: hyperlinks | Refused
+sheet: long text before the rows | reader: merged ranges | Refused
+sheet: long text before the rows | reader: rows | Refused
+sheet: long text before the rows | reader: rows, async | Refused
+sheet: long text before the rows | template: fill rows | Refused
+sheet: long text before the rows | template: read a style | Refused
+sheet: long text in a cell | edit: change a cell | Refused
+sheet: long text in a cell | edit: save untouched | Reads
+sheet: long text in a cell | reader: data table | Refused
+sheet: long text in a cell | reader: hyperlinks | Refused
+sheet: long text in a cell | reader: merged ranges | Refused
+sheet: long text in a cell | reader: rows | Refused
+sheet: long text in a cell | reader: rows, async | Refused
+sheet: long text in a cell | template: fill rows | Refused
+sheet: long text in a cell | template: read a style | Refused
+sheet: very many attributes | edit: change a cell | Refused
+sheet: very many attributes | edit: save untouched | Reads
+sheet: very many attributes | reader: data table | Refused
+sheet: very many attributes | reader: hyperlinks | Refused
+sheet: very many attributes | reader: merged ranges | Refused
+sheet: very many attributes | reader: rows | Refused
+sheet: very many attributes | reader: rows, async | Refused
+sheet: very many attributes | template: fill rows | Refused
+sheet: very many attributes | template: read a style | Refused
+skipped: long comment | edit: change a cell | Refused
+skipped: long comment | edit: save untouched | Reads
+skipped: long comment | reader: data table | Reads
+skipped: long comment | reader: hyperlinks | Reads
+skipped: long comment | reader: merged ranges | Reads
+skipped: long comment | reader: rows | Reads
+skipped: long comment | reader: rows, async | Reads
+skipped: long comment | template: fill rows | Reads
+skipped: long comment | template: read a style | Reads
+skipped: long processing instruction | edit: change a cell | Refused
+skipped: long processing instruction | edit: save untouched | Reads
+skipped: long processing instruction | reader: data table | Reads
+skipped: long processing instruction | reader: hyperlinks | Reads
+skipped: long processing instruction | reader: merged ranges | Reads
+skipped: long processing instruction | reader: rows | Reads
+skipped: long processing instruction | reader: rows, async | Reads
+skipped: long processing instruction | template: fill rows | Reads
+skipped: long processing instruction | template: read a style | Reads
+structure: styles that are an empty element | edit: change a cell | Refused
+structure: styles that are an empty element | edit: save untouched | Refused
+structure: styles that are an empty element | reader: data table | Reads
+structure: styles that are an empty element | reader: hyperlinks | Reads
+structure: styles that are an empty element | reader: merged ranges | Reads
+structure: styles that are an empty element | reader: rows | Reads
+structure: styles that are an empty element | reader: rows, async | Reads
+structure: styles that are an empty element | template: fill rows | Refused
+structure: styles that are an empty element | template: read a style | Refused
+structure: two sheets with one name | edit: change a cell | Refused
+structure: two sheets with one name | edit: save untouched | Refused
+structure: two sheets with one name | reader: data table | Reads
+structure: two sheets with one name | reader: hyperlinks | Reads
+structure: two sheets with one name | reader: merged ranges | Reads
+structure: two sheets with one name | reader: rows | Reads
+structure: two sheets with one name | reader: rows, async | Reads
+structure: two sheets with one name | template: fill rows | Refused
+structure: two sheets with one name | template: read a style | Refused
+structure: workbook that is an empty element | edit: change a cell | No such sheet
+structure: workbook that is an empty element | edit: save untouched | Refused
+structure: workbook that is an empty element | reader: data table | No such sheet
+structure: workbook that is an empty element | reader: hyperlinks | No such sheet
+structure: workbook that is an empty element | reader: merged ranges | No such sheet
+structure: workbook that is an empty element | reader: rows | Reads
+structure: workbook that is an empty element | reader: rows, async | Reads
+structure: workbook that is an empty element | template: fill rows | No such sheet
+structure: workbook that is an empty element | template: read a style | No such sheet
+time: one long number format used by many cell formats | edit: change a cell | Refused
+time: one long number format used by many cell formats | edit: save untouched | Refused
+time: one long number format used by many cell formats | reader: data table | Reads
+time: one long number format used by many cell formats | reader: hyperlinks | Reads
+time: one long number format used by many cell formats | reader: merged ranges | Reads
+time: one long number format used by many cell formats | reader: rows | Reads
+time: one long number format used by many cell formats | reader: rows, async | Reads
+time: one long number format used by many cell formats | template: fill rows | Refused
+time: one long number format used by many cell formats | template: read a style | Refused
+time: relationship target of very many dot segments | edit: change a cell | Reads
+time: relationship target of very many dot segments | edit: save untouched | Reads
+time: relationship target of very many dot segments | reader: data table | Reads
+time: relationship target of very many dot segments | reader: hyperlinks | Reads
+time: relationship target of very many dot segments | reader: merged ranges | Reads
+time: relationship target of very many dot segments | reader: rows | Reads
+time: relationship target of very many dot segments | reader: rows, async | Reads
+time: relationship target of very many dot segments | template: fill rows | Reads
+time: relationship target of very many dot segments | template: read a style | Reads
+utf-16 big-endian: attribute of U+3C3C | edit: change a cell | Refused
+utf-16 big-endian: attribute of U+3C3C | edit: save untouched | Reads
+utf-16 big-endian: attribute of U+3C3C | reader: data table | Refused
+utf-16 big-endian: attribute of U+3C3C | reader: hyperlinks | Refused
+utf-16 big-endian: attribute of U+3C3C | reader: merged ranges | Refused
+utf-16 big-endian: attribute of U+3C3C | reader: rows | Refused
+utf-16 big-endian: attribute of U+3C3C | reader: rows, async | Refused
+utf-16 big-endian: attribute of U+3C3C | template: fill rows | Refused
+utf-16 big-endian: attribute of U+3C3C | template: read a style | Refused
+utf-16: attribute of U+3C3C | edit: change a cell | Refused
+utf-16: attribute of U+3C3C | edit: save untouched | Reads
+utf-16: attribute of U+3C3C | reader: data table | Refused
+utf-16: attribute of U+3C3C | reader: hyperlinks | Refused
+utf-16: attribute of U+3C3C | reader: merged ranges | Refused
+utf-16: attribute of U+3C3C | reader: rows | Refused
+utf-16: attribute of U+3C3C | reader: rows, async | Refused
+utf-16: attribute of U+3C3C | template: fill rows | Refused
+utf-16: attribute of U+3C3C | template: read a style | Refused
+utf-16: cell text of U+3C3C | edit: change a cell | Refused
+utf-16: cell text of U+3C3C | edit: save untouched | Reads
+utf-16: cell text of U+3C3C | reader: data table | Refused
+utf-16: cell text of U+3C3C | reader: hyperlinks | Refused
+utf-16: cell text of U+3C3C | reader: merged ranges | Refused
+utf-16: cell text of U+3C3C | reader: rows | Refused
+utf-16: cell text of U+3C3C | reader: rows, async | Refused
+utf-16: cell text of U+3C3C | template: fill rows | Refused
+utf-16: cell text of U+3C3C | template: read a style | Refused

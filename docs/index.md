@@ -28,9 +28,11 @@ chart.AddSeries(values: "C2:C13", categories: "A2:A13", name: "=C1");
 package.Save();
 ```
 
+`Save()` is what writes the file. Disposing a package without it writes nothing: `Dispose` also runs when your code throws half-way through, and a file that opens but holds half the rows is worse than no file. `ExcelPackage.Create(path)` builds the workbook in a temporary file beside the target and puts it in place only when `Save()` succeeds, so a failed export never destroys the report that was there before. If you forget the call, the analyzer that ships in the package says so at build time ([SS0004](analyzers.md#ss0004)).
+
 ## Formulas and cached results
 
-`row.WriteFormula("SUM(C2:C101)")` writes the formula and asks Excel to calculate on open. Viewers that do not calculate (file previews, Quick Look, many mobile and web viewers, `ExcelReader`) show such a cell blank unless the file also carries the result. Turn on `sheet.CacheFormulaResults()` before the first row and SheetStream computes the result itself when the formula is simple enough: numbers, references to cells already written on the same sheet, ranges, `+ - * /`, `%`, parentheses and `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS`. Anything else (other functions, other sheets, rows not yet written, a division by zero) is written exactly as before, without a value; a wrong value is never written. The sheet keeps about 8 bytes per numeric cell to do this, which is why it is opt-in. When you already know the result, `WriteFormula(formula, cachedValue)` stores it directly.
+`row.WriteFormula("SUM(C2:C101)")` writes the formula and asks Excel to calculate on open. Viewers that do not calculate (file previews, Quick Look, many mobile and web viewers, `ExcelReader`) show such a cell blank unless the file also carries the result. Turn on `sheet.CacheFormulaResults()` before the first row and SheetStream computes the result itself when the formula is simple enough: numbers, references to cells already written on the same sheet, ranges, `+ - * /`, `%`, parentheses and `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS`. Anything else (other functions, other sheets, rows not yet written, a division by zero, a formula nested more than 64 levels deep) is written exactly as before, without a value; a wrong value is never written. The sheet keeps about 8 bytes per numeric cell to do this, which is why it is opt-in. When you already know the result, `WriteFormula(formula, cachedValue)` stores it directly.
 
 ## Large exports
 
@@ -39,6 +41,7 @@ Nothing needs switching on: rows are written as you produce them, so memory does
 ## Where to go next
 
 - [Migrating from EPPlus](migrating-from-epplus.md): a real exporter converted line by line.
+- [Migrating from ClosedXML](migrating-from-closedxml.md): the same export in both libraries, and what each is better at.
 - [Reading workbooks](reading-workbooks.md): rows, objects and DataTables, and the limits that make uploaded files safe to read.
 - [Filling templates](templates.md): design in Excel, fill from code.
 - [Editing existing workbooks](editing-workbooks.md): open a small workbook, change cells, save.

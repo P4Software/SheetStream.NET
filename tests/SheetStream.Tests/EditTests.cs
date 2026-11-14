@@ -290,8 +290,13 @@ public class EditTests
             var original = BuildWorkbook();
             File.WriteAllBytes(input, original);
             using (var package = ExcelPackage.Edit(input, output))
+            {
                 package.Workbook.Worksheets.Edit("Data").Cells["A1"].Value = "Copy";
+                Assert.False(File.Exists(output), "The copy appears when Save completes, not before.");
+                package.Save();
+            }
             Assert.Equal(original, File.ReadAllBytes(input));
+            Assert.Single(Directory.GetFiles(dir, "out.xlsx*")); // No temporary file left beside it.
             using var reader = ExcelReader.Open(output);
             Assert.Equal("Copy", reader.ReadRows("Data").First()[0]);
             Assert.Throws<FileNotFoundException>(() => ExcelPackage.Edit(Path.Combine(dir, "missing.xlsx")));
@@ -313,15 +318,37 @@ public class EditTests
         });
         using var output = new MemoryStream();
         using var package = ExcelPackage.Edit(new MemoryStream(big), output, leaveOpen: true, new PackageOptions { MaxEditableCells = 199 });
-        var ex = Assert.Throws<InvalidOperationException>(() => package.Workbook.Worksheets.Edit("Big"));
+        var ex = Assert.Throws<InvalidDataException>(() => package.Workbook.Worksheets.Edit("Big"));
         Assert.Contains("small workbooks", ex.Message);
         Assert.Contains("MaxEditableCells", ex.Message);
-        // The refusal left the package usable: the small sheet can still be edited and the big one copied.
+        // The refusal left the package usable: the small sheet can still be edited and the big one is copied
+        // whole. One cell over the limit is the case that matters: the sheet must be refused by the count
+        // made before anything is loaded, not half-way through loading it.
         package.Workbook.Worksheets.Edit("Small").Cells["A1"].Value = "edited";
         package.Save();
         using var reader = ExcelReader.Open(new MemoryStream(output.ToArray()));
-        Assert.Equal(50, reader.ReadRows("Big").Count());
+        var bigRows = reader.ReadRows("Big").ToList();
+        Assert.Equal(50, bigRows.Count);
+        Assert.All(bigRows, row => Assert.Equal(4, row.Values.Count));
+        Assert.Equal(200, bigRows.Sum(row => row.Values.Count(v => v != null)));
         Assert.Equal("edited", reader.ReadRows("Small").First()[0]);
+    }
+
+    [Theory]
+    [InlineData(200, true)]    // Exactly at the limit: editable.
+    [InlineData(199, false)]   // One cell over.
+    [InlineData(100, false)]   // Twice the limit, which an earlier count that skipped every other cell let through.
+    [InlineData(101, false)]
+    public void Edit_CountsEveryCellAgainstTheLimit(int limit, bool editable)
+    {
+        var workbook = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("Big");
+            for (var r = 1; r <= 50; r++) s.Row().WriteCell(r).WriteCell("text " + r).WriteInlineString("inline").WriteFormula("A1*2", 2.0); // 200 cells of four kinds
+        });
+        using var package = ExcelPackage.Edit(new MemoryStream(workbook), new MemoryStream(), leaveOpen: true, new PackageOptions { MaxEditableCells = limit });
+        if (editable) Assert.Equal(1.0, package.Workbook.Worksheets.Edit("Big").Cells["A1"].Value);
+        else Assert.Throws<InvalidDataException>(() => package.Workbook.Worksheets.Edit("Big"));
     }
 
     /// <summary>Rewrites one sheet part of a workbook, for files SheetStream itself does not produce.</summary>

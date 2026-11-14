@@ -1,0 +1,4 @@
+# The test corpus is compared byte for byte and line by line; keep git from rewriting it.
+*.xlsx binary
+tests/corpus/** -text
+tests/SheetStream.Tests/HostileWorkbookOutcomes.txt text eol=lf

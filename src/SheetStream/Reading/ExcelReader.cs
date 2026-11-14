@@ -61,7 +61,7 @@ namespace SheetStream.Reading
             {
                 null => null,
                 string s => s,
-                double d => d.ToString("R", CultureInfo.InvariantCulture),
+                double d => XmlTextUtil.ShortestRoundTrip(d),
                 DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
                 _ => v.ToString(),
@@ -85,7 +85,9 @@ namespace SheetStream.Reading
         {
             null => null,
             DateTime dt => dt,
-            double d => ExcelDate.FromSerial(d),
+            // FromOADate throws ArgumentException outside this range; a number that is not a date is a
+            // conversion failure like any other, and is reported the same way.
+            double d when d >= -657434 && d < 2958466 => ExcelDate.FromSerial(d),
             string s when DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var p) => p,
             var other => throw new FormatException($"Row {Index}, column {CellReference.ColumnLetters(column + 1)}: '{other}' is not a date."),
         };
@@ -126,20 +128,35 @@ namespace SheetStream.Reading
         /// <summary>Most merged ranges or hyperlinks returned for one sheet; a list beyond this is not a genuine workbook.</summary>
         internal const int MaxSheetAnnotations = 1_000_000;
 
+        // Everything this reader keeps for its whole life (shared strings, style kinds, sheet list) is charged here.
+        private readonly MemoryBudget _budget;
+
         private ExcelReader(Stream stream, bool leaveOpen, ReaderOptions? options)
         {
             _stream = stream;
             _leaveOpen = leaveOpen;
             _options = options ?? ReaderOptions.Default;
+            _budget = new MemoryBudget(_options.MaxLoadedPartBytes);
             try
             {
-                _zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+                _zip = ZipDirectory.Open(stream);
             }
             catch (InvalidDataException ex)
             {
+                if (!leaveOpen) stream.Dispose();
                 throw new InvalidDataException("The file is not an .xlsx workbook (it is not a valid zip package). Old .xls files are not supported; save them as .xlsx first.", ex);
             }
-            LoadWorkbook();
+            try
+            {
+                LoadWorkbook();
+            }
+            catch
+            {
+                // The caller never gets a reader to dispose, so what the constructor took over is released here.
+                _zip.Dispose();
+                if (!leaveOpen) stream.Dispose();
+                throw;
+            }
         }
 
         /// <summary>Opens a workbook file for reading. The file is shared for reading so Excel can keep it open.</summary>
@@ -149,8 +166,7 @@ namespace SheetStream.Reading
         public static ExcelReader Open(string path, ReaderOptions? options)
         {
             var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16);
-            try { return new ExcelReader(fs, false, options); }
-            catch { fs.Dispose(); throw; }
+            return new ExcelReader(fs, false, options); // The constructor disposes the stream if it fails.
         }
 
         /// <summary>
@@ -165,17 +181,17 @@ namespace SheetStream.Reading
         {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             if (stream.CanSeek) return new ExcelReader(stream, leaveOpen, options);
-            var copy = Buffer(stream, InMemoryBufferLimit);
+            Stream copy;
             try
             {
-                if (!leaveOpen) stream.Dispose();
-                return new ExcelReader(copy, false, options);
+                copy = Buffer(stream, InMemoryBufferLimit);
             }
-            catch
+            finally
             {
-                copy.Dispose(); // Also deletes a spilled temp file.
-                throw;
+                // Released whether the copy worked or the source failed half-way: either way it is used up.
+                if (!leaveOpen) stream.Dispose();
             }
+            return new ExcelReader(copy, false, options); // On failure the constructor disposes the copy, which also deletes a spilled temp file.
         }
 
         /// <summary>
@@ -258,45 +274,137 @@ namespace SheetStream.Reading
         /// supplies column names (duplicates get a numeric suffix); otherwise columns are named A, B, C...
         /// Column types are object so mixed columns survive.
         /// </summary>
+        /// <remarks>
+        /// The table holds every row, so unlike <see cref="ReadRows(string)"/> its memory grows with the sheet.
+        /// What it holds is counted against <see cref="ReaderOptions.MaxLoadedPartBytes"/> and a sheet that
+        /// would take more is refused with an <see cref="InvalidDataException"/>: a table is rows times
+        /// columns, so a few thousand rows that each have one cell in the last column would otherwise cost
+        /// gigabytes. For a sheet too large for that, read it with <see cref="ReadRows(string)"/>.
+        /// </remarks>
         public DataTable ReadDataTable(string sheetName, bool firstRowIsHeader = true)
         {
             var table = new DataTable(sheetName);
+            var names = new ColumnNames(SharedStringIdentities());
+            var held = new MemoryBudget(_options.MaxLoadedPartBytes, $"A DataTable of sheet '{sheetName}'");
             var first = true;
             foreach (var row in ReadRows(sheetName))
             {
                 if (first && firstRowIsHeader)
                 {
                     first = false;
-                    AddHeaderColumns(table, row);
+                    AddHeaderColumns(table, row, names, held);
                     continue;
                 }
                 first = false;
-                AddDataRow(table, row);
+                AddDataRow(table, row, names, held);
             }
             return table;
         }
 
-        /// <summary>Turns the header row into table columns: blank headers get the column letter, duplicates a numeric suffix.</summary>
-        private static void AddHeaderColumns(DataTable table, ExcelRow row)
+        private HashSet<string>? _sharedIdentities;
+
+        /// <summary>
+        /// The shared string objects as a set compared by reference, built on first use. It lets
+        /// <see cref="ReadDataTable(string, bool)"/> tell a cell that points at a shared string, which costs the
+        /// table nothing more, from a cell with a text of its own.
+        /// </summary>
+        private HashSet<string> SharedStringIdentities()
         {
-            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (_sharedIdentities != null) return _sharedIdentities;
+            var set = new HashSet<string>(ByReference.Instance);
+            foreach (var s in _sharedStrings) set.Add(s);
+            _budget.Charge(40L * set.Count); // The set itself lives as long as the reader.
+            return _sharedIdentities = set;
+        }
+
+        /// <summary>Compares strings by object identity. netstandard2.0 has no ReferenceEqualityComparer.</summary>
+        private sealed class ByReference : IEqualityComparer<string>
+        {
+            public static readonly ByReference Instance = new ByReference();
+            public bool Equals(string? x, string? y) => ReferenceEquals(x, y);
+            public int GetHashCode(string obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
+        }
+
+        /// <summary>Turns the header row into table columns: blank headers get the column letter, duplicates a numeric suffix.</summary>
+        private static void AddHeaderColumns(DataTable table, ExcelRow row, ColumnNames names, MemoryBudget held)
+        {
             for (var i = 0; i < row.Values.Count; i++)
             {
                 var name = row.GetString(i);
-                if (string.IsNullOrWhiteSpace(name)) name = CellReference.ColumnLetters(i + 1);
-                var unique = name!;
-                for (var n = 2; !used.Add(unique); n++) unique = name + n.ToString(CultureInfo.InvariantCulture);
-                table.Columns.Add(unique, typeof(object));
+                table.Columns.Add(names.Unique(string.IsNullOrWhiteSpace(name) ? CellReference.ColumnLetters(i + 1) : name!), typeof(object));
+            }
+            held.Charge(TableColumnCost * (long)table.Columns.Count);
+        }
+
+        /// <summary>What a column of a <see cref="DataTable"/> is charged against the memory budget, before any rows.</summary>
+        private const int TableColumnCost = 1024;
+
+        /// <summary>What a row of a <see cref="DataTable"/> costs besides its cells: the row object and the table's own records of it.</summary>
+        private const int TableRowCost = 200;
+
+        /// <summary>
+        /// What one cell of a <see cref="DataTable"/> costs, empty or not. A reference is eight bytes, and the
+        /// table stores each column in an array it doubles as it grows, so on average half as much again sits
+        /// unused. Measured, not assumed: a table of 3,000 rows by 16,384 empty cells takes about 1 GB.
+        /// </summary>
+        private const int TableSlotCost = 20;
+
+        /// <summary>
+        /// Hands out column names that are unique without regard to case. A name already taken gets the next
+        /// free number appended, remembered per name, so a header row of ten thousand identical texts costs ten
+        /// thousand lookups and not fifty million.
+        /// </summary>
+        private sealed class ColumnNames
+        {
+            private readonly HashSet<string> _used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, int> _next = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<string> _shared;
+
+            /// <param name="shared">The reader's shared strings, by identity: the same objects the cells hand out.</param>
+            public ColumnNames(HashSet<string> shared)
+            {
+                _shared = shared;
+            }
+
+            /// <summary>True when <paramref name="text"/> is one of the reader's shared string objects, not a copy with the same characters.</summary>
+            public bool IsShared(string text) => _shared.Contains(text);
+
+            public string Unique(string name)
+            {
+                if (_used.Add(name)) return name;
+                _next.TryGetValue(name, out var n);
+                if (n < 2) n = 2;
+                string candidate;
+                do candidate = name + n++.ToString(CultureInfo.InvariantCulture);
+                while (!_used.Add(candidate));
+                _next[name] = n;
+                return candidate;
             }
         }
 
         /// <summary>Appends a sheet row to the table, growing the column list when a row is wider than the header.</summary>
-        private static void AddDataRow(DataTable table, ExcelRow row)
+        private static void AddDataRow(DataTable table, ExcelRow row, ColumnNames names, MemoryBudget held)
         {
+            var before = table.Columns.Count;
+            // A column added here takes its letter as its name, which a header may already have used as a text.
             while (table.Columns.Count < row.Values.Count)
-                table.Columns.Add(CellReference.ColumnLetters(table.Columns.Count + 1), typeof(object));
+                table.Columns.Add(names.Unique(CellReference.ColumnLetters(table.Columns.Count + 1)), typeof(object));
+            if (table.Columns.Count > before)
+                held.Charge((table.Columns.Count - before) * (TableColumnCost + (long)TableSlotCost * table.Rows.Count)); // A new column has a slot for every row already there.
+
             var values = new object[table.Columns.Count];
-            for (var i = 0; i < values.Length; i++) values[i] = row[i] ?? DBNull.Value;
+            long text = 0;
+            for (var i = 0; i < values.Length; i++)
+            {
+                var value = row[i];
+                values[i] = value ?? DBNull.Value;
+                // A text that came from the shared string table is one string however many cells show it,
+                // and the reader has already paid for it. Charging it per cell refused ordinary sheets whose
+                // text columns repeat a few values.
+                if (value is string s) { if (!names.IsShared(s)) text += 2L * s.Length + 32; }
+                else if (value != null) text += 24; // A boxed number, date or boolean.
+            }
+            held.Charge((long)TableSlotCost * values.Length + TableRowCost + text);
             table.Rows.Add(values);
         }
 
@@ -366,14 +474,14 @@ namespace SheetStream.Reading
         private void LoadWorkbook()
         {
             var workbookPart = "xl/workbook.xml";
-            foreach (var rel in ReadRelationships("_rels/.rels"))
+            foreach (var rel in ReadRelationships("_rels/.rels", _budget))
                 if (rel.Type.EndsWith("/officeDocument", StringComparison.Ordinal)) workbookPart = Resolve("", rel.Target);
 
             var folder = workbookPart.Contains("/") ? workbookPart.Substring(0, workbookPart.LastIndexOf('/') + 1) : "";
             var relsPart = folder + "_rels/" + workbookPart.Substring(folder.Length) + ".rels";
             var targets = new Dictionary<string, string>(StringComparer.Ordinal);
             string? sharedStringsPart = null, stylesPart = null;
-            foreach (var rel in ReadRelationships(relsPart))
+            foreach (var rel in ReadRelationships(relsPart, _budget))
             {
                 var target = Resolve(folder, rel.Target);
                 targets[rel.Id] = target;
@@ -386,18 +494,25 @@ namespace SheetStream.Reading
                 while (Advance(xr))
                 {
                     if (xr.NodeType != XmlNodeType.Element) continue;
-                    if (xr.LocalName == "workbookPr")
+                    // Only the workbook's own workbookPr, a direct child in the main namespace. Excel also writes
+                    // an x15:workbookPr inside an extension list further down, which has no date1904 attribute;
+                    // matching on the local name alone let that one switch the 1904 date system back off.
+                    if (xr.LocalName == "workbookPr" && xr.Depth == 1 && xr.NamespaceURI == OpenXmlNamespaces.Main)
                     {
                         var d = xr.GetAttribute("date1904");
                         _date1904 = d == "1" || string.Equals(d, "true", StringComparison.OrdinalIgnoreCase);
                     }
-                    else if (xr.LocalName == "sheet")
+                    else if (xr.LocalName == "sheet" && xr.NamespaceURI == OpenXmlNamespaces.Main)
                     {
                         var name = xr.GetAttribute("name") ?? "";
                         var rid = xr.GetAttribute("id", OpenXmlNamespaces.Relationships) ?? "";
                         var state = xr.GetAttribute("state");
                         var vis = state == "hidden" ? SheetVisibility.Hidden : state == "veryHidden" ? SheetVisibility.VeryHidden : SheetVisibility.Visible;
-                        if (targets.TryGetValue(rid, out var part)) _sheets.Add((name, part, vis));
+                        if (targets.TryGetValue(rid, out var part))
+                        {
+                            _budget.Charge(2L * (name.Length + part.Length) + 64);
+                            _sheets.Add((name, part, vis));
+                        }
                     }
                 }
             }
@@ -411,14 +526,17 @@ namespace SheetStream.Reading
             using (var xr = OpenXml(part))
             {
                 if (xr == null) return;
-                // The table as a whole is bounded by MaxLoadedPartBytes; each item by the cell text limit.
+                // Each item is bounded by the cell text limit, and the table as a whole twice over: by its
+                // unpacked size, and by what its strings take in memory, which is charged as they are added.
                 var text = new TextState(_options.MaxCellTextLength, long.MaxValue);
                 while (!xr.EOF)
                 {
-                    if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "si") { Advance(xr); continue; }
+                    // Depth 1: the table's own items, which are what cell indexes count.
+                    if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "si" || xr.Depth != 1) { Advance(xr); continue; }
                     text.BeginCell();
-                    if (xr.IsEmptyElement) _sharedStrings.Add("");
-                    else _sharedStrings.Add(ReadRichText(xr, text)); // Leaves the reader on </si>.
+                    var item = xr.IsEmptyElement ? "" : ReadRichText(xr, text); // Leaves the reader on </si>.
+                    _budget.ChargeText(item);
+                    _sharedStrings.Add(item);
                     Advance(xr);
                 }
             }
@@ -432,6 +550,7 @@ namespace SheetStream.Reading
         private void LoadStyles(string part)
         {
             var custom = new Dictionary<int, string>();
+            var kinds = new Dictionary<int, CellKind>();
             using (var xr = OpenXml(part))
             {
                 if (xr == null) return;
@@ -441,12 +560,18 @@ namespace SheetStream.Reading
                     if (xr.NodeType == XmlNodeType.Element)
                     {
                         if (xr.LocalName == "numFmt" && int.TryParse(xr.GetAttribute("numFmtId"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
-                            custom[id] = xr.GetAttribute("formatCode") ?? "";
+                        {
+                            var code = xr.GetAttribute("formatCode") ?? "";
+                            _budget.ChargeText(code);
+                            _budget.Charge(32); // The dictionary entry.
+                            custom[id] = code;
+                        }
                         else if (xr.LocalName == "cellXfs") inCellXfs = !xr.IsEmptyElement;
                         else if (inCellXfs && xr.LocalName == "xf")
                         {
                             int.TryParse(xr.GetAttribute("numFmtId"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var fmt);
-                            _styleKinds.Add(Classify(fmt, custom));
+                            _budget.Charge(8); // One kind, with room for the list's spare capacity.
+                            _styleKinds.Add(Classify(fmt, custom, kinds));
                         }
                     }
                     else if (xr.NodeType == XmlNodeType.EndElement && xr.LocalName == "cellXfs")
@@ -455,6 +580,17 @@ namespace SheetStream.Reading
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// <see cref="Classify(int, Dictionary{int, string})"/> with the answer remembered per format id.
+        /// Inspecting a format code costs time in proportion to its length, and a workbook can point thousands
+        /// of cell formats, or every cell of an edited sheet, at one very long code.
+        /// </summary>
+        internal static CellKind Classify(int id, Dictionary<int, string> custom, Dictionary<int, CellKind> known)
+        {
+            if (!known.TryGetValue(id, out var kind)) known[id] = kind = Classify(id, custom);
+            return kind;
         }
 
         internal static CellKind Classify(int id, Dictionary<int, string> custom)
@@ -490,31 +626,28 @@ namespace SheetStream.Reading
             return CellKind.Number;
         }
 
-        private IEnumerable<(string Id, string Type, string Target)> ReadRelationships(string part)
+        /// <summary>Reads a relationships part into a list, charging what the list holds to <paramref name="budget"/>.</summary>
+        private IEnumerable<(string Id, string Type, string Target)> ReadRelationships(string part, MemoryBudget budget)
         {
             var list = new List<(string, string, string)>();
             using (var xr = OpenXml(part))
             {
                 if (xr == null) return list;
                 while (Advance(xr))
-                    if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "Relationship")
-                        list.Add((xr.GetAttribute("Id") ?? "", xr.GetAttribute("Type") ?? "", xr.GetAttribute("Target") ?? ""));
+                {
+                    if (xr.NodeType != XmlNodeType.Element || xr.LocalName != "Relationship") continue;
+                    var id = xr.GetAttribute("Id") ?? "";
+                    var type = xr.GetAttribute("Type") ?? "";
+                    var target = xr.GetAttribute("Target") ?? "";
+                    budget.Charge(2L * (id.Length + type.Length + target.Length) + 128);
+                    list.Add((id, type, target));
+                }
             }
             return list;
         }
 
         /// <summary>Resolves a relationship target against the source part's folder ("worksheets/sheet1.xml", "/xl/x.xml", "../x.xml").</summary>
-        private static string Resolve(string folder, string target)
-        {
-            if (target.StartsWith("/", StringComparison.Ordinal)) return target.Substring(1);
-            var parts = new List<string>((folder + target).Split('/'));
-            for (var i = 0; i < parts.Count; i++)
-            {
-                if (parts[i] == "..") { parts.RemoveAt(i); if (i > 0) { parts.RemoveAt(i - 1); i--; } i--; }
-                else if (parts[i] == "." || parts[i].Length == 0) { parts.RemoveAt(i); i--; }
-            }
-            return string.Join("/", parts);
-        }
+        private static string Resolve(string folder, string target) => TemplateSource.Resolve(folder, target);
 
         /// <summary>
         /// Opens a part that is loaded into memory as a whole (workbook, relationships, shared strings,
@@ -524,15 +657,16 @@ namespace SheetStream.Reading
         {
             var entry = _zip.GetEntry(part);
             if (entry == null) return null;
-            return XmlReader.Create(Guard(entry, _options.MaxLoadedPartBytes), SheetSettings(async: false));
+            return XmlReader.Create(Guard(entry, held: true), SheetSettings(async: false));
         }
 
         /// <summary>
-        /// Wraps the unpacked bytes of a part in the limits of <see cref="GuardedPartStream"/>.
-        /// <paramref name="maxBytes"/> is <see cref="long.MaxValue"/> for sheets, which are streamed and may be any size.
+        /// Decodes the unpacked bytes of a part under the limits of <see cref="GuardedPartReader"/>. A part
+        /// that is <paramref name="held"/> in memory is capped by <see cref="ReaderOptions.MaxLoadedPartBytes"/>;
+        /// a sheet, which is streamed, by <see cref="ReaderOptions.MaxStreamedPartBytes"/>.
         /// </summary>
-        private Stream Guard(ZipArchiveEntry entry, long maxBytes)
-            => new GuardedPartStream(entry.Open(), entry.FullName, maxBytes, _options.MaxTokenBytes);
+        private TextReader Guard(ZipArchiveEntry entry, bool held)
+            => new GuardedPartReader(entry.Open(), entry.FullName, held ? _options.MaxLoadedPartBytes : _options.MaxStreamedPartBytes, held, _options.MaxTokenChars, _options.MaxTagChars);
 
         // ------------------------------------------------------------------ rows and cells
 
@@ -551,6 +685,8 @@ namespace SheetStream.Reading
                 // also means the parser skips their content instead of buffering it.
                 IgnoreComments = true,
                 IgnoreProcessingInstructions = true,
+                // Bounds the one thing the parser keeps for the whole part: its table of names.
+                NameTable = new BoundedNameTable(),
                 Async = async,
             };
 
@@ -670,7 +806,7 @@ namespace SheetStream.Reading
 
         private IEnumerable<ExcelRow> ReadRowsCore(ZipArchiveEntry entry)
         {
-            using (var xr = XmlReader.Create(Guard(entry, long.MaxValue), SheetSettings(async: false)))
+            using (var xr = XmlReader.Create(Guard(entry, held: false), SheetSettings(async: false)))
             {
                 var lastRow = 0;
                 var values = new List<object?>();
@@ -694,7 +830,7 @@ namespace SheetStream.Reading
                             if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "c")
                             {
                                 var reference = xr.GetAttribute("r");
-                                var column = reference != null ? ColumnOf(reference) : nextColumn;
+                                var column = reference != null ? ColumnOf(reference) : ImpliedColumn(nextColumn);
                                 nextColumn = column + 1;
                                 var value = ReadCell(xr, text); // Leaves the reader on </c> or on an empty <c/>.
                                 Advance(xr);
@@ -710,8 +846,19 @@ namespace SheetStream.Reading
         }
 
         /// <summary>
+        /// Column of a cell that carries no reference: the one after the previous cell. A row made of millions
+        /// of such cells would otherwise grow without limit, so the same last column applies as for a reference.
+        /// </summary>
+        internal static int ImpliedColumn(int nextColumn)
+        {
+            if (nextColumn > CellReference.MaxColumns)
+                throw new InvalidDataException("A row has more than 16,384 cells, which is past Excel's last column (XFD). The file is damaged or not a genuine workbook.");
+            return nextColumn;
+        }
+
+        /// <summary>
         /// Stores a cell value at its 1-based column in the row buffer, padding skipped columns with null.
-        /// ColumnOf caps the index at 16384, so the padding is bounded even for hostile files.
+        /// ColumnOf and ImpliedColumn cap the index at 16384, so the padding is bounded even for hostile files.
         /// </summary>
         private static void PlaceCell(List<object?> values, int column, object value)
         {
@@ -933,7 +1080,7 @@ namespace SheetStream.Reading
         {
             var type = Nullable.GetUnderlyingType(target) ?? target;
             if (type.IsInstanceOfType(value)) return value;
-            if (type == typeof(string)) return value is double d ? d.ToString("R", CultureInfo.InvariantCulture) : value is IFormattable f ? f.ToString(null, CultureInfo.InvariantCulture) : value.ToString();
+            if (type == typeof(string)) return value is double d ? XmlTextUtil.ShortestRoundTrip(d) : value is IFormattable f ? f.ToString(null, CultureInfo.InvariantCulture) : value.ToString();
             if (value is string s && s.Trim().Length == 0) return null;
             if (type == typeof(DateTime))
                 return value switch

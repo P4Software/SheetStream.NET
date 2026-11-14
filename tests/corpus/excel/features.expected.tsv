@@ -1,0 +1,224 @@
+Data	meta		visible
+Data	s	A1	Region
+Data	s	B1	Product
+Data	s	C1	Units
+Data	s	D1	Price
+Data	s	E1	When
+Data	s	A2	East
+Data	s	B2	Product 2
+Data	n	C2	6
+Data	n	D2	11.99
+Data	d	E2	2025-12-11 00:00:00.000
+Data	s	A3	West
+Data	s	B3	Product 3
+Data	n	C3	9
+Data	n	D3	12.99
+Data	d	E3	2025-12-12 00:00:00.000
+Data	s	A4	North
+Data	s	B4	Product 4
+Data	n	C4	12
+Data	n	D4	13.99
+Data	d	E4	2025-12-13 00:00:00.000
+Data	s	A5	South
+Data	s	B5	Product 5
+Data	n	C5	15
+Data	n	D5	14.99
+Data	d	E5	2025-12-14 00:00:00.000
+Data	s	A6	East
+Data	s	B6	Product 6
+Data	n	C6	18
+Data	n	D6	15.99
+Data	d	E6	2025-12-15 00:00:00.000
+Data	s	A7	West
+Data	s	B7	Product 0
+Data	n	C7	21
+Data	n	D7	16.990000000000002
+Data	d	E7	2025-12-16 00:00:00.000
+Data	s	A8	North
+Data	s	B8	Product 1
+Data	n	C8	24
+Data	n	D8	17.990000000000002
+Data	d	E8	2025-12-17 00:00:00.000
+Data	s	A9	South
+Data	s	B9	Product 2
+Data	n	C9	27
+Data	n	D9	18.990000000000002
+Data	d	E9	2025-12-18 00:00:00.000
+Data	s	A10	East
+Data	s	B10	Product 3
+Data	n	C10	30
+Data	n	D10	19.990000000000002
+Data	d	E10	2025-12-19 00:00:00.000
+Data	s	A11	West
+Data	s	B11	Product 4
+Data	n	C11	33
+Data	n	D11	20.990000000000002
+Data	d	E11	2025-12-20 00:00:00.000
+Data	s	A12	North
+Data	s	B12	Product 5
+Data	n	C12	36
+Data	n	D12	21.990000000000002
+Data	d	E12	2025-12-21 00:00:00.000
+Data	s	A13	South
+Data	s	B13	Product 6
+Data	n	C13	39
+Data	n	D13	22.990000000000002
+Data	d	E13	2025-12-22 00:00:00.000
+Data	s	A14	East
+Data	s	B14	Product 0
+Data	n	C14	42
+Data	n	D14	23.990000000000002
+Data	d	E14	2025-12-23 00:00:00.000
+Data	s	A15	West
+Data	s	B15	Product 1
+Data	n	C15	45
+Data	n	D15	24.990000000000002
+Data	d	E15	2025-12-24 00:00:00.000
+Data	s	A16	North
+Data	s	B16	Product 2
+Data	n	C16	48
+Data	n	D16	25.990000000000002
+Data	d	E16	2025-12-25 00:00:00.000
+Data	s	A17	South
+Data	s	B17	Product 3
+Data	n	C17	51
+Data	n	D17	26.990000000000002
+Data	d	E17	2025-12-26 00:00:00.000
+Data	s	A18	East
+Data	s	B18	Product 4
+Data	n	C18	54
+Data	n	D18	27.990000000000002
+Data	d	E18	2025-12-27 00:00:00.000
+Data	s	A19	West
+Data	s	B19	Product 5
+Data	n	C19	57
+Data	n	D19	28.990000000000002
+Data	d	E19	2025-12-28 00:00:00.000
+Data	s	A20	North
+Data	s	B20	Product 6
+Data	n	C20	60
+Data	n	D20	29.990000000000002
+Data	d	E20	2025-12-29 00:00:00.000
+Data	s	A21	South
+Data	s	B21	Product 0
+Data	n	C21	63
+Data	n	D21	30.990000000000002
+Data	d	E21	2025-12-30 00:00:00.000
+Data	s	A22	East
+Data	s	B22	Product 1
+Data	n	C22	66
+Data	n	D22	31.990000000000002
+Data	d	E22	2025-12-31 00:00:00.000
+Data	s	A23	West
+Data	s	B23	Product 2
+Data	n	C23	69
+Data	n	D23	32.99
+Data	d	E23	2026-01-01 00:00:00.000
+Data	s	A24	North
+Data	s	B24	Product 3
+Data	n	C24	72
+Data	n	D24	33.99
+Data	d	E24	2026-01-02 00:00:00.000
+Data	s	A25	South
+Data	s	B25	Product 4
+Data	n	C25	75
+Data	n	D25	34.99
+Data	d	E25	2026-01-03 00:00:00.000
+Data	s	A26	East
+Data	s	B26	Product 5
+Data	n	C26	78
+Data	n	D26	35.99
+Data	d	E26	2026-01-04 00:00:00.000
+Data	s	A27	West
+Data	s	B27	Product 6
+Data	n	C27	81
+Data	n	D27	36.99
+Data	d	E27	2026-01-05 00:00:00.000
+Data	s	A28	North
+Data	s	B28	Product 0
+Data	n	C28	84
+Data	n	D28	37.99
+Data	d	E28	2026-01-06 00:00:00.000
+Data	s	A29	South
+Data	s	B29	Product 1
+Data	n	C29	87
+Data	n	D29	38.99
+Data	d	E29	2026-01-07 00:00:00.000
+Data	s	A30	East
+Data	s	B30	Product 2
+Data	n	C30	90
+Data	n	D30	39.99
+Data	d	E30	2026-01-08 00:00:00.000
+Data	s	A31	West
+Data	s	B31	Product 3
+Data	n	C31	93
+Data	n	D31	40.99
+Data	d	E31	2026-01-09 00:00:00.000
+Data	s	A32	North
+Data	s	B32	Product 4
+Data	n	C32	96
+Data	n	D32	41.99
+Data	d	E32	2026-01-10 00:00:00.000
+Data	s	A33	South
+Data	s	B33	Product 5
+Data	n	C33	99
+Data	n	D33	42.99
+Data	d	E33	2026-01-11 00:00:00.000
+Data	s	A34	East
+Data	s	B34	Product 6
+Data	n	C34	102
+Data	n	D34	43.99
+Data	d	E34	2026-01-12 00:00:00.000
+Data	s	A35	West
+Data	s	B35	Product 0
+Data	n	C35	105
+Data	n	D35	44.99
+Data	d	E35	2026-01-13 00:00:00.000
+Data	s	A36	North
+Data	s	B36	Product 1
+Data	n	C36	108
+Data	n	D36	45.99
+Data	d	E36	2026-01-14 00:00:00.000
+Data	s	A37	South
+Data	s	B37	Product 2
+Data	n	C37	111
+Data	n	D37	46.99
+Data	d	E37	2026-01-15 00:00:00.000
+Data	s	A38	East
+Data	s	B38	Product 3
+Data	n	C38	114
+Data	n	D38	47.99
+Data	d	E38	2026-01-16 00:00:00.000
+Data	s	A39	West
+Data	s	B39	Product 4
+Data	n	C39	117
+Data	n	D39	48.99
+Data	d	E39	2026-01-17 00:00:00.000
+Data	s	A40	North
+Data	s	B40	Product 5
+Data	n	C40	120
+Data	n	D40	49.99
+Data	d	E40	2026-01-18 00:00:00.000
+Data	s	A41	South
+Data	s	B41	Product 6
+Data	n	C41	123
+Data	n	D41	50.99
+Data	d	E41	2026-01-19 00:00:00.000
+Data	s	A42	Total
+Data	n	C42	2580
+Data	n	E42	40
+Pivot	meta		visible
+Pivot	s	A3	Row Labels
+Pivot	s	B3	Sum of Units
+Pivot	s	A4	East
+Pivot	n	B4	600
+Pivot	s	A5	North
+Pivot	n	B5	660
+Pivot	s	A6	South
+Pivot	n	B6	690
+Pivot	s	A7	West
+Pivot	n	B7	630
+Pivot	s	A8	Grand Total
+Pivot	n	B8	2580
+Chart	meta		visible
+Chart	s	A1	chart below

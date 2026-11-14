@@ -23,8 +23,13 @@ namespace SheetStream
     /// schema places them ahead of the sheet data.
     /// </para>
     /// <para>
-    /// Disposing the package without calling <see cref="Save"/> saves it, so a plain <c>using</c> block
-    /// always produces a complete file. Not thread-safe.
+    /// Nothing is finished until <see cref="Save"/> is called. Disposing a package that was not saved writes
+    /// no workbook: <c>Dispose</c> also runs when your code throws half-way through, and a file that looks
+    /// complete but holds half the rows is worse than no file. A package that writes to a path
+    /// (<see cref="Create"/>, <c>OpenTemplate</c>, <c>Edit</c>) works in a temporary file beside the target
+    /// and puts it in place only when <see cref="Save"/> succeeds, so a failed export leaves an existing
+    /// file as it was. The analyzer that ships in this package (SS0004) points out a package that is never
+    /// saved. Not thread-safe.
     /// </para>
     /// </remarks>
     /// <example>
@@ -48,11 +53,12 @@ namespace SheetStream
         };
 
         private readonly Stream _output;
-        private readonly bool _leaveOpen;
+        private bool _leaveOpen;
         private ZipArchive? _archive;
         private XmlWriter? _openPart;
-        private bool _saved;
-        private bool _saveFailed;
+        private bool _written;   // The archive is complete. For a package that writes to a path it may still sit in its temporary file.
+        private bool _saved;     // The workbook is where the caller asked for it.
+        private bool _failed;
         private bool _disposed;
 
         // Parts beyond the fixed set (tables, drawings, charts, comments) and extension defaults (png, vml...).
@@ -78,18 +84,42 @@ namespace SheetStream
             Workbook = new Workbook(this);
         }
 
-        /// <summary>Creates a package that writes to a file, replacing any existing file at <paramref name="path"/>.</summary>
+        /// <summary>
+        /// Creates a package that writes a workbook to <paramref name="path"/>. The workbook is built in a
+        /// temporary file in the same folder and takes the place of any existing file at
+        /// <paramref name="path"/> when <see cref="Save"/> completes. Until then, and if the package is
+        /// disposed without saving, whatever was at <paramref name="path"/> is untouched.
+        /// </summary>
         public static ExcelPackage Create(string path, PackageOptions? options = null)
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path cannot be empty.", nameof(path));
-            var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
+            return ToFile(Path.GetFullPath(path), options, null);
+        }
+
+        /// <summary>
+        /// Opens a package that writes to a temporary file beside <paramref name="target"/> and moves it into
+        /// place on save. Shared by <see cref="Create"/>, <c>OpenTemplate</c> and <c>Edit</c>, so every
+        /// package that writes to a path is all-or-nothing in the same way.
+        /// </summary>
+        private static ExcelPackage ToFile(string target, PackageOptions? options, TemplateSource? template)
+        {
+            // The temporary file lives in the same folder so the final swap is a rename on the same volume. Its
+            // name is short and does not build on the target's, so a target close to the path length limit
+            // still works.
+            var temp = Path.Combine(Path.GetDirectoryName(target) ?? "", "~ss" + Guid.NewGuid().ToString("N").Substring(0, 12) + ".tmp");
+            var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16);
             try
             {
-                return new ExcelPackage(stream, leaveOpen: false, options);
+                var package = new ExcelPackage(stream, leaveOpen: false, options);
+                package._pendingTarget = target;
+                package._pendingTemp = temp;
+                if (template != null) package.Workbook.AttachTemplate(template);
+                return package;
             }
             catch
             {
                 stream.Dispose();
+                TryDelete(temp);
                 throw;
             }
         }
@@ -146,8 +176,14 @@ namespace SheetStream
         /// <summary>The options this package was created with.</summary>
         public PackageOptions Options { get; }
 
-        /// <summary>True once <see cref="Save"/> has completed.</summary>
+        /// <summary>
+        /// True once <see cref="Save"/> has completed: the workbook is written and, for a package that writes
+        /// to a path, in place at that path.
+        /// </summary>
         public bool IsSaved => _saved;
+
+        /// <summary>True once the workbook's content is final, whether or not it has reached its target yet.</summary>
+        internal bool IsWritten => _written;
 
         /// <summary>
         /// Seals the current worksheet, writes the shared strings, styles, workbook, relationship and
@@ -157,32 +193,41 @@ namespace SheetStream
         public void Save()
         {
             if (_saved) return;
-            if (_archive == null) throw new ObjectDisposedException(nameof(ExcelPackage));
-            try
+            if (_disposed) throw new ObjectDisposedException(nameof(ExcelPackage));
+            if (_failed)
+                throw new InvalidOperationException("This package cannot be saved, because an earlier step failed: the source workbook could not be read, or a previous save did not complete. The exception thrown then says why. Nothing was written to the target.");
+            if (!_written)
             {
-                SaveCore();
-                CompleteInPlaceSave();
+                try
+                {
+                    SaveCore();
+                }
+                catch
+                {
+                    // The archive is now in an unknown state; a second attempt could only write a broken file.
+                    _failed = true;
+                    throw;
+                }
             }
-            catch
-            {
-                // Remember the failure so Dispose does not retry and throw a second, misleading exception.
-                _saveFailed = true;
-                throw;
-            }
+            // Putting the finished file in place is a separate step that can fail for reasons that pass (the
+            // target is open in Excel). The workbook stays in its temporary file, so Save can be called again.
+            CompletePendingFile();
+            _saved = true;
         }
 
         /// <summary>
-        /// Marks the package as unsaveable after a failure while a part was being built (a sheet that could not
-        /// be loaded for editing), so disposing it does not write a half-finished workbook.
+        /// Marks the package as unsaveable after a failure while it was reading its source workbook (a damaged
+        /// template part, a sheet that could not be loaded for editing). The output already holds part of a
+        /// sheet at that point, so a later <see cref="Save"/> is refused instead of writing a broken workbook.
         /// </summary>
-        internal void MarkSaveFailed() => _saveFailed = true;
+        internal void MarkFailed() => _failed = true;
 
         private void SaveCore()
         {
             if (Workbook.Template != null)
             {
                 SaveTemplate(Workbook.Template);
-                _saved = true;
+                _written = true;
                 return;
             }
 
@@ -207,34 +252,42 @@ namespace SheetStream
             _archive!.Dispose(); // Writes the zip central directory.
             _archive = null;
             _output.Flush();
-            _saved = true;
+            _written = true;
         }
 
         /// <summary>
-        /// Saves the package if it has not been saved yet, then releases the output stream unless it was left open.
-        /// The one exception is an in-place edit (<see cref="Edit(string, PackageOptions?)"/>): disposing it
-        /// without calling <see cref="Save"/> discards the changes and leaves the original file as it was.
+        /// Releases the package. It does not save: a package that was not saved with <see cref="Save"/> is
+        /// abandoned, its temporary file (for a package that writes to a path) is deleted and the target is
+        /// left as it was. A package writing to a stream you supplied leaves that stream holding whatever was
+        /// written so far, which is not a complete workbook; discard it. Never throws.
         /// </summary>
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
-            try
+            if (!_written)
             {
-                // A save that already failed is not retried: its exception is the one the caller needs to see.
-                // An in-place edit is never saved from here. Dispose also runs when the caller's code threw
-                // half-way through its changes, and committing that over the user's only copy of the file
-                // cannot be undone; overwriting an existing file takes an explicit Save().
-                if (!_saved && !_saveFailed && _archive != null && _inPlaceTemp == null) Save();
+                // Abandoned. Closing the archive would write its directory and make the partial content look
+                // like a finished workbook, so it is dropped, not closed. The steps below release what holds a
+                // file or a native handle; each may fail on a half-written part and none of that matters now.
+                Quietly(() => Workbook.Worksheets.Abandon());
+                Quietly(() => _openPart?.Dispose());
+                _openPart = null;
+                _archive = null;
             }
-            finally
+            else
             {
-                _openPart?.Dispose();
                 _archive?.Dispose();
                 _archive = null;
-                if (!_leaveOpen) _output.Dispose();
-                DiscardInPlaceTemp(); // Only has something to do when an in-place save did not complete.
             }
+            if (!_leaveOpen) Quietly(() => _output.Dispose());
+            DiscardPendingFile(); // Only has something to do when the save did not complete.
+        }
+
+        private static void Quietly(Action action)
+        {
+            try { action(); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { }
         }
 
         /// <summary>

@@ -129,6 +129,120 @@ public class HardeningTests
         Assert.NotEmpty(ReadAll(bytes)); // The default limit is far above this table.
     }
 
+    [Theory]
+    [InlineData("styles.xml")]
+    [InlineData("sharedStrings.xml")]
+    [InlineData("worksheets/sheet1.xml")]
+    public void RelationshipToAMissingPart_IsReportedAsDamage_NotAsACrash(string target)
+    {
+        // Found by the fuzzer: the workbook's relationships name a part the package does not contain.
+        var rels = "xl/_rels/workbook.xml.rels";
+        using var zip = new ZipArchive(new MemoryStream(Seed()), ZipArchiveMode.Read);
+        string text;
+        using (var reader = new StreamReader(zip.GetEntry(rels)!.Open())) text = reader.ReadToEnd();
+        Assert.Contains("\"" + target + "\"", text);
+        var bytes = ReplacePart(Seed(), rels, text.Replace("\"" + target + "\"", "\"gone-" + target.Replace('/', '-') + "\""));
+
+        void Edit()
+        {
+            using var package = ExcelPackage.Edit(new MemoryStream(bytes), Stream.Null, leaveOpen: true);
+            package.Workbook.Worksheets.Edit("Data").Cells["A1"].Value = 1;
+            package.Save();
+        }
+        void Fill()
+        {
+            using var package = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true);
+            package.Workbook.Worksheets.Open("Data").Row(5).WriteCell("x");
+            package.Save();
+        }
+        foreach (var action in new Action[] { Edit, Fill })
+        {
+            var ex = Record.Exception(action);
+            Assert.True(ex is InvalidDataException, $"Expected InvalidDataException, got {ex?.GetType().Name ?? "no exception"}: {ex?.Message}");
+        }
+    }
+
+    [Fact]
+    public void StreamedPartLimit_BoundsTheWorkOneFileCanCause_ThroughEveryWayIn()
+    {
+        // Two sheets of about 3 MB of XML each, built from genuine rows: nothing about them is malformed,
+        // there is simply more of them than the application said it is willing to process.
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            foreach (var name in new[] { "Data", "Other" })
+            {
+                var s = wb.Worksheets.Add(name);
+                for (var i = 0; i < 60_000; i++) s.Row().WriteCell(i).WriteCell(i * 2).WriteCell(i * 3);
+            }
+        });
+        var strict = new ReaderOptions { MaxStreamedPartBytes = 1_000_000 };
+        var roomy = new ReaderOptions { MaxStreamedPartBytes = 50_000_000 };
+        PackageOptions Package(ReaderOptions limits) => new PackageOptions { SourceLimits = limits, MaxEditableCells = 1_000_000 };
+
+        var ways = new Dictionary<string, Action<ReaderOptions>>
+        {
+            ["read rows"] = limits => { using var r = ExcelReader.Open(new MemoryStream(bytes), false, limits); foreach (var row in r.ReadRows("Data")) _ = row.Index; },
+            ["read merged ranges"] = limits => { using var r = ExcelReader.Open(new MemoryStream(bytes), false, limits); _ = r.ReadMergedRanges("Data").Count; },
+            ["read hyperlinks"] = limits => { using var r = ExcelReader.Open(new MemoryStream(bytes), false, limits); _ = r.ReadHyperlinks("Data").Count; },
+            ["fill a template sheet"] = limits =>
+            {
+                using var p = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true, Package(limits));
+                p.Workbook.Worksheets.Open("Data").Row(70_000).WriteCell("x");
+                p.Save();
+            },
+            ["copy a template untouched"] = limits =>
+            {
+                using var p = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true, Package(limits));
+                p.Save();
+            },
+            ["read a template style"] = limits =>
+            {
+                using var p = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true, Package(limits));
+                _ = p.Workbook.Worksheets.Open("Data").TemplateStyle("C59999");
+            },
+        };
+        foreach (var way in ways)
+        {
+            var ex = Record.Exception(() => way.Value(strict));
+            Assert.True(ex is InvalidDataException, $"{way.Key}: expected InvalidDataException, got {ex?.GetType().Name ?? "no exception"}");
+            Assert.Contains("MaxStreamedPartBytes", ex!.Message);
+            Assert.Null(Record.Exception(() => way.Value(roomy)));
+        }
+
+        // The async reader goes through the same limit.
+        var asyncEx = Record.ExceptionAsync(async () =>
+        {
+            using var r = await ExcelReader.OpenAsync(new MemoryStream(bytes), false, strict);
+            await foreach (var row in r.ReadRowsAsync("Data")) _ = row.Index;
+        }).GetAwaiter().GetResult();
+        Assert.IsType<InvalidDataException>(asyncEx);
+    }
+
+    [Fact]
+    public async Task AsyncReader_RefusesTheSameHostileShapes()
+    {
+        // The async twin reads through the same guard, by a different code path in the guard and in the parser.
+        var options = new ReaderOptions { MaxCellTextLength = 1000 };
+        string[] sheets =
+        {
+            "<row r=\"1\"><![CDATA[" + new string('<', 300_000) + "]]><c r=\"A1\"><v>1</v></c></row>",
+            "<row r=\"1\"><c r=\"A1\"" + string.Concat(Enumerable.Range(0, 40_000).Select(i => " a" + i + "=\"1\"")) + "><v>1</v></c></row>",
+            "<row r=\"1\">" + string.Concat(Enumerable.Range(0, 30_000).Select(i => "<k" + i + "/>")) + "</row>",
+            "<row r=\"1\">" + string.Concat(Enumerable.Repeat("<c><v>1</v></c>", 20_000)) + "</row>",
+            "<row r=\"1\"><c r=\"A1\"><f>" + string.Concat(Enumerable.Repeat("<a>", 5000)) + string.Concat(Enumerable.Repeat("</a>", 5000)) + "</f></c></row>",
+        };
+        foreach (var sheet in sheets)
+        {
+            var bytes = WithSheet(sheet);
+            using var reader = await ExcelReader.OpenAsync(new MemoryStream(bytes), false, options);
+            await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            {
+                await foreach (var _ in reader.ReadRowsAsync(0)) { }
+            });
+            Assert.Throws<InvalidDataException>(() => ReadAll(bytes, options));
+        }
+    }
+
     [Fact]
     public void OversizedSharedString_IsRejected()
     {

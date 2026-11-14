@@ -86,7 +86,7 @@ The API reference on the docs site lists every member. These are the entry point
 
 Formula cells show blank in file previews and in `ExcelReader` unless the file stores a result. `CacheFormulaResults()` computes simple formulas (`+ - * / %`, `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `ROUND`, `ABS` over cells already written on the sheet) and writes nothing for anything else.
 
-Editing a file in place commits only on an explicit `Save()`:
+Nothing is written until `Save()`, and an existing file is replaced only when it succeeds:
 
 ```csharp
 using var package = ExcelPackage.Edit("budget.xlsx");           // or Edit(input, output)
@@ -122,7 +122,7 @@ An `.xlsx` is a zip archive, so a small upload can unpack into gigabytes. `Excel
 using var reader = ExcelReader.Open(upload, leaveOpen: false, new ReaderOptions { MaxCellTextLength = 32_767 }); // Excel's own cell limit
 ```
 
-A stream that cannot seek is copied first: up to 64 MB in memory, beyond that to a temporary file that is deleted with the reader. `OpenTemplate` and `Edit` load the whole source workbook and do not apply `ReaderOptions`; use them on files your application owns. See [SECURITY.md](SECURITY.md).
+A stream that cannot seek is copied first: up to 64 MB in memory, beyond that to a temporary file that is deleted with the reader. `OpenTemplate` and `Edit` apply the same limits to the workbook they load, through `PackageOptions.SourceLimits`. See [SECURITY.md](SECURITY.md).
 
 ## Streaming rules
 
@@ -132,7 +132,7 @@ SheetStream.NET writes while you go, which is why memory stays flat. The cost is
 2. Rows ascend. `Row(n)` must be the current row or a later one; gaps are fine.
 3. Layout first. Column widths, frozen panes, tab colour, gridlines and fit-to-page are stored before the data, so set them before the first row. `AutoFitColumns()` and `Cells[...]` defer the header and lift this rule for that sheet.
 4. A sheet uses `Row()` or `Cells[r, c]`, not both. `Cells[r, c]` gives EPPlus-style random access and buffers that one sheet in memory, so use it for small, irregular layouts.
-5. Dispose saves, except an in-place edit. Leaving a `using` block without `Save()` still finishes a file you are creating. `ExcelPackage.Edit(path)` replaces an existing file, so it commits only on an explicit `Save()`; if your code throws first, the original stays untouched.
+5. Call `Save()`. Disposing a package does not save it: `Dispose` also runs when your code throws half-way, and a file that looks complete but is not would be worse than no file. A package that writes to a path (`Create`, `OpenTemplate`, `Edit`) builds the workbook in a temporary file beside the target and puts it in place only when `Save()` succeeds, so a failed export leaves an existing file as it was. The analyzer reports a package that is never saved (SS0004).
 
 ## Benchmarks
 
@@ -164,9 +164,9 @@ EPPlus and NPOI are pinned to their last plain open-source releases. Methodology
 - You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers. Not supported. See the [gap analysis](docs/gap-analysis-epplus-8.md) for the full list against EPPlus 8.
 - You only map simple objects to and from sheets and want the smallest API. MiniExcel does that well.
 
-## Migrating from EPPlus
+## Migrating from EPPlus or ClosedXML
 
-[docs/migrating-from-epplus.md](docs/migrating-from-epplus.md) converts a real exporter line by line and has a quick-reference table.
+[docs/migrating-from-epplus.md](docs/migrating-from-epplus.md) converts a real exporter line by line and has a quick-reference table. [docs/migrating-from-closedxml.md](docs/migrating-from-closedxml.md) does the same for ClosedXML and says plainly what ClosedXML remains better at.
 
 ## Building and testing
 

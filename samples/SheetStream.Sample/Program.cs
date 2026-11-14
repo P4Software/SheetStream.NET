@@ -125,6 +125,7 @@ if (args.Length > 0 && int.TryParse(args[0], out var rows) && rows > 0)
                 }
             }
         }
+        package.Save();
     }
     sw.Stop();
     Console.WriteLine($"Stress: {rows:N0} rows x {columns:N0} cols ({(long)rows * columns:N0} cells) in {sw.Elapsed.TotalSeconds:F1}s, " +

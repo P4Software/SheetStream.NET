@@ -49,6 +49,22 @@ namespace SheetStream.Internal
         // Rows whose content came from somewhere the writer did not see (copied template rows). A bit per row.
         private ulong[] _unknownRows = new ulong[0];
 
+        /// <summary>
+        /// Most memory the store will take, in bytes: enough for about 32 million numeric cells written
+        /// densely. Past it the store gives up, see <see cref="_exhausted"/>.
+        /// </summary>
+        internal const long MaxBytes = 256L * 1024 * 1024;
+
+        private long _bytes;
+
+        // Set when the ceiling was reached. A page costs 8 KB whether it holds one value or a thousand, so
+        // cells scattered one per page (which only a sheet loaded from a file can do in bulk) cost a thousand
+        // times what dense ones do. From then on nothing more is recorded and every cell reads as unknown,
+        // which makes formulas go uncached: no value rather than a wrong one, and no more memory.
+        private bool _exhausted;
+
+        private double _discard;   // Where writes go once the store is exhausted.
+
         /// <summary>Records a numeric value (numbers, dates and durations as serials, cached formula results).</summary>
         public void SetNumber(int row, int column, double value) => Slot(row, column) = value;
 
@@ -62,7 +78,7 @@ namespace SheetStream.Internal
         public FormulaCellState Get(int row, int column, out double value)
         {
             value = 0;
-            if (IsRowUnknown(row)) return FormulaCellState.Unknown;
+            if (_exhausted || IsRowUnknown(row)) return FormulaCellState.Unknown;
             if (column >= _columns.Length) return FormulaCellState.Empty;
             var pages = _columns[column];
             var pageIndex = row >> PageShift;
@@ -99,9 +115,20 @@ namespace SheetStream.Internal
             return word < _unknownRows.Length && (_unknownRows[word] & (1UL << (row & 63))) != 0;
         }
 
+        /// <summary>Counts an allocation against <see cref="MaxBytes"/>; false, and the store is given up, when it does not fit.</summary>
+        private bool Take(long bytes)
+        {
+            _bytes += bytes;
+            if (_bytes <= MaxBytes) return true;
+            _exhausted = true;
+            _columns = new double[]?[]?[0]; // Let go of what was collected; none of it will be read again.
+            return false;
+        }
+
         /// <summary>Returns the slot for a cell, growing the column list, the column's page list and the page as needed.</summary>
         private ref double Slot(int row, int column)
         {
+            if (_exhausted) return ref _discard;
             if (column >= _columns.Length)
             {
                 var grown = new double[]?[]?[Math.Min(CellReference.MaxColumns + 1, Math.Max(column + 1, _columns.Length * 2))];
@@ -115,6 +142,7 @@ namespace SheetStream.Internal
             {
                 var oldLength = pages?.Length ?? 0;
                 var grown = new double[]?[Math.Min((CellReference.MaxRows >> PageShift) + 1, Math.Max(pageIndex + 1, Math.Max(oldLength * 2, 4)))];
+                if (!Take(8L * grown.Length)) return ref _discard;
                 if (pages != null) Array.Copy(pages, grown, oldLength);
                 _columns[column] = pages = grown;
             }
@@ -122,6 +150,7 @@ namespace SheetStream.Internal
             var page = pages[pageIndex];
             if (page == null)
             {
+                if (!Take(8L * PageSize)) return ref _discard;
                 // A fresh page is filled with the Empty sentinel because a default 0.0 would read as a legitimate number.
                 page = new double[PageSize];
                 for (var i = 0; i < page.Length; i++) page[i] = EmptyValue;

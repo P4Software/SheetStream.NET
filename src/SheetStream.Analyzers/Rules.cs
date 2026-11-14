@@ -48,5 +48,16 @@ namespace SheetStream.Analyzers
             isEnabledByDefault: true,
             description: "SheetStream writes rows straight into the file, so a row index lower than the current row cannot be written any more and throws InvalidOperationException. Write rows in ascending order, or use Cells[row, column], which buffers the sheet and sorts the cells when it is saved.",
             helpLinkUri: HelpPage + "#ss0003");
+
+        /// <summary>SS0004: a package is created in a method and never saved there, so no workbook is written.</summary>
+        public static readonly DiagnosticDescriptor PackageNeverSaved = new DiagnosticDescriptor(
+            id: "SS0004",
+            title: "Package is never saved",
+            messageFormat: "Package '{0}' is never saved, so this code writes no workbook. Call {0}.Save() once the workbook is complete; disposing a package does not save it.",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "An ExcelPackage finishes its workbook only when Save() is called. Dispose does not save, because it also runs when the code building the workbook throws half-way, and a file that looks complete but is not would be worse than no file. This rule reports a package that a method creates and never saves; it stays silent when the package is passed to other code, returned or stored, since that code may save it.",
+            helpLinkUri: HelpPage + "#ss0004");
     }
 }

@@ -26,7 +26,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Shared\HostileWorkbooks.cs" Link="HostileWorkbooks.cs" />
+    <!-- The recorded outcome of every hostile file through every entry point; see HostileWorkbookTests. -->
+    <EmbeddedResource Include="HostileWorkbookOutcomes.txt" LogicalName="HostileWorkbookOutcomes.txt" />
+    <!-- Workbooks written by Excel, with what Excel says each cell holds. Copied beside the tests because the
+         release build maps source paths, so the tests cannot find them from their own file location. -->
+    <None Include="..\corpus\excel\*" Link="corpus\excel\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
+    <!-- Built and copied next to the tests, which start it as a separate process; not linked into them. -->
+    <ProjectReference Include="..\SheetStream.MemoryProbe\SheetStream.MemoryProbe.csproj" ReferenceOutputAssembly="false" OutputItemType="None" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\..\src\SheetStream.AspNetCore\SheetStream.AspNetCore.csproj" />
   </ItemGroup>
 

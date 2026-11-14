@@ -5,6 +5,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using DocumentFormat.OpenXml.Validation;
+using SheetStream.Reading;
 using SheetStream.Styles;
 
 namespace SheetStream.Tests;
@@ -13,6 +14,11 @@ namespace SheetStream.Tests;
 /// End-to-end checks: build a workbook, validate it against the ECMA-376 schema with the Open XML SDK
 /// validator, then read it back and assert the values landed where they should.
 /// </summary>
+/// <remarks>
+/// In the "Memory" collection because the large-sheet tests measure the heap of the whole process, which
+/// only means something while no other test is allocating.
+/// </remarks>
+[Collection("Memory")]
 public class PackageValidationTests
 {
     /// <summary>Builds a workbook exercising every feature and returns its bytes.</summary>
@@ -180,17 +186,95 @@ public class PackageValidationTests
     }
 
     [Fact]
-    public void DisposeWithoutSave_StillProducesCompleteFile()
+    public void DisposeWithoutSave_WritesNoWorkbook()
     {
+        // Dispose also runs when the caller's code threw half-way, so it must not turn what was written so
+        // far into something that opens as a finished workbook.
         using var ms = new MemoryStream();
         using (var package = new ExcelPackage(ms, leaveOpen: true))
         {
-            package.Workbook.Worksheets.Add("Only").Row().WriteCell(42);
+            var sheet = package.Workbook.Worksheets.Add("Only");
+            for (var i = 0; i < 5000; i++) sheet.Row().WriteCell(i).WriteCell("row " + i);
+            Assert.False(package.IsSaved);
         }
-        ms.Position = 0;
-        using var doc = SpreadsheetDocument.Open(ms, false);
-        Assert.Empty(new OpenXmlValidator(FileFormatVersions.Office2016).Validate(doc));
-        Assert.Equal("42", doc.WorkbookPart!.WorksheetParts.Single().Worksheet.Descendants<Cell>().Single().CellValue!.Text);
+        Assert.ThrowsAny<Exception>(() => ExcelReader.Open(new MemoryStream(ms.ToArray())));
+        Assert.ThrowsAny<Exception>(() => SpreadsheetDocument.Open(new MemoryStream(ms.ToArray()), false));
+    }
+
+    [Fact]
+    public void DisposeWithoutSave_NeverThrows_WhateverStateThePackageIsIn()
+    {
+        // A sheet with a pivot table that has no fields cannot be sealed; an abandoned package must still dispose quietly.
+        var broken = new ExcelPackage(new MemoryStream());
+        var sheet = broken.Workbook.Worksheets.Add("Data");
+        sheet.Visibility = SheetVisibility.Hidden; // The only sheet is hidden: saving this would throw.
+        sheet.Row().WriteCell(1);
+        broken.Dispose();
+        broken.Dispose(); // And twice.
+
+        var untouched = new ExcelPackage(new MemoryStream());
+        untouched.Dispose();
+    }
+
+    [Fact]
+    public void Create_PutsTheFileInPlaceOnlyOnSave_AndLeavesAnExistingFileAloneOtherwise()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ss-create-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "report.xlsx");
+
+            // No save: no file, and nothing left behind.
+            using (var package = ExcelPackage.Create(path))
+                package.Workbook.Worksheets.Add("Data").Row().WriteCell("never saved");
+            Assert.Empty(Directory.GetFiles(dir));
+
+            // Saved: the file is there and complete.
+            using (var package = ExcelPackage.Create(path))
+            {
+                package.Workbook.Worksheets.Add("Data").Row().WriteCell("first");
+                Assert.False(File.Exists(path));
+                package.Save();
+                Assert.True(File.Exists(path));
+            }
+            var first = File.ReadAllBytes(path);
+
+            // An export that fails half-way leaves the previous report exactly as it was.
+            Assert.Throws<TimeoutException>((Action)(() =>
+            {
+                using var package = ExcelPackage.Create(path);
+                package.Workbook.Worksheets.Add("Data").Row().WriteCell("second, incomplete");
+                throw new TimeoutException("the query failed");
+            }));
+            Assert.Equal(first, File.ReadAllBytes(path));
+            Assert.Single(Directory.GetFiles(dir));
+
+            // A later successful export replaces it.
+            using (var package = ExcelPackage.Create(path))
+            {
+                package.Workbook.Worksheets.Add("Data").Row().WriteCell("third");
+                package.Save();
+            }
+            using var reader = ExcelReader.Open(path);
+            Assert.Equal("third", reader.ReadRows(0).First()[0]);
+            Assert.Single(Directory.GetFiles(dir));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Save_IsRefused_AfterAnEarlierSaveFailed()
+    {
+        var package = new ExcelPackage(new MemoryStream());
+        package.Workbook.Worksheets.Add("Data").Visibility = SheetVisibility.Hidden; // No visible sheet: Save throws.
+        Assert.Throws<InvalidOperationException>(() => package.Save());
+        var again = Assert.Throws<InvalidOperationException>(() => package.Save());
+        Assert.Contains("earlier step failed", again.Message);
+        package.Dispose();
     }
 
     [Fact]
@@ -204,6 +288,7 @@ public class PackageValidationTests
             var sheet = package.Workbook.Worksheets.Add("Big");
             for (var i = 1; i <= rows; i++)
                 sheet.Row().WriteCell(i).WriteCell(i * 0.5).WriteCell(i % 10 == 0 ? "ten" : "other");
+            package.Save();
         }
         var after = GC.GetTotalMemory(forceFullCollection: true);
 
@@ -255,6 +340,7 @@ public class PackageValidationTests
                 var row = sheet.Row();
                 for (var c = 1; c <= columns; c++) row.WriteCell(c % 5 == 0 ? "label" : (object)(r + c * 0.1));
             }
+            package.Save();
         }
         var after = GC.GetTotalMemory(forceFullCollection: true);
         Assert.True(sink.Length > 1_000_000, "Output was written.");
