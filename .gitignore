@@ -17,8 +17,6 @@ TestResults/
 # The Excel-authored test corpus is the exception: those workbooks are test data, checked in on purpose.
 !tests/corpus/excel/*.xlsx
 !tests/**/fixtures/*.xlsx
-# The Excel-authored test corpus is the exception: those workbooks are test data, checked in on purpose.
-!tests/corpus/excel/*.xlsx
 
 # Local pack output
 artifacts/
