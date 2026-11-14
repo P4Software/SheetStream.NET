@@ -10,3 +10,11 @@ Rule ID | Category | Severity | Notes
 SS0001 | SheetStream | Warning | Layout setting after rows were written
 SS0002 | SheetStream | Warning | Row() and Cells[] used on the same worksheet
 SS0003 | SheetStream | Warning | Rows must ascend
+
+## Release 0.6.0
+
+### New Rules
+
+Rule ID | Category | Severity | Notes
+--------|----------|----------|-------
+SS0004 | SheetStream | Warning | Package is never saved

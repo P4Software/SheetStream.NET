@@ -1,0 +1,8 @@
+Mac dates	meta		visible
+Mac dates	d	A1	1904-01-01 00:00:00.000
+Mac dates	t	B1	2.5
+Mac dates	d	A2	1904-01-02 00:00:00.000
+Mac dates	n	B2	1234.5
+Mac dates	d	A3	1904-12-31 12:00:00.000
+Mac dates	d	A4	2025-12-09 18:00:00.000
+Mac dates	d	A5	1904-01-01 06:00:00.000

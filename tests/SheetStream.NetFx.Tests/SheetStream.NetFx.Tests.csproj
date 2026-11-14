@@ -20,6 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The tests build hostile workbooks by hand, which takes the framework's own zip classes. -->
+    <Reference Include="System.IO.Compression" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- No analyzers here: the generator and analyzer are exercised by their own test projects. -->
     <ProjectReference Include="..\..\src\SheetStream\SheetStream.csproj" />
   </ItemGroup>

@@ -58,10 +58,11 @@ namespace SheetStream
         internal void AttachTemplate(TemplateSource template)
         {
             Template = template;
+            template.ReadFailed = Package.MarkFailed;
             SharedStrings.AttachTemplate(template.SharedStringCount, template.PlainSharedStrings);
             using (var archive = template.OpenArchive())
-            using (var r = template.OpenXml(archive, template.StylesPart!)!)
-                Styles.AttachTemplate(r);
+            using (var r = template.OpenRequiredXml(archive, template.StylesPart!, held: true))
+                Styles.AttachTemplate(r, template.Budget);
         }
 
         /// <summary>Workbook protection verifier (hash, salt) and flags, or null when unprotected.</summary>

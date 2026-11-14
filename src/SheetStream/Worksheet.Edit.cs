@@ -25,19 +25,28 @@ namespace SheetStream
         {
             var count = 0;
             using (var archive = template.OpenArchive())
-            using (var r = template.OpenXml(archive, part) ?? throw new InvalidOperationException($"The workbook has no part '{part}' for sheet '{sheetName}'."))
+            using (var r = template.OpenXml(archive, part, held: true) ?? throw new System.IO.InvalidDataException($"The workbook lists sheet '{sheetName}' but has no part '{part}' for it. The file is damaged."))
             {
-                while (r.Read())
+                // Cursor discipline: Skip leaves the reader on the node after the cell, so the loop must not
+                // read again after it, or it would step into the next cell and count only every other one.
+                r.Read();
+                while (!r.EOF)
                 {
-                    if (r.NodeType != XmlNodeType.Element || r.LocalName != "c") continue;
-                    if (++count > limit) ThrowTooLarge(sheetName, limit);
-                    if (!r.IsEmptyElement) r.Skip(); // Nothing below a cell is a cell.
+                    if (r.NodeType == XmlNodeType.Element && r.LocalName == "c")
+                    {
+                        if (++count > limit) ThrowTooLarge(sheetName, limit);
+                        r.Skip(); // Nothing below a cell is a cell.
+                        continue;
+                    }
+                    r.Read();
                 }
             }
         }
 
+        // InvalidDataException, like every other limit on a workbook this library did not write, so one catch
+        // around an import or an edit covers them all.
         private static void ThrowTooLarge(string sheetName, int limit)
-            => throw new InvalidOperationException($"Sheet '{sheetName}' has more than {limit:N0} cells. Editing keeps the whole sheet in memory and is meant for small workbooks; for a sheet this size stream the rows into a copy with Worksheets.Open (template mode) or write it from scratch with Row(). The limit is PackageOptions.MaxEditableCells.");
+            => throw new System.IO.InvalidDataException($"Sheet '{sheetName}' has more than {limit:N0} cells. Editing keeps the whole sheet in memory and is meant for small workbooks; for a sheet this size stream the rows into a copy with Worksheets.Open (template mode) or write it from scratch with Row(). The limit is PackageOptions.MaxEditableCells.");
 
         /// <summary>
         /// Loads every row and cell of the template sheet into the random-access buffer. Each cell keeps its
@@ -52,11 +61,11 @@ namespace SheetStream
             _cells ??= new CellCollection(this);
 
             var limit = Workbook.Package.Options.MaxEditableCells;
-            var context = new LoadContext(_templateSource.GetSharedStringTexts(), Workbook.Styles.CustomNumberFormatCodes(), _templateSource.Date1904);
+            var context = new LoadContext(_templateSource.GetSharedStringTexts(), Workbook.Styles.CustomNumberFormatCodes(), _templateSource.Date1904, _templateSource.Limits, _templateSource.Budget);
             var count = 0;
             var lastRow = 0;
             using (var archive = _templateSource.OpenArchive())
-            using (var r = _templateSource.OpenXml(archive, TemplatePart!)!)
+            using (var r = _templateSource.OpenRequiredXml(archive, TemplatePart!, held: true))
             {
                 while (r.Read())
                 {
@@ -70,17 +79,56 @@ namespace SheetStream
         /// <summary>Everything the cell loader needs to turn stored text into typed values.</summary>
         private sealed class LoadContext
         {
-            public LoadContext(IReadOnlyList<string> sharedStrings, Dictionary<int, string> numberFormatCodes, bool date1904)
+            private readonly ReaderOptions _limits;
+            private readonly MemoryBudget _budget;
+
+            public LoadContext(IReadOnlyList<string> sharedStrings, Dictionary<int, string> numberFormatCodes, bool date1904, ReaderOptions limits, MemoryBudget budget)
             {
                 SharedStrings = sharedStrings;
                 NumberFormatCodes = numberFormatCodes;
                 Date1904 = date1904;
+                _limits = limits;
+                _budget = budget;
             }
 
             public IReadOnlyList<string> SharedStrings { get; }
             public Dictionary<int, string> NumberFormatCodes { get; }
             public bool Date1904 { get; }
             public StringBuilder Inner { get; } = new StringBuilder();
+
+            /// <summary>Whether each number format id seen so far is a date, an elapsed time or a plain number.</summary>
+            public Dictionary<int, ExcelReader.CellKind> FormatKinds { get; } = new Dictionary<int, ExcelReader.CellKind>();
+
+            /// <summary>
+            /// Rejects a cell whose value, or whose XML as a whole, has grown past its limit. Called while the
+            /// cell is being walked, so the cell is refused when it crosses the line and not after all of it
+            /// has been collected. The part's size limit alone is not enough here: text inside a CDATA section
+            /// grows fourfold when it is re-escaped, and a cell may hold any number of sections.
+            /// </summary>
+            public void CheckCell(StringBuilder inner, StringBuilder? value)
+            {
+                if (value != null && value.Length > _limits.MaxCellTextLength)
+                    throw new System.IO.InvalidDataException($"A cell holds more than {_limits.MaxCellTextLength:N0} characters of text. The file is damaged or was built to exhaust memory. If it is genuine, raise ReaderOptions.MaxCellTextLength.");
+                if (inner.Length > _limits.MaxTokenChars)
+                    throw new System.IO.InvalidDataException($"A cell holds more than {_limits.MaxTokenChars:N0} characters of XML. The file is damaged or was built to exhaust memory. If it is genuine, raise ReaderOptions.MaxCellTextLength.");
+            }
+
+            /// <summary>
+            /// Charges what a loaded cell or row keeps in memory to the workbook's budget
+            /// (<see cref="ReaderOptions.MaxLoadedPartBytes"/>). An edited sheet is held in memory, and what it
+            /// occupies there, not only its size in the file, is what the limit promises to bound.
+            /// </summary>
+            public void Hold(long chars) => _budget.Charge(chars * 2 + CellCost);
+
+            /// <summary>
+            /// What a loaded cell costs besides its text: the cell object, its node in the row's sorted
+            /// dictionary and a share of the row's own dictionary. Measured at close to 290 bytes for a sheet of
+            /// one-cell rows, the costliest shape per cell.
+            /// </summary>
+            private const int CellCost = 320;
+
+            /// <summary>What a row that keeps attributes costs besides their text: two dictionary nodes, a list and the attribute objects.</summary>
+            public const int RowCost = 448;
         }
 
         /// <summary>Loads one <c>row</c> element (reader on its start tag) and returns its row number.</summary>
@@ -106,6 +154,9 @@ namespace SheetStream
             }
             if (attributes != null)
             {
+                long held = LoadContext.RowCost / 2;
+                foreach (var attribute in attributes) held += attribute.Value.Length + 48;
+                context.Hold(held);
                 (_rowAttributes ??= new SortedDictionary<int, List<RawAttribute>>())[rowIndex] = attributes;
                 if (!_buffer!.ContainsKey(rowIndex)) _buffer[rowIndex] = new SortedDictionary<int, BufferedCell>();
             }
@@ -135,7 +186,7 @@ namespace SheetStream
         private void LoadCell(XmlReader r, int rowIndex, ref int nextColumn, LoadContext context)
         {
             var reference = r.GetAttribute("r");
-            var column = reference != null ? ExcelReader.ColumnOf(reference) : nextColumn;
+            var column = reference != null ? ExcelReader.ColumnOf(reference) : ExcelReader.ImpliedColumn(nextColumn);
             nextColumn = column + 1;
 
             string? type = null;
@@ -177,12 +228,18 @@ namespace SheetStream
                 WalkCellContent(r, cell, context, out v, out formula, out inline);
             }
 
+            long extraChars = 0;
+            if (extra != null)
+                foreach (var attribute in extra) extraChars += attribute.Value.Length + 32;
+            context.Hold(cell.RawInner!.Length + (v?.Length ?? 0) + (formula?.Length ?? 0) + (inline?.Length ?? 0) + extraChars);
+
             cell.Formula = formula;
             cell.Value = TypedValue(type, v, inline, styleIndex, context);
 
             // Duplicate references in a damaged file: the later cell wins, as it does in Excel's repair.
             if (!_buffer!.TryGetValue(rowIndex, out var cols)) _buffer[rowIndex] = cols = new SortedDictionary<int, BufferedCell>();
             cols[column] = cell;
+            NoteBufferedCell(rowIndex, column);
         }
 
         /// <summary>
@@ -209,6 +266,7 @@ namespace SheetStream
             r.Read();
             while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == cellDepth))
             {
+                context.CheckCell(sb, capture);
                 switch (r.NodeType)
                 {
                     case XmlNodeType.Element:
@@ -275,6 +333,7 @@ namespace SheetStream
             }
             r.Read(); // Past </c>.
 
+            context.CheckCell(sb, capture);
             cell.RawInner = sb.ToString();
             v = vText?.ToString();
             formula = fText?.ToString();
@@ -386,7 +445,7 @@ namespace SheetStream
                 default:
                     if (v == null || !double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) return v;
                     if (double.IsNaN(number) || double.IsInfinity(number)) return v; // Same rule as ExcelReader: not a number a sheet can hold.
-                    var kind = ExcelReader.Classify(Workbook.Styles.NumberFormatId(styleIndex), context.NumberFormatCodes);
+                    var kind = ExcelReader.Classify(Workbook.Styles.NumberFormatId(styleIndex), context.NumberFormatCodes, context.FormatKinds);
                     if (kind == ExcelReader.CellKind.Date)
                     {
                         if (context.Date1904) number += 1462;

@@ -9,12 +9,19 @@ namespace SheetStream.Internal
     /// </summary>
     internal static class XmlCopy
     {
-        /// <summary>Settings for reading untrusted template parts: no DTDs, no external resolution.</summary>
-        public static readonly XmlReaderSettings ReaderSettings = new XmlReaderSettings
+        /// <summary>
+        /// Settings for reading untrusted template parts: no DTDs, no external resolution. Comments and
+        /// processing instructions are ignored, which makes the parser skip their content instead of buffering
+        /// it; Excel writes neither into a workbook part, and <see cref="GuardedPartReader"/> relies on it.
+        /// </summary>
+        /// <remarks>A new instance per reader, because each needs a name table of its own (<see cref="BoundedNameTable"/>).</remarks>
+        public static XmlReaderSettings ReaderSettings() => new XmlReaderSettings
         {
             DtdProcessing = DtdProcessing.Prohibit,
             XmlResolver = null,
-            IgnoreComments = false,
+            IgnoreComments = true,
+            IgnoreProcessingInstructions = true,
+            NameTable = new BoundedNameTable(),
             CloseInput = true,
         };
 

@@ -10,6 +10,28 @@ namespace SheetStream.Internal
     internal static class XmlTextUtil
     {
         /// <summary>
+        /// The shortest text that reads back as exactly <paramref name="value"/>, in the invariant culture:
+        /// 0.1 and not 0.10000000000000001. Modern .NET gives this for the "R" format. .NET Framework does not
+        /// (its "R" prints 17 digits where 16 would do), so there the 15, 16 and 17 digit forms are tried in
+        /// turn; a reader must hand out the same text for a number whichever runtime it runs on.
+        /// </summary>
+        public static string ShortestRoundTrip(double value)
+        {
+#if NET8_0_OR_GREATER
+            return value.ToString("R", CultureInfo.InvariantCulture);
+#else
+            if (double.IsNaN(value) || double.IsInfinity(value)) return value.ToString(CultureInfo.InvariantCulture);
+            var text = value.ToString("G15", CultureInfo.InvariantCulture);
+            if (Parses(text, value)) return text;
+            text = value.ToString("G16", CultureInfo.InvariantCulture);
+            return Parses(text, value) ? text : value.ToString("G17", CultureInfo.InvariantCulture);
+
+            bool Parses(string s, double expected)
+                => double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(expected);
+#endif
+        }
+
+        /// <summary>
         /// Makes a string safe to hand to <see cref="System.Xml.XmlWriter"/> and faithful to Excel's own
         /// escaping convention for characters XML cannot carry.
         /// </summary>

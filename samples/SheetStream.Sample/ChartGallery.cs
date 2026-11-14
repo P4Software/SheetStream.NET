@@ -38,6 +38,7 @@ internal static class ChartGallery
                 chart.AddSeries("C2:C7", "A2:A7", "=C1", "#C0504D");
             }
         }
+        package.Save(); // Nothing is written until Save; disposing alone leaves no file.
         Console.WriteLine($"Chart gallery written: {path} ({types.Length} charts)");
     }
 

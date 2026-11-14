@@ -56,11 +56,19 @@ namespace SheetStream.Reading
 
         private static async Task<ExcelReader> OpenBufferedAsync(Stream stream, ReaderOptions? options, bool leaveOpen, CancellationToken cancellationToken)
         {
-            var copy = await BufferAsync(stream, InMemoryBufferLimit, cancellationToken).ConfigureAwait(false);
+            Stream copy;
             try
             {
-                // Same order as the synchronous Open: the source is released before the package is parsed.
+                copy = await BufferAsync(stream, InMemoryBufferLimit, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Same as the synchronous Open: the source is released before the package is parsed, and also
+                // when the copy fails or is cancelled half-way, since it is used up either way.
                 if (!leaveOpen) await stream.DisposeAsync().ConfigureAwait(false);
+            }
+            try
+            {
                 return new ExcelReader(copy, false, options);
             }
             catch
@@ -188,7 +196,7 @@ namespace SheetStream.Reading
         {
             // A plain using is enough: XmlReader is IDisposable only, and the async iterator runs this finally
             // block both on normal completion and when the consumer disposes the enumerator early.
-            using (var xr = XmlReader.Create(Guard(entry, long.MaxValue), SheetSettings(async: true)))
+            using (var xr = XmlReader.Create(Guard(entry, held: false), SheetSettings(async: true)))
             {
                 var lastRow = 0;
                 var values = new List<object?>();
@@ -212,7 +220,7 @@ namespace SheetStream.Reading
                             if (xr.NodeType == XmlNodeType.Element && xr.LocalName == "c")
                             {
                                 var reference = xr.GetAttribute("r");
-                                var column = reference != null ? ColumnOf(reference) : nextColumn;
+                                var column = reference != null ? ColumnOf(reference) : ImpliedColumn(nextColumn);
                                 nextColumn = column + 1;
                                 var value = await ReadCellAsync(xr, text).ConfigureAwait(false); // Leaves the reader on </c> or on an empty <c/>.
                                 await AdvanceAsync(xr).ConfigureAwait(false);
@@ -421,17 +429,19 @@ namespace SheetStream.Reading
         public async Task<DataTable> ReadDataTableAsync(string sheetName, bool firstRowIsHeader = true, CancellationToken cancellationToken = default)
         {
             var table = new DataTable(sheetName);
+            var names = new ColumnNames(SharedStringIdentities());
+            var held = new SheetStream.Internal.MemoryBudget(_options.MaxLoadedPartBytes, $"A DataTable of sheet '{sheetName}'");
             var first = true;
             await foreach (var row in ReadRowsAsync(sheetName, cancellationToken).ConfigureAwait(false))
             {
                 if (first && firstRowIsHeader)
                 {
                     first = false;
-                    AddHeaderColumns(table, row);
+                    AddHeaderColumns(table, row, names, held);
                     continue;
                 }
                 first = false;
-                AddDataRow(table, row);
+                AddDataRow(table, row, names, held);
             }
             return table;
         }

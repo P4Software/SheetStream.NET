@@ -14,6 +14,8 @@ TestResults/
 
 # Generated sample output
 *.xlsx
+# The Excel-authored test corpus is the exception: those workbooks are test data, checked in on purpose.
+!tests/corpus/excel/*.xlsx
 !tests/**/fixtures/*.xlsx
 
 # Local pack output

@@ -150,6 +150,7 @@ internal static class Showcase
             var lists = wb.Worksheets.Add("Lists");
             lists.Visibility = SheetVisibility.Hidden;
             foreach (var s in new[] { "Open", "Closed", "On hold" }) lists.Row().WriteCell(s);
+            package.Save(); // Nothing is written until Save; disposing alone leaves no file.
         }
 
         // Read it back with the streaming reader to prove the round trip.

@@ -46,7 +46,7 @@ namespace SheetStream
             if (_workbook.Template != null)
                 throw new NotSupportedException("A workbook filled from a template keeps the template's sheets. Use Worksheets.Open(name) to fill one, or add the sheet to the template in Excel.");
             ValidateName(name);
-            if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot add a worksheet after the package has been saved.");
+            if (_workbook.Package.IsWritten) throw new InvalidOperationException("Cannot add a worksheet after the package has been saved.");
 
             Current?.Seal();
 
@@ -116,10 +116,13 @@ namespace SheetStream
         /// </summary>
         private Worksheet OpenCore(TemplateSource template, int position, bool edit)
         {
-            if (_workbook.Package.IsSaved) throw new InvalidOperationException("Cannot open a worksheet after the package has been saved.");
+            if (_workbook.Package.IsWritten) throw new InvalidOperationException("Cannot open a worksheet after the package has been saved.");
             var (sheetName, part) = template.Sheets[position];
             if (_names.Contains(sheetName))
                 throw new InvalidOperationException($"Sheet '{sheetName}' has already been opened. Each sheet of the workbook can be opened once.");
+            // Checked before the output is touched, so a sheet that cannot be opened leaves the package usable.
+            if (!template.HasPart(part))
+                throw new System.IO.InvalidDataException($"The workbook lists sheet '{sheetName}' but has no part '{part}' for it. The file is damaged.");
             if (edit) Worksheet.EnsureEditable(template, part, sheetName, _workbook.Package.Options.MaxEditableCells);
             _names.Add(sheetName);
 
@@ -130,16 +133,22 @@ namespace SheetStream
             _sheets.Add(sheet);
             if (edit)
             {
-                // The sheet's part is already open in the archive; a load failure (damaged XML) must stop the
-                // package from saving a half-loaded sheet when the caller's using block disposes it.
+                // The sheet's part is already open in the archive; after a load failure (damaged XML) the
+                // package must refuse to save, or it would write a half-loaded sheet.
                 try { sheet.LoadTemplateCells(); }
-                catch { _workbook.Package.MarkSaveFailed(); throw; }
+                catch { _workbook.Package.MarkFailed(); throw; }
             }
             return sheet;
         }
 
         /// <summary>Seals the current sheet. Called by the package before writing the trailing parts.</summary>
         internal void SealAll() => Current?.Seal();
+
+        /// <summary>Releases what the sheets hold open when the package is disposed without having been saved.</summary>
+        internal void Abandon()
+        {
+            foreach (var sheet in _sheets) sheet.Abandon();
+        }
 
         private void ValidateName(string name)
         {

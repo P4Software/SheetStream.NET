@@ -6,10 +6,10 @@ namespace SheetStream
 {
     public sealed partial class ExcelPackage
     {
-        // In-place editing: the package writes to a temporary file beside the target and swaps it in once the
-        // save has succeeded, so a failure anywhere leaves the original file untouched.
-        private string? _inPlaceTarget;
-        private string? _inPlaceTemp;
+        // A package that writes to a path works in a temporary file beside the target and swaps it in once the
+        // save has succeeded, so a failure anywhere (or no save at all) leaves the target as it was.
+        private string? _pendingTarget;
+        private string? _pendingTemp;
 
         /// <summary>
         /// Opens an existing workbook for editing and writes the edited copy to <paramref name="outputPath"/>.
@@ -62,25 +62,9 @@ namespace SheetStream
             // The whole input is read into memory first, so the file handle is released before anything is written.
             TemplateSource source;
             using (var input = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                source = TemplateSource.Load(input);
+                source = TemplateSource.Load(input, (options ?? PackageOptions.Default).SourceLimits);
 
-            // The temporary file lives in the same folder so the final swap is a rename on the same volume.
-            var temp = Path.Combine(Path.GetDirectoryName(target) ?? "", Path.GetFileName(target) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-            var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16);
-            try
-            {
-                var package = new ExcelPackage(stream, leaveOpen: false, options);
-                package.Workbook.AttachTemplate(source);
-                package._inPlaceTarget = target;
-                package._inPlaceTemp = temp;
-                return package;
-            }
-            catch
-            {
-                stream.Dispose();
-                TryDelete(temp);
-                throw;
-            }
+            return ToFile(target, options, source);
         }
 
         /// <summary>
@@ -95,45 +79,51 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Called after a successful save of an in-place edit: closes the temporary file and swaps it in for
-        /// the original. Replace is atomic on the same volume, so readers see either the old or the new file.
+        /// Called after a successful save of a package that writes to a path: closes the temporary file and
+        /// puts it in place of the target. Replacing an existing file is atomic on the same volume, so readers
+        /// see either the old file or the new one, never part of each.
         /// </summary>
-        private void CompleteInPlaceSave()
+        private void CompletePendingFile()
         {
-            if (_inPlaceTemp == null) return;
-            var temp = _inPlaceTemp;
-            var target = _inPlaceTarget!;
+            if (_pendingTemp == null) return;
+            var temp = _pendingTemp;
+            var target = _pendingTarget!;
             _output.Dispose(); // The temporary file must be closed before it can be moved.
             try
             {
-                try
+                if (!File.Exists(target))
                 {
-                    File.Replace(temp, target, null, ignoreMetadataErrors: true);
-                }
-                catch (PlatformNotSupportedException)
-                {
-                    // Some file systems cannot do the three-way replace; fall back to delete and move.
-                    File.Delete(target);
                     File.Move(temp, target);
+                }
+                else
+                {
+                    try
+                    {
+                        File.Replace(temp, target, null, ignoreMetadataErrors: true);
+                    }
+                    catch (PlatformNotSupportedException)
+                    {
+                        // Some file systems cannot do the three-way replace; fall back to delete and move.
+                        File.Delete(target);
+                        File.Move(temp, target);
+                    }
                 }
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
-                TryDelete(temp);
-                throw new IOException($"The edited workbook could not replace '{target}'. The file may be open in Excel or read-only; the original is unchanged. Close it and try again.", ex);
+                // The finished workbook stays in its temporary file, so the caller can clear the obstacle and
+                // call Save again. Disposing the package without doing so removes the temporary file.
+                throw new IOException($"The workbook was written but could not be put in place at '{target}'. The file may be open in Excel or read-only; whatever was there is unchanged. Close it and call Save again.", ex);
             }
-            finally
-            {
-                _inPlaceTemp = null;
-            }
+            _pendingTemp = null;
         }
 
-        /// <summary>Removes the temporary file of an in-place edit that never completed (a failed or skipped save).</summary>
-        private void DiscardInPlaceTemp()
+        /// <summary>Removes the temporary file of a package that never completed (a failed or skipped save).</summary>
+        private void DiscardPendingFile()
         {
-            if (_inPlaceTemp == null) return;
-            TryDelete(_inPlaceTemp);
-            _inPlaceTemp = null;
+            if (_pendingTemp == null) return;
+            TryDelete(_pendingTemp);
+            _pendingTemp = null;
         }
 
         private static void TryDelete(string path)

@@ -11,7 +11,7 @@ The goal set for SheetStream is **as good as or better than EPPlus 8 in every as
 | Licence, dependencies, platforms | Commercial, US$569/dev/yr, 5 dependencies, 16 MB package | MIT, zero dependencies, 226 KB, Native AOT, bundled analyzer | **SheetStream better** |
 | Performance and memory | Whole workbook in memory; official: 100k × 200 cells in 29 s | Streaming; 100k × 10 in 1.0 s, 27 MB allocated; 1M rows at 200 MB peak | **SheetStream better** |
 | Writing cells, rows, layout | Random access anywhere | Streaming rows, plus `Cells[]` per sheet | Parity for exports; gap for in-place edits |
-| Reading | Load whole package; typed values; `Text` | Streaming, async, fuzz-tested, with limits against files built to exhaust memory (`ReaderOptions`); typed values | **SheetStream better** for imports; gaps: `.xls`, CSV, formatted `Text`, reading definitions |
+| Reading | Load whole package; typed values; `Text` | Streaming, async, fuzz-tested, with limits against files built to exhaust memory or waste time (`ReaderOptions`), which also cover templates and edits; typed values | **SheetStream better** for imports; gaps: `.xls`, CSV, formatted `Text`, reading definitions |
 | Templates and editing | Open and edit any workbook | Template filling (streaming); edit small workbooks | Gap: large edits, insert/delete rows and columns, copy ranges and sheets |
 | Styling | Named styles, gradients, themes, 45 conditional-format rules | Cell styles, differential styles, 15 conditional-format rules | Gap: medium |
 | Data loading and export | 7 loaders, CSV/text, HTML, JSON, `ToDataTable`, `ToCollection` | 6 loaders incl. async enumerable and AOT mapper; readers | Gap: CSV, HTML, JSON export; range-to-object |
