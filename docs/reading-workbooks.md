@@ -1,3 +1,8 @@
+---
+title: "Read .xlsx files row by row in .NET"
+description: "ExcelReader reads .xlsx files row by row in constant memory, with limits that make uploaded files safe to read."
+---
+
 # Reading workbooks
 
 `ExcelReader` reads `.xlsx` files row by row. A sheet of any size reads in constant memory, apart from the shared string table, which is loaded once.

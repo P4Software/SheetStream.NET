@@ -1,0 +1,35 @@
+# Side table of contents shown on every guide page. It lives in its own folder so that DocFX picks it
+# as the page's table of contents without any page file moving: output URLs stay exactly as they were.
+# Hrefs point back up at the page files; only labels are shortened here, page titles are unchanged.
+# Groups start expanded so the whole structure is visible at once; readers can still collapse them.
+- name: Getting started
+  href: ../index.md
+- name: Guides
+  expanded: true
+  items:
+  - name: Reading workbooks
+    href: ../reading-workbooks.md
+  - name: Filling templates
+    href: ../templates.md
+  - name: Editing existing workbooks
+    href: ../editing-workbooks.md
+  - name: Pivot tables
+    href: ../pivot-tables.md
+  - name: AOT and source generator
+    href: ../aot-and-source-generator.md
+  - name: Analyzers
+    href: ../analyzers.md
+- name: Migrating
+  expanded: true
+  items:
+  - name: From EPPlus
+    href: ../migrating-from-epplus.md
+  - name: From ClosedXML
+    href: ../migrating-from-closedxml.md
+  - name: Gap analysis vs EPPlus 8
+    href: ../gap-analysis-epplus-8.md
+- name: Articles
+  expanded: true
+  items:
+  - name: A small file, a lot of memory
+    href: ../small-file-large-memory.md

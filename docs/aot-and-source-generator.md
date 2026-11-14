@@ -1,3 +1,8 @@
+---
+title: "Trimming, Native AOT, source generator"
+description: "SheetStream.NET works in trimmed and Native AOT applications. A Roslyn source generator writes the object mapping at compile time, with no reflection."
+---
+
 # Trimming, Native AOT and the source generator
 
 SheetStream works in trimmed and Native AOT applications. The only parts of the library that ever used

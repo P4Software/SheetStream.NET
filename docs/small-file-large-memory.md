@@ -1,3 +1,8 @@
+---
+title: "A 98 KB spreadsheet that takes 400 MB"
+description: "How a 98 KB .xlsx file could drive a reader to 400 MB, what the 0.5.0 fix missed, and what changed in 0.6.0 to stop it."
+---
+
 # A 98 KB spreadsheet that takes 400 MB, and what it took to stop it
 
 *November 2026, written after the 0.6.0 release.*

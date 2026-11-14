@@ -1,3 +1,8 @@
+---
+title: "Create Excel pivot tables in .NET"
+description: "Write pivot tables over a table or range in the same workbook. SheetStream.NET writes the layout and Excel computes the pivot when the file opens."
+---
+
 # Pivot tables
 
 A pivot table summarises a range, or an Excel table, written earlier in the same workbook. SheetStream writes the pivot's layout and asks Excel to compute it when the file opens, so the result is a real, interactive pivot: users can drag fields, filter, drill and refresh exactly as if they had built it themselves.

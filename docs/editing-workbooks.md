@@ -1,3 +1,8 @@
+---
+title: "Edit existing .xlsx workbooks in .NET"
+description: "Open a small .xlsx workbook, read or change some cells, save. Built for budgets, settings sheets, price lists and other files a person maintains by hand."
+---
+
 # Editing existing workbooks
 
 Open a small workbook, read or change some cells, save. This is the "open, change a cell, save" flow EPPlus users expect, built for budgets, settings sheets, price lists and other files a person maintains by hand.
