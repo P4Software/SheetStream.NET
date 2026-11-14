@@ -2,7 +2,7 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-11-14)
 
 A security and safety release. It closes, for every way of opening a workbook, the class of problem that 0.5.0 fixed only in part, and it changes when a workbook is written. Two changes can break existing code; they are listed first.
 
