@@ -1,3 +1,8 @@
+---
+title: "Migrating from EPPlus to SheetStream.NET"
+description: "Convert a real production exporter from EPPlus to SheetStream.NET. Most export code maps line for line; the one thing to unlearn is styling cell by cell."
+---
+
 # Migrating from EPPlus to SheetStream
 
 This guide converts a real exporter, taken from a production SaaS app, from EPPlus to SheetStream. Most EPPlus export code maps line for line; the one thing to unlearn is setting styles cell by cell.

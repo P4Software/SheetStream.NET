@@ -1,3 +1,8 @@
+---
+title: "Streaming Excel (.xlsx) library for .NET"
+description: "A zero-dependency, MIT-licensed .NET library for creating and reading Excel (.xlsx) files. Rows stream straight into the file with flat memory."
+---
+
 # SheetStream.NET
 
 A zero-dependency, MIT-licensed .NET library for creating and reading Excel (`.xlsx`) files. Rows stream straight into the file, so 10 million cells write in seconds with flat memory.
@@ -48,6 +53,8 @@ Nothing needs switching on: rows are written as you produce them, so memory does
 - [Pivot tables](pivot-tables.md): pivots over a table or range, refreshed when Excel opens the file.
 - [Trimming, Native AOT and the source generator](aot-and-source-generator.md): object mapping without reflection.
 - [Analyzers](analyzers.md): build-time warnings for the streaming rules.
+- [Gap analysis versus EPPlus 8](gap-analysis-epplus-8.md): area by area, where SheetStream.NET is ahead, where it is not, and the order the gaps close.
+- [A 98 KB spreadsheet that takes 400 MB](small-file-large-memory.md): how a small upload can exhaust a server's memory, what the 0.5.0 fix missed, and what changed in 0.6.0.
 - [API reference](api/SheetStream.yml): every public type, generated from the source.
 - [Benchmarks](https://github.com/P4Software/SheetStream.NET/tree/main/benchmarks): reproducible comparisons with EPPlus, ClosedXML, MiniExcel and NPOI.
 

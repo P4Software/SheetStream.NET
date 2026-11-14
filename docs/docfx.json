@@ -14,17 +14,27 @@
   "build": {
     "content": [
       { "files": [ "api/**.yml", "api/index.md" ] },
-      { "files": [ "*.md", "toc.yml" ], "exclude": [ "_site/**" ] }
+      { "files": [ "*.md", "toc.yml", "nav/toc.yml" ], "exclude": [ "_site/**" ] }
     ],
     "resource": [ { "files": [ "images/**", "public/**" ] } ],
     "dest": "_site",
     "template": [ "default", "modern" ],
+    "sitemap": { "baseUrl": "https://p4software.github.io/SheetStream.NET/" },
+    "fileMetadata": {
+      "description": {
+        "api/SheetStream.yml": "API reference for the SheetStream namespace: ExcelPackage, workbooks, worksheets and the other types that write .xlsx files by streaming.",
+        "api/SheetStream.Reading.yml": "API reference for SheetStream.Reading: ExcelReader and the row, cell and option types for reading .xlsx files forward-only.",
+        "api/SheetStream.Styles.yml": "API reference for SheetStream.Styles: cell styles, fonts, fills, borders, number formats and alignment options.",
+        "api/SheetStream.AspNetCore.yml": "API reference for SheetStream.AspNetCore: ExcelResult and ExcelResults.Excel for returning an Excel file from an ASP.NET Core minimal API."
+      }
+    },
     "globalMetadata": {
+      "_lang": "en",
       "_appTitle": "SheetStream.NET",
-      "_appName": "SheetStream",
+      "_appName": "SheetStream.NET",
       "_appLogoPath": "images/logo.png",
       "_appFaviconPath": "images/logo.png",
-      "_appFooter": "SheetStream is MIT licensed and published by P4 Software.",
+      "_appFooter": "SheetStream.NET is MIT licensed and published by P4 Software.",
       "_enableSearch": true,
       "_gitContribute": { "repo": "https://github.com/P4Software/SheetStream.NET", "branch": "main" }
     }
