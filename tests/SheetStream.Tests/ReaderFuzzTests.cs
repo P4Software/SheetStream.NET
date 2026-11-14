@@ -13,6 +13,17 @@ namespace SheetStream.Tests;
 /// </summary>
 public class ReaderFuzzTests
 {
+    /// <summary>
+    /// How many damaged files each fuzz test tries per part. The default keeps the suite quick; set the
+    /// environment variable <c>SHEETSTREAM_FUZZ_ITERATIONS</c> to a few thousand for a deep run before a
+    /// release, and <c>SHEETSTREAM_FUZZ_SEED</c> to any number to try files the fixed seed never produces.
+    /// </summary>
+    private static int Iterations(int normal)
+        => int.TryParse(Environment.GetEnvironmentVariable("SHEETSTREAM_FUZZ_ITERATIONS"), out var n) && n > 0 ? n : normal;
+
+    private static int SeedOffset()
+        => int.TryParse(Environment.GetEnvironmentVariable("SHEETSTREAM_FUZZ_SEED"), out var n) ? n : 0;
+
     /// <summary>Exception types that mean "the input is bad", which callers can catch and report.</summary>
     private static bool IsExpected(Exception ex) =>
         ex is InvalidDataException || ex is XmlException || ex is FormatException || ex is OverflowException;
@@ -81,12 +92,12 @@ public class ReaderFuzzTests
         // .NET Core, so a stable FNV-1a hash is used instead; the first run with a random seed found the s="-1" bug.
         var seedHash = 2166136261u;
         foreach (var ch in part) seedHash = (seedHash ^ ch) * 16777619u;
-        var rng = new Random(unchecked((int)seedHash) ^ 12345);
+        var rng = new Random(unchecked((int)seedHash) ^ 12345 ^ SeedOffset());
         // Fragments that stress the parser: huge or negative numbers, bad references, broken structure.
         string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400", "NaN", "1E300", "<a><a><a>" };
 
         var rejected = 0;
-        for (var iteration = 0; iteration < 150; iteration++)
+        for (int iteration = 0, iterations = Iterations(150); iteration < iterations; iteration++)
         {
             var mutated = MutatePart(seed, part, text =>
             {
@@ -125,6 +136,236 @@ public class ReaderFuzzTests
         }
         // Guard against a fuzzer that never reaches the error paths (for example a part the reader ignores).
         Assert.True(rejected > 0, $"No mutation of {part} was rejected; the fuzzer is not exercising the reader.");
+    }
+
+    /// <summary>A workbook with the things template and edit mode rewrite: shared strings, styles, a table, formulas, dates.</summary>
+    private static byte[] TemplateSeed() => ExcelPackage.CreateBytes(wb =>
+    {
+        var bold = wb.Styles.Create(o => { o.Font.Bold = true; o.NumberFormat = "yyyy-mm-dd"; });
+        var s = wb.Worksheets.Add("Data");
+        s.AddTable("Items", "A1:D6");
+        s.Row().WriteCells("Name", "Qty", "When", "Total");
+        for (var i = 0; i < 5; i++)
+            s.Row().WriteCell("Item " + i).WriteCell(i * 1.5).WriteCell(new DateTime(2026, 1, 1).AddDays(i), bold).WriteFormula("B2*2", 3.0);
+        s.MergeCells("F1:G2");
+        wb.Worksheets.Add("Other").Row().WriteCell("untouched").WriteRichText(new RichText("a") { Bold = true }, "b");
+    });
+
+    /// <summary>
+    /// The same damage as <see cref="MutatedXml_FailsCleanlyOrReads"/>, through the entry points that load a
+    /// workbook in order to write a changed copy. They parse far more of the file than the reader does
+    /// (styles in full, tables, every cell's XML), and an application may hand them a workbook a user uploaded.
+    /// </summary>
+    [Theory]
+    [InlineData("xl/worksheets/sheet1.xml")]
+    [InlineData("xl/worksheets/sheet2.xml")]
+    [InlineData("xl/sharedStrings.xml")]
+    [InlineData("xl/styles.xml")]
+    [InlineData("xl/workbook.xml")]
+    [InlineData("xl/_rels/workbook.xml.rels")]
+    [InlineData("xl/worksheets/_rels/sheet1.xml.rels")]
+    [InlineData("xl/tables/table1.xml")]
+    [InlineData("[Content_Types].xml")]
+    [InlineData("_rels/.rels")]
+    public async Task MutatedXml_ThroughEditAndTemplate_FailsCleanlyOrSaves(string part)
+    {
+        var seed = TemplateSeed();
+        var seedHash = 2166136261u;
+        foreach (var ch in part) seedHash = (seedHash ^ ch) * 16777619u;
+        var rng = new Random(unchecked((int)seedHash) ^ 6789 ^ SeedOffset());
+        string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400", "NaN", "1E300", "<a><a><a>", "r=\"-3\"", "ref=\"A1:\"", "count=\"-1\"", "<![CDATA[", "]]>", "<f t=\"shared\" si=\"7\"/>", "numFmtId=\"-9\"", "xfId=\"70000\"", "<xf/>", "<sheet/>", "r:id=\"rId99\"", "Target=\"../../../x\"" };
+
+        var actions = new (string Name, Action<byte[]> Run)[]
+        {
+            ("edit both sheets", bytes =>
+            {
+                using var package = ExcelPackage.Edit(new MemoryStream(bytes), Stream.Null, leaveOpen: true);
+                foreach (var name in new[] { "Data", "Other" })
+                {
+                    var sheet = package.Workbook.Worksheets.Edit(name);
+                    sheet.Cells["B2"].Value = 12.5;
+                    _ = sheet.Cells["A1"].Value;
+                    sheet.Cells[9, 1].Value = "appended";
+                }
+                package.Save();
+            }),
+            ("fill a template sheet", bytes =>
+            {
+                using var package = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true);
+                var sheet = package.Workbook.Worksheets.Open("Data");
+                var style = sheet.TemplateStyle("C2");
+                for (var i = 0; i < 4; i++) sheet.Row(7 + i).WriteCell("x").WriteCell(i).WriteCell(new DateTime(2026, 2, 1), style).WriteFormula("B7*2");
+                package.Save();
+            }),
+            ("copy untouched", bytes =>
+            {
+                using var package = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true);
+                package.Save();
+            }),
+        };
+
+        var rejected = 0;
+        var saved = 0;
+        for (int iteration = 0, iterations = Iterations(120); iteration < iterations; iteration++)
+        {
+            var mutated = MutatePart(seed, part, text =>
+            {
+                var sb = new StringBuilder(text);
+                var edits = 1 + rng.Next(4);
+                for (var e = 0; e < edits && sb.Length > 0; e++)
+                {
+                    var at = rng.Next(sb.Length);
+                    switch (rng.Next(3))
+                    {
+                        case 0: sb.Remove(at, Math.Min(1 + rng.Next(8), sb.Length - at)); break;
+                        case 1: sb.Insert(at, junk[rng.Next(junk.Length)]); break;
+                        default: sb[at] = (char)rng.Next(32, 127); break;
+                    }
+                }
+                return sb.ToString();
+            });
+
+            foreach (var (name, run) in actions)
+            {
+                try
+                {
+                    var task = Task.Run(() => run(mutated));
+                    Assert.True(await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(10))) == task, $"'{name}' hung on iteration {iteration} of {part}.");
+                    await task;
+                    saved++;
+                }
+                catch (Exception ex) when (IsExpected(ex))
+                {
+                    rejected++;
+                }
+                catch (ArgumentException ex) when (ex.ParamName == "name" && ex.Message.Contains("no sheet named"))
+                {
+                    // The damage renamed or removed the sheet the caller asked for. That is the caller's
+                    // argument not matching the file, reported the same way as for a genuine workbook.
+                    rejected++;
+                }
+                catch (Exception ex) when (ex is not Xunit.Sdk.XunitException)
+                {
+                    Assert.Fail($"'{name}', iteration {iteration} of {part}: unexpected {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
+        // Both must happen, or the fuzzer is not reaching the code: nothing rejected means the part is ignored,
+        // nothing saved means the seed itself is broken.
+        Assert.True(saved > 0, $"No mutation of {part} could be saved; the seed workbook is wrong.");
+        Assert.True(rejected > 0 || part == "[Content_Types].xml" || part == "_rels/.rels" || part.EndsWith("sheet1.xml.rels", StringComparison.Ordinal), $"No mutation of {part} was rejected; the fuzzer is not exercising the template code.");
+    }
+
+    // The project copies tests/corpus/excel beside the test binaries.
+    private static string CorpusFolder() => Path.Combine(AppContext.BaseDirectory, "corpus", "excel");
+
+    public static IEnumerable<object[]> CorpusWorkbooks()
+        => Directory.GetFiles(CorpusFolder(), "*.xlsx").Select(f => new object[] { Path.GetFileNameWithoutExtension(f) }).OrderBy(a => (string)a[0]);
+
+    /// <summary>
+    /// The same damage again, starting from workbooks Excel wrote. They hold parts and constructs the library
+    /// never writes itself (themes, calculation chains, extension lists, pivot caches, drawings), and damage
+    /// to those reaches code that damage to a library-written file cannot. The first run of this found a
+    /// content types part whose root was the wrong element.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CorpusWorkbooks))]
+    public async Task MutatedExcelWorkbooks_FailCleanlyOrWork(string name)
+    {
+        var seed = File.ReadAllBytes(Path.Combine(CorpusFolder(), name + ".xlsx"));
+        string[] parts;
+        string[] sheets;
+        using (var zip = new ZipArchive(new MemoryStream(seed), ZipArchiveMode.Read))
+            parts = zip.Entries.Select(e => e.FullName).Where(n => n.EndsWith(".xml", StringComparison.Ordinal) || n.EndsWith(".rels", StringComparison.Ordinal)).ToArray();
+        using (var reader = ExcelReader.Open(new MemoryStream(seed))) sheets = reader.SheetNames.ToArray();
+
+        var seedHash = 2166136261u;
+        foreach (var ch in name) seedHash = (seedHash ^ ch) * 16777619u;
+        var rng = new Random(unchecked((int)seedHash) ^ 2468 ^ SeedOffset());
+        string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "1E400", "NaN", "<a><a><a>", "r=\"-3\"", "ref=\"A1:\"", "count=\"-1\"", "<![CDATA[", "]]>", "numFmtId=\"-9\"", "<sheet/>", "r:id=\"rId99\"", "Target=\"../../../x\"", "Target=\"/\"", "<Override/>", "<Relationship/>", "si=\"7\"", "cacheId=\"99\"" };
+
+        var options = new PackageOptions { MaxEditableCells = 1_000_000 };
+        var actions = new (string Name, Action<byte[]> Run)[]
+        {
+            ("read everything", bytes =>
+            {
+                using var reader = ExcelReader.Open(new MemoryStream(bytes));
+                foreach (var sheet in reader.SheetNames)
+                {
+                    foreach (var row in reader.ReadRows(sheet))
+                        for (var c = 0; c < row.Values.Count; c++) _ = row.GetString(c);
+                    _ = reader.ReadMergedRanges(sheet).Count;
+                    _ = reader.ReadHyperlinks(sheet).Count;
+                }
+            }),
+            ("edit every sheet", bytes =>
+            {
+                using var package = ExcelPackage.Edit(new MemoryStream(bytes), Stream.Null, leaveOpen: true, options);
+                foreach (var sheet in sheets) package.Workbook.Worksheets.Edit(sheet).Cells[3, 12].Value = "changed";
+                package.Save();
+            }),
+            ("fill the first sheet", bytes =>
+            {
+                using var package = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true, options);
+                var sheet = package.Workbook.Worksheets.Open(sheets[0]);
+                for (var i = 0; i < 3; i++) sheet.Row(900 + i).WriteCell("x").WriteCell(i);
+                package.Save();
+            }),
+            ("copy untouched", bytes =>
+            {
+                using var package = ExcelPackage.OpenTemplate(new MemoryStream(bytes), Stream.Null, leaveOpen: true, options);
+                package.Save();
+            }),
+        };
+
+        for (int iteration = 0, iterations = Iterations(60); iteration < iterations; iteration++)
+        {
+            var part = parts[rng.Next(parts.Length)];
+            var mutated = MutatePart(seed, part, text =>
+            {
+                var sb = new StringBuilder(text);
+                var edits = 1 + rng.Next(4);
+                for (var e = 0; e < edits && sb.Length > 0; e++)
+                {
+                    var at = rng.Next(sb.Length);
+                    switch (rng.Next(4))
+                    {
+                        case 0: sb.Remove(at, Math.Min(1 + rng.Next(40), sb.Length - at)); break;
+                        case 1: sb.Insert(at, junk[rng.Next(junk.Length)]); break;
+                        case 2:
+                            // Move a stretch elsewhere: this is what put a child element where a root belongs.
+                            var length = Math.Min(1 + rng.Next(120), sb.Length - at);
+                            var piece = sb.ToString(at, length);
+                            sb.Remove(at, length);
+                            sb.Insert(rng.Next(sb.Length + 1), piece);
+                            break;
+                        default: sb[at] = (char)rng.Next(32, 127); break;
+                    }
+                }
+                return sb.ToString();
+            });
+
+            foreach (var (action, run) in actions)
+            {
+                try
+                {
+                    var task = Task.Run(() => run(mutated));
+                    Assert.True(await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(20))) == task, $"'{action}' hung on iteration {iteration} of {name} ({part}).");
+                    await task;
+                }
+                catch (Exception ex) when (IsExpected(ex))
+                {
+                }
+                catch (ArgumentException ex) when (ex.ParamName == "name" && ex.Message.Contains("no sheet named"))
+                {
+                    // The damage renamed or removed a sheet the test asks for by its original name.
+                }
+                catch (Exception ex) when (ex is not Xunit.Sdk.XunitException)
+                {
+                    Assert.Fail($"'{action}', iteration {iteration} of {name}, damage in {part}: unexpected {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+        }
     }
 
     [Fact]

@@ -180,7 +180,7 @@ public class PivotTableTests
         foreach (var h in Headers) header.WriteCell(h);
         var pivot = s.AddPivotTable("P", table, 1, 8);
         Assert.Equal(Headers, pivot.Headers);
-        pivot.AddRowField("Region").AddDataField("Amount"); // So the package can save when disposed.
+        pivot.AddRowField("Region").AddDataField("Amount");
         for (var i = 0; i < 12; i++) s.Row().WriteCell("N").WriteCell("C").WriteCell("P").WriteCell(1.0).WriteCell(1);
     }
 
@@ -235,7 +235,7 @@ public class PivotTableTests
         Assert.Contains("Reggion", ex.Message);
         Assert.Contains("Region, Category, Product, Amount, Qty", ex.Message);
         Assert.Throws<ArgumentException>(() => pivot.AddDataField("Total"));
-        pivot.AddDataField("Amount"); // So the package can save when disposed.
+        pivot.AddDataField("Amount");
     }
 
     [Fact]

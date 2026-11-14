@@ -6,7 +6,7 @@ throws `InvalidOperationException` when the order is wrong, but an exception at 
 poor place to learn a rule.
 
 The SheetStream package therefore ships a Roslyn analyzer. It runs inside the compiler and the IDE and shows the
-three rules below as warnings while you type, with a message that says what to change. There is nothing to
+rules below as warnings while you type, with a message that says what to change. There is nothing to
 install: `dotnet add package SheetStream.NET` is enough, and the analyzer adds nothing to your application's output.
 
 | Id | Title | What it catches |
@@ -14,8 +14,9 @@ install: `dotnet add package SheetStream.NET` is enough, and the analyzer adds n
 | [SS0001](#ss0001) | Layout setting after rows were written | `Column()`, `Columns()`, `FreezePanes()`, `TabColor`, `ShowGridLines`, `Zoom`, `RightToLeft`, `PageSetup.FitToWidth` / `FitToHeight` used after `Row()` or `LoadFrom*()` |
 | [SS0002](#ss0002) | Row() and Cells[] used on the same worksheet | A sheet written through both `Row()` streaming and `Cells[...]` random access |
 | [SS0003](#ss0003) | Rows must ascend | `Row(3)` after `Row(5)` on the same sheet |
+| [SS0004](#ss0004) | Package is never saved | A package created in a method that never calls `Save()` on it, so no workbook is written |
 
-All three are warnings in the `SheetStream` category.
+All four are warnings in the `SheetStream` category.
 
 ## How sure the analyzer is
 
@@ -128,6 +129,36 @@ sheet.Cells[5, 1].Value = "Body";
 sheet.Cells[3, 1].Value = "Title";
 ```
 
+<a id="ss0004"></a>
+
+## SS0004: Package is never saved
+
+```csharp
+using var package = ExcelPackage.Create("report.xlsx");   // SS0004
+package.Workbook.Worksheets.Add("Data").Row().WriteCell("Hello");
+// The method ends here. No file is written.
+```
+
+A package finishes its workbook only when `Save()` is called. Disposing it does not save: `Dispose` also runs when
+the code building the workbook throws half-way, and a file that opens but holds half the rows would be worse than
+no file. Code that forgets the call therefore runs without any error and produces nothing, which is easy to miss
+until someone asks where the report is.
+
+The fix is one line at the point where the workbook is complete:
+
+```csharp
+using var package = ExcelPackage.Create("report.xlsx");
+package.Workbook.Worksheets.Add("Data").Row().WriteCell("Hello");
+package.Save();
+```
+
+The rule looks at a local variable that is initialised with `new ExcelPackage(...)`, `ExcelPackage.Create(...)`,
+`ExcelPackage.OpenTemplate(...)` or `ExcelPackage.Edit(...)`, and reports it when the method never calls `Save()`
+on it. It stays quiet as soon as the package is handed to anything else: passed as an argument, returned, stored
+in a field or another variable. Code elsewhere may save it then, and that code is out of the rule's sight. A
+`Save()` anywhere in the method, including inside a branch, a lambda or a local function, is enough.
+`ExcelPackage.CreateBytes` and `ExcelResults.Excel` save for you and are never reported.
+
 ## Suppressing a warning
 
 The analyzer is meant to be right every time it speaks, so a warning usually means the code will throw. If you do
@@ -155,7 +186,7 @@ dotnet_diagnostic.SS0001.severity = none      # or suggestion, warning, error
 dotnet_diagnostic.SS0002.severity = error
 ```
 
-To turn the rules into build errors, set the severity to `error` the same way, or add `SS0001;SS0002;SS0003` to
+To turn the rules into build errors, set the severity to `error` the same way, or add `SS0001;SS0002;SS0003;SS0004` to
 `<WarningsAsErrors>` in the project file.
 
 ## Not what you expected?

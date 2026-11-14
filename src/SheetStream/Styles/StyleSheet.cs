@@ -44,6 +44,10 @@ namespace SheetStream.Styles
         private readonly List<KeyValuePair<int, string>> _customNumberFormats = new List<KeyValuePair<int, string>>();
         private readonly Dictionary<string, int> _numberFormatIndex = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        // The template's own number formats by id. Kept beside the index by code, because a workbook may give
+        // two ids the same code, and a cell that uses the second id must still find it.
+        private readonly Dictionary<int, string> _templateFormatCodes = new Dictionary<int, string>();
+
         private readonly List<XfSpec> _xfs = new List<XfSpec>();
         private readonly Dictionary<XfSpec, int> _xfIndex = new Dictionary<XfSpec, int>();
 
@@ -232,8 +236,8 @@ namespace SheetStream.Styles
                 case 42: case 44: return "_($* #,##0.00_)";
             }
             foreach (var pair in BuiltInNumberFormats) if (pair.Value == numFmtId) return pair.Key;
+            if (_templateFormatCodes.TryGetValue(numFmtId, out var fromTemplate)) return fromTemplate;
             foreach (var pair in _customNumberFormats) if (pair.Key == numFmtId) return pair.Value;
-            foreach (var pair in _numberFormatIndex) if (pair.Value == numFmtId) return pair.Key;
             return null;
         }
 
@@ -256,7 +260,7 @@ namespace SheetStream.Styles
         /// </summary>
         internal Dictionary<int, string> CustomNumberFormatCodes()
         {
-            var codes = new Dictionary<int, string>();
+            var codes = new Dictionary<int, string>(_templateFormatCodes);
             foreach (var pair in _numberFormatIndex) codes[pair.Value] = pair.Key;
             return codes;
         }
@@ -340,7 +344,13 @@ namespace SheetStream.Styles
         /// borders, cell formats and differential formats it has, remembers its custom number formats (so equal
         /// codes are reused) and parses its cell formats (so a template style can be combined with a date format).
         /// </summary>
-        internal void AttachTemplate(XmlReader r)
+        /// <summary>Highest number format id of a template that new ids are numbered after. Excel's own stay in the hundreds.</summary>
+        private const int MaxTemplateNumberFormatId = 1_000_000;
+
+        /// <summary>What one parsed cell format of a template is charged against the memory budget, in bytes.</summary>
+        private const int TemplateXfCost = 128;
+
+        internal void AttachTemplate(XmlReader r, MemoryBudget budget)
         {
             _appendMode = true;
             _fonts.Clear(); _fills.Clear(); _borders.Clear(); _xfs.Clear();
@@ -355,7 +365,7 @@ namespace SheetStream.Styles
             {
                 if (r.NodeType == XmlNodeType.EndElement)
                 {
-                    if (pending.HasValue && r.Depth == pendingDepth) { _templateXfs.Add(pending.Value); pending = null; }
+                    if (pending.HasValue && r.Depth == pendingDepth) { budget.Charge(TemplateXfCost); _templateXfs.Add(pending.Value); pending = null; }
                     if (r.Depth == collectionDepth) { collection = null; collectionDepth = -1; }
                     continue;
                 }
@@ -365,6 +375,7 @@ namespace SheetStream.Styles
                 {
                     collection = r.LocalName;
                     collectionDepth = 1;
+                    if (!_templateCounts.ContainsKey(collection)) budget.Charge(2L * collection.Length + 64);
                     _templateCounts[collection] = 0;
                     if (r.IsEmptyElement) { collection = null; collectionDepth = -1; }
                     continue;
@@ -375,14 +386,22 @@ namespace SheetStream.Styles
                     if (collection == "numFmts" && r.LocalName == "numFmt")
                     {
                         var id = TemplateSource.Int(r.GetAttribute("numFmtId")) ?? 0;
-                        if (id > maxNumFmt) maxNumFmt = id;
+                        // Ids this high are not something Excel assigns. Counting one as the highest in use
+                        // would make the next id handed out overflow into a negative number.
+                        if (id > maxNumFmt && id < MaxTemplateNumberFormatId) maxNumFmt = id;
                         var code = r.GetAttribute("formatCode");
-                        if (code != null && !_numberFormatIndex.ContainsKey(code)) _numberFormatIndex[code] = id;
+                        if (code != null)
+                        {
+                            budget.ChargeText(code);
+                            budget.Charge(96); // Its entries in the two dictionaries.
+                            _templateFormatCodes[id] = code;
+                            if (!_numberFormatIndex.ContainsKey(code)) _numberFormatIndex[code] = id;
+                        }
                     }
                     else if (collection == "cellXfs" && r.LocalName == "xf")
                     {
                         var xf = XfSpec.FromTemplate(r);
-                        if (r.IsEmptyElement) _templateXfs.Add(xf);
+                        if (r.IsEmptyElement) { budget.Charge(TemplateXfCost); _templateXfs.Add(xf); }
                         else { pending = xf; pendingDepth = r.Depth; }
                     }
                     continue;
@@ -418,6 +437,7 @@ namespace SheetStream.Styles
         {
             w.WriteStartDocument(true);
             XmlCopy.MoveToRoot(r);
+            if (r.IsEmptyElement) throw new System.IO.InvalidDataException("The workbook's styles part is empty. The file is damaged; open it in Excel and save it again.");
             XmlCopy.CopyStartElement(r, w);
             r.Read();
             var wroteNumFmts = false;

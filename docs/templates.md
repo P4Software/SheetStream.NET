@@ -44,6 +44,17 @@ Column widths, frozen panes, sheet protection, merged cells, validation and form
 
 New cell styles are fine: `package.Workbook.Styles.Create(...)` appends to the template's style table without disturbing the existing styles.
 
-## Untrusted templates
+The filled copy appears at the output path when `Save()` completes. Until then, and if the package is disposed without saving, nothing is written there.
 
-A template is meant to be a file your application owns. `OpenTemplate` loads the whole template into memory and does not apply the limits `ExcelReader` enforces on untrusted files (see [Reading workbooks](reading-workbooks.md)), so do not pass it a workbook a user uploaded without checking it first. Templates are parsed with DTD processing and external entities disabled, and the template file is never modified: `OpenTemplate` refuses to write to the same path it reads.
+## Templates from people you do not know
+
+`OpenTemplate` applies the same limits as `ExcelReader` to the template it loads (see [Reading workbooks](reading-workbooks.md#files-from-people-you-do-not-know)), so a workbook a user uploaded can be used as a template without it being able to exhaust memory. A template that goes over a limit is refused with an `InvalidDataException` naming the limit. The limits are on `PackageOptions.SourceLimits`:
+
+```csharp
+var options = new PackageOptions { SourceLimits = new ReaderOptions { MaxCellTextLength = 32_767, MaxLoadedPartBytes = 32 * 1024 * 1024 } };
+using var package = ExcelPackage.OpenTemplate(uploadedTemplate, output, leaveOpen: false, options);
+```
+
+Two things to know. The packed file itself is held in memory while the package is open, so cap the upload size in your web framework as you would for any upload. And comments and processing instructions inside the XML of a sheet you fill are not carried over to the copy; Excel writes neither, so this only affects files hand-edited as XML.
+
+Templates are parsed with DTD processing and external entities disabled, and the template file is never modified: `OpenTemplate` refuses to write to the same path it reads.

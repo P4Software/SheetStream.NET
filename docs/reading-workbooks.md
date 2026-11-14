@@ -41,7 +41,7 @@ DataTable table = reader.ReadDataTable("Products");                 // first row
 
 `Read<T>` treats the first row as the header and matches each header, ignoring case, to a writable property or field by `[SheetColumn]` name, `[DisplayName]` or member name. Columns that match nothing are ignored, blank rows are skipped, and a value that cannot be converted throws a `FormatException` naming the row, the column and the header. For trimmed or Native AOT applications pass a generated mapper, `reader.Read("Products", Product.SheetMapper)`; see [Trimming, Native AOT and the source generator](aot-and-source-generator.md).
 
-`ReadDataTable` names columns from the header row (a blank header gets its column letter, a duplicate gets a numeric suffix) and types every column as `object` so mixed columns survive. Pass `firstRowIsHeader: false` to get columns named A, B, C.
+`ReadDataTable` names columns from the header row (a blank header gets its column letter, a duplicate gets a numeric suffix) and types every column as `object` so mixed columns survive. Pass `firstRowIsHeader: false` to get columns named A, B, C. A table holds the whole sheet, so its size is limited by `ReaderOptions.MaxLoadedPartBytes` (256 MB by default, which is about 400,000 rows of ten numeric columns); for a sheet larger than that, read the rows or raise the limit.
 
 ## Merged cells and hyperlinks
 
@@ -71,20 +71,34 @@ The directory of a zip file is at its end, so a stream that cannot seek (an HTTP
 
 ## Files from people you do not know
 
-An `.xlsx` is a zip archive, so a file of a few hundred kilobytes can unpack into gigabytes. A workbook built that way can be 192 KB on the wire and hold a single cell of 200 million characters. `ExcelReader` refuses such files instead of running out of memory: it stops with an `InvalidDataException` whose message names the limit that was exceeded.
+An `.xlsx` is a zip archive, so a file of a few hundred kilobytes can unpack into gigabytes. A workbook built that way can be 192 KB on the wire and hold a single cell of 200 million characters. This library refuses such files instead of running out of memory: it stops with an `InvalidDataException` whose message names the limit that was exceeded. The limits apply wherever a workbook is opened: `ExcelReader`, and `ExcelPackage.OpenTemplate` and `ExcelPackage.Edit` through `PackageOptions.SourceLimits`.
 
 | Limit (`ReaderOptions`) | Default | What it bounds |
 |---|---|---|
 | `MaxCellTextLength` | 1,048,576 characters | The text of one cell or one shared string. Excel's own limit is 32,767 |
 | `MaxRowTextLength` | 16,777,216 characters | The text of one row across all its cells, not counting shared strings, which are stored once however many cells use them |
-| `MaxLoadedPartBytes` | 256 MB | The unpacked size of each part the reader holds in memory: shared strings, styles, the workbook and its relationships. Sheets are streamed and may be any size |
+| `MaxLoadedPartBytes` | 256 MB | The memory one workbook may make the library keep: shared strings, styles, the workbook and its relationships, and any sheet loaded for editing. No such part may unpack to more than this, and what they all take in memory once parsed is added up and may not exceed it either |
+| `MaxStreamedPartBytes` | 4 GB | The unpacked size of a part that is streamed and not kept: a sheet read row by row, a template sheet being filled, a part copied to the output. This one bounds time, not memory |
 
-A tag or attribute far longer than any real workbook contains, and XML nested more than 256 levels deep, are rejected as well.
+Some limits are fixed, because no real workbook comes near them:
 
-The defaults sit far above anything Excel writes. An import screen that expects ordinary data can be stricter:
+- XML nested more than 256 levels deep.
+- A single tag (an element with all its attributes) longer than `MaxCellTextLength` characters, or 65,536 if that is larger.
+- More than 16,384 different element and attribute names in one part. A real part uses a few hundred.
+- More than 16,384 cells in a row, Excel's last column.
+- A row number outside 1 to 1,048,576 in a sheet that is edited or filled.
+
+With the defaults, the most a hostile workbook can make the library hold is about `MaxLoadedPartBytes`, plus one row and the XML parser's buffers. In our tests, files built to exhaust memory, each about 100 MB unpacked, peaked at 65 MB of process memory or less through every way of opening them; the exception is a workbook whose shared strings are genuinely that large, which uses what the limit allows.
+
+The defaults sit far above anything Excel writes, so that unusual but genuine files still open. An endpoint that takes uploads from the public and expects ordinary data should be much stricter:
 
 ```csharp
-var options = new ReaderOptions { MaxCellTextLength = 32_767 };
+var options = new ReaderOptions
+{
+    MaxCellTextLength = 32_767,                 // Excel's own cell limit
+    MaxLoadedPartBytes = 32 * 1024 * 1024,      // at most 32 MB held for one workbook
+    MaxStreamedPartBytes = 256 * 1024 * 1024,   // at most 256 MB of sheet to process
+};
 using var reader = ExcelReader.Open(upload, leaveOpen: false, options);
 ```
 
@@ -92,10 +106,13 @@ If a genuine file is refused, the message tells you which property to raise.
 
 ### What a damaged file can throw
 
-Reading a file that is damaged, truncated or not a workbook at all ends in one of four exception types: `InvalidDataException`, `XmlException`, `FormatException` or `OverflowException`. Catch those around an import and report "this file could not be read" to the user. The reader is fuzz-tested in CI against that contract.
+Reading a file that is damaged, truncated, over a limit or not a workbook at all ends in one of four exception types: `InvalidDataException`, `XmlException`, `FormatException` or `OverflowException`. Catch those around an import and report "this file could not be read" to the user. The same four cover `OpenTemplate` and `Edit`. Asking for a sheet by a name the workbook does not have throws `ArgumentException`, as it does for any workbook.
+
+This is tested, not assumed. Every release runs about sixty kinds of hostile file through every way of opening a workbook, a second time in a process whose memory is capped, and feeds tens of thousands of randomly damaged files to the reader and to the template and edit code.
 
 ### What the limits do not cover
 
-`ExcelPackage.OpenTemplate` and `ExcelPackage.Edit` load the whole source workbook into memory and do not apply `ReaderOptions`. They are for workbooks your application owns. Do not pass them a file a user uploaded without checking it first; reading it with `ExcelReader` is the safe way to do that.
-
-Collecting rows is your decision too: `reader.ReadRows(...).ToList()` or `ReadDataTable` on a very large sheet holds every row, however carefully each one was read.
+- **The file as uploaded.** The limits bound what unpacking can add. The packed file itself is your web framework's to cap, with its request size limit. `OpenTemplate` and `Edit` keep the packed file in memory while the package is open; `ExcelReader` reads a seekable stream in place and copies one that cannot seek (see above).
+- **What you choose to collect.** `reader.ReadRows(...).ToList()` and `Read<T>(...).ToList()` hold every row, however carefully each one was read. Process rows as they come when the file is not yours. `ReadDataTable` is the exception: the table it builds is counted against `MaxLoadedPartBytes` and a sheet that would take more is refused.
+- **The work of streaming.** A sheet within `MaxStreamedPartBytes` is read for as long as it is. A row with one cell in the last column still yields sixteen thousand values, so a sheet of such rows costs far more time than its size on disk suggests. Lower `MaxStreamedPartBytes`, or pass a cancellation token to `ReadRowsAsync`, to bound the time one file may take.
+- **Text encodings.** Parts are read as UTF-8 or UTF-16, which is what the file format requires, or in the encoding their XML declaration names when the runtime provides it. A part in an encoding the runtime does not have is refused.

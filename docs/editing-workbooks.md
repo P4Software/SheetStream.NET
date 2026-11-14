@@ -23,9 +23,11 @@ Three ways to open:
 
 | Call | Writes to |
 |---|---|
-| `ExcelPackage.Edit("in.xlsx", "out.xlsx")` | A new file; the input is never touched |
-| `ExcelPackage.Edit("book.xlsx")` | The same file. The copy is built next to it as a temporary file and swapped in only when `Save()` succeeds. Without a `Save()` call (your code threw half-way, or you forgot it) nothing is written: the original is untouched and the temporary file is removed. The same holds when saving itself throws |
-| `ExcelPackage.Edit(inputStream, outputStream)` | A stream, for workbooks your application keeps somewhere other than disk (blob storage, a database). The whole input is loaded into memory and the reader's safety limits do not apply, so check the size of anything a user uploaded before passing it here |
+| `ExcelPackage.Edit("in.xlsx", "out.xlsx")` | A new file; the input is never touched. The output appears when `Save()` completes |
+| `ExcelPackage.Edit("book.xlsx")` | The same file. The copy is built next to it as a temporary file and swapped in only when `Save()` succeeds |
+| `ExcelPackage.Edit(inputStream, outputStream)` | A stream, for workbooks your application keeps somewhere other than disk (blob storage, a database) |
+
+In every form, nothing is committed without `Save()`. If your code throws half-way, or you forget the call, a file target is left exactly as it was and the temporary file is removed; the same holds when saving itself throws. A stream target cannot be undone, so one that was not saved holds an incomplete file: discard it.
 
 ## What happens on save
 
@@ -54,7 +56,8 @@ Rows appended below the original last row extend a table whose last row was the 
 
 ## Limits
 
-- **Size.** Editing holds the sheet in memory. A sheet with more than `PackageOptions.MaxEditableCells` cells (default 200,000) is refused with an `InvalidOperationException`; the rest of the package is unaffected, so you can still edit smaller sheets of the same file. For big sheets, fill a copy with [templates](templates.md) or write it from scratch with `Row()` streaming.
+- **Size.** Editing holds the sheet in memory. A sheet with more than `PackageOptions.MaxEditableCells` cells (default 200,000) is refused with an `InvalidDataException` before anything is loaded; the rest of the package is unaffected, so you can still edit smaller sheets of the same file. For big sheets, fill a copy with [templates](templates.md) or write it from scratch with `Row()` streaming.
+- **Workbooks from people you do not know.** `Edit` applies the same limits as `ExcelReader` to the workbook it loads, through `PackageOptions.SourceLimits`, so an uploaded file cannot exhaust memory: see [Reading workbooks](reading-workbooks.md#files-from-people-you-do-not-know). A file that goes over a limit, or is damaged, ends in `InvalidDataException`, `XmlException`, `FormatException` or `OverflowException`. The packed file itself is held in memory while the package is open, so cap the upload size as you would for any upload.
 - **Layout comes from the file.** Column widths, frozen panes, merges, validation, conditional formatting, hyperlinks, comments, charts and protection cannot be added to an edited sheet; change them in Excel. New sheets cannot be added either.
 - **Shared formulas.** Excel stores a formula filled down a column once, in a master cell the others point at. Changing or clearing that master cell throws `NotSupportedException` naming the cell, because the dependent cells would be left without a formula. Changing a dependent, or only the master's style, is fine. A dependent reports `Formula == null` (its text lives in the master).
 - **Dates in 1904-system workbooks** are read and written with the shifted epoch; everything else about the date system is left as it was.

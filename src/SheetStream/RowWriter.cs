@@ -376,6 +376,10 @@ namespace SheetStream
                 case char c: return WriteCell(c.ToString(), style);
                 case Guid g: return WriteCell(g.ToString(), style);
                 case Enum e: return WriteCell(e.ToString(), style);
+                // A style is not something a cell can hold. It gets here when it is passed among the values:
+                // WriteCells(style, "a", "b") binds to the overload that takes only values. Writing the style's
+                // type name into the sheet would be a silent mistake, so say what to write instead.
+                case CellStyle _: throw new ArgumentException("A CellStyle was passed as a cell value. Use WriteCell(value, style) for one cell, or WriteCells(style, new[] { \"a\", \"b\" }) for several: the values go in a collection after the style.", nameof(value));
                 case IFormattable fmt: return WriteCell(fmt.ToString(null, CultureInfo.InvariantCulture), style);
                 default: return WriteCell(value.ToString(), style);
             }
@@ -390,6 +394,11 @@ namespace SheetStream
         }
 
         /// <summary>Writes several cells from left to right, all with the same style.</summary>
+        /// <example><code>sheet.Row(1).WriteCells(bold, new[] { "Id", "Customer", "Amount" });</code></example>
+        /// <remarks>
+        /// The values are a collection, not a list of arguments. <c>WriteCells(bold, "Id", "Customer")</c> binds
+        /// to <see cref="WriteCells(object?[])"/> with the style as its first value, and throws to say so.
+        /// </remarks>
         public RowWriter WriteCells(CellStyle? style, IEnumerable<object?> values)
         {
             if (values == null) throw new ArgumentNullException(nameof(values));

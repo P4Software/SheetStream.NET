@@ -65,28 +65,66 @@ namespace SheetStream.Internal
             return new RangeReference(Math.Min(r1, r2), Math.Min(c1, c2), Math.Max(r1, r2), Math.Max(c1, c2));
         }
 
+        /// <summary>
+        /// Parses "B2" or "B2:D10" like <see cref="Parse"/>, returning false for anything else instead of
+        /// throwing. For ranges read from a workbook this library did not write: an exception costs
+        /// microseconds, and a file can hold hundreds of thousands of tokens that are not ranges.
+        /// </summary>
+        public static bool TryParse(string? text, out RangeReference range)
+        {
+            range = default;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var s = text!.Trim();
+            var colon = s.IndexOf(':');
+            if (colon < 0)
+            {
+                if (!TryParseCell(s, 0, s.Length, out var row, out var column)) return false;
+                range = new RangeReference(row, column, row, column);
+                return true;
+            }
+            if (s.IndexOf(':', colon + 1) >= 0) return false;
+            if (!TryParseCell(s, 0, colon, out var r1, out var c1) || !TryParseCell(s, colon + 1, s.Length, out var r2, out var c2)) return false;
+            range = new RangeReference(Math.Min(r1, r2), Math.Min(c1, c2), Math.Max(r1, r2), Math.Max(c1, c2));
+            return true;
+        }
+
         /// <summary>Parses one A1 cell reference into (row, column).</summary>
         public static (int Row, int Column) ParseCell(string cell, string? context = null)
         {
             var s = cell.Trim();
-            var i = 0;
-            if (i < s.Length && s[i] == '$') i++;
-            var column = 0;
-            var letters = 0;
-            while (i < s.Length && ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')))
-            {
-                column = column * 26 + (char.ToUpperInvariant(s[i]) - 'A' + 1);
-                letters++;
-                i++;
-            }
-            if (i < s.Length && s[i] == '$') i++;
-            var digitsStart = i;
-            while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
-            if (letters == 0 || letters > 3 || digitsStart == i || i != s.Length
-                || !int.TryParse(s.Substring(digitsStart), NumberStyles.None, CultureInfo.InvariantCulture, out var row)
-                || row < 1 || row > CellReference.MaxRows || column > CellReference.MaxColumns)
+            if (!TryParseCell(s, 0, s.Length, out var row, out var column))
                 throw new ArgumentException($"'{context ?? cell}' is not a valid A1 cell reference.", nameof(cell));
             return (row, column);
+        }
+
+        /// <summary>Parses the A1 cell reference in <paramref name="s"/> between two positions, without allocating.</summary>
+        private static bool TryParseCell(string s, int start, int end, out int row, out int column)
+        {
+            row = 0;
+            column = 0;
+            while (start < end && char.IsWhiteSpace(s[start])) start++;
+            while (end > start && char.IsWhiteSpace(s[end - 1])) end--;
+            var i = start;
+            if (i < end && s[i] == '$') i++;
+            var letters = 0;
+            while (i < end && ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z')))
+            {
+                if (++letters > 3) return false;
+                column = column * 26 + ((s[i] & ~0x20) - 'A' + 1);
+                i++;
+            }
+            if (i < end && s[i] == '$') i++;
+            var digits = 0;
+            long value = 0;
+            while (i < end && s[i] >= '0' && s[i] <= '9')
+            {
+                if (++digits > 7) return false; // Excel's last row has seven digits.
+                value = value * 10 + (s[i] - '0');
+                i++;
+            }
+            if (letters == 0 || digits == 0 || i != end || value < 1 || value > CellReference.MaxRows || column > CellReference.MaxColumns) return false;
+            row = (int)value;
+            return true;
         }
 
         /// <summary>
