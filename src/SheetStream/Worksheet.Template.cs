@@ -48,13 +48,28 @@ namespace SheetStream
             }
         }
 
+        /// <summary>
+        /// Releases the AutoFit spill file and the template reader of a sheet that will never be sealed,
+        /// because its package was disposed without being saved. Without this the spill file would stay on
+        /// disk until the garbage collector got round to its handle.
+        /// </summary>
+        internal void Abandon()
+        {
+            try { _spill?.Dispose(); } catch (System.IO.IOException) { }
+            _spill = null;
+            try { _templateReader?.Dispose(); } catch (System.Xml.XmlException) { } catch (System.IO.IOException) { }
+            _templateReader = null;
+            _templateArchive?.Dispose();
+            _templateArchive = null;
+        }
+
         internal void AttachTemplate(TemplateSource source, string part)
         {
             _templateSource = source;
             TemplatePart = part;
             _templateArchive = source.OpenArchive();
             _templateReader = source.OpenXml(_templateArchive, part)
-                ?? throw new InvalidOperationException($"The template has no part '{part}' for sheet '{Name}'.");
+                ?? throw new System.IO.InvalidDataException($"The workbook lists sheet '{Name}' but has no part '{part}' for it. The file is damaged.");
         }
 
         /// <summary>
@@ -62,13 +77,31 @@ namespace SheetStream
         /// rows can look exactly like the designer intended. Returns the default style when the cell has none.
         /// </summary>
         /// <example><code>var money = sheet.TemplateStyle("D5");</code></example>
+        /// <remarks>
+        /// Call it once per cell, before the row loop, and keep the result. The first question about a cell
+        /// reads the template sheet from the top down to that cell's row; the answer is then remembered, so
+        /// asking again costs nothing.
+        /// </remarks>
         public CellStyle TemplateStyle(string cell)
         {
             if (_templateSource == null) throw new InvalidOperationException("TemplateStyle is only available on sheets opened from a template.");
             var (row, column) = RangeReference.ParseCell(cell);
             var wanted = CellReference.ToA1(row, column);
+            if (_templateStyles != null && _templateStyles.TryGetValue(wanted, out var known)) return known;
+            var found = FindTemplateStyle(row, wanted);
+            (_templateStyles ??= new Dictionary<string, CellStyle>(StringComparer.Ordinal))[wanted] = found;
+            return found;
+        }
+
+        // Answers already given by TemplateStyle, by cell address. A caller that asks inside its row loop
+        // would otherwise re-read the sheet for every row it writes.
+        private Dictionary<string, CellStyle>? _templateStyles;
+
+        private CellStyle FindTemplateStyle(int row, string wanted)
+        {
+            if (_templateSource == null) throw new InvalidOperationException("TemplateStyle is only available on sheets opened from a template.");
             using (var archive = _templateSource.OpenArchive())
-            using (var r = _templateSource.OpenXml(archive, TemplatePart!)!)
+            using (var r = _templateSource.OpenRequiredXml(archive, TemplatePart!))
             {
                 while (r.Read())
                 {
@@ -147,7 +180,11 @@ namespace SheetStream
             {
                 if (r.NodeType == XmlNodeType.Element && r.LocalName == "row")
                 {
-                    _templateRowAhead = TemplateSource.Int(r.GetAttribute("r")) ?? _templateLastRow + 1;
+                    var number = TemplateSource.Int(r.GetAttribute("r")) ?? _templateLastRow + 1;
+                    // The number indexes per-row bookkeeping further on, so one outside Excel's range must stop here.
+                    if (number < 1 || number > CellReference.MaxRows)
+                        throw new System.IO.InvalidDataException($"Template sheet '{Name}' has a row numbered {number}, outside Excel's range. The file is damaged.");
+                    _templateRowAhead = number;
                     return;
                 }
                 if (r.NodeType == XmlNodeType.EndElement && r.LocalName == "sheetData")
@@ -266,9 +303,8 @@ namespace SheetStream
             foreach (var part in parts)
             {
                 if (sb.Length > 0) sb.Append(' ');
-                RangeReference range;
-                try { range = RangeReference.Parse(part); }
-                catch (ArgumentException) { sb.Append(part); continue; } // Whole columns or other forms: leave alone.
+                // Whole columns, names and anything else that is not a plain range: leave alone.
+                if (!RangeReference.TryParse(part, out var range)) { sb.Append(part); continue; }
                 var covers = isSqref
                     ? range.FromRow <= band.First && range.ToRow >= band.First
                     : range.FromRow < band.First && range.ToRow >= band.First - 1;

@@ -130,9 +130,12 @@ namespace SheetStream.Reading
             if (sheetIndex < 0 || sheetIndex >= _sheets.Count) throw new ArgumentOutOfRangeException(nameof(sheetIndex), sheetIndex, $"The workbook has {_sheets.Count} sheet(s).");
             var part = _sheets[sheetIndex].Part;
             Dictionary<string, string>? externalTargets = null; // Loaded lazily: only sheets with external links pay for the .rels read.
+            // What this call collects is handed to the caller, so it has a budget of its own: charging the
+            // reader's would make a second call on a large genuine sheet fail where the first succeeded.
+            var held = new MemoryBudget(_options.MaxLoadedPartBytes);
 
             // A sheet is streamed, not loaded, so it gets the token guard but no size cap.
-            using (var xr = XmlReader.Create(Guard(SheetEntry(sheetIndex), long.MaxValue), SheetSettings(async: false)))
+            using (var xr = XmlReader.Create(Guard(SheetEntry(sheetIndex), held: false), SheetSettings(async: false)))
             {
                 // Cursor discipline: every branch leaves the reader on the next unread node, so the loop never
                 // calls Read() after a method that already advanced it (Skip and the collectors both do).
@@ -148,12 +151,12 @@ namespace SheetStream.Reading
                     }
                     if (merges != null && xr.LocalName == "mergeCells")
                     {
-                        CollectMerges(xr, merges);
+                        CollectMerges(xr, merges, held);
                         continue;
                     }
                     if (links != null && xr.LocalName == "hyperlinks")
                     {
-                        CollectHyperlinks(xr, links, part, ref externalTargets);
+                        CollectHyperlinks(xr, links, part, ref externalTargets, held);
                         continue;
                     }
                     Advance(xr);
@@ -162,7 +165,7 @@ namespace SheetStream.Reading
         }
 
         /// <summary>Reads the children of a <c>mergeCells</c> element (positioned on its start) and leaves the reader on the node after it.</summary>
-        private static void CollectMerges(XmlReader xr, List<MergedRange> merges)
+        private static void CollectMerges(XmlReader xr, List<MergedRange> merges, MemoryBudget held)
         {
             if (xr.IsEmptyElement) { Advance(xr); return; }
             var depth = xr.Depth;
@@ -175,6 +178,7 @@ namespace SheetStream.Reading
                     if (reference != null && TryParseRange(reference, out var r))
                     {
                         if (merges.Count >= MaxSheetAnnotations) ThrowTooManyAnnotations("merged ranges");
+                        held.Charge(96); // The range object and its text, which is at most a few dozen characters.
                         merges.Add(new MergedRange(r.FromRow, r.FromColumn, r.ToRow, r.ToColumn, r.ToString()));
                     }
                     SkipElement(xr); // A mergeCell has no children we care about; this also handles the empty-element form.
@@ -186,7 +190,7 @@ namespace SheetStream.Reading
         }
 
         /// <summary>Reads the children of a <c>hyperlinks</c> element (positioned on its start) and leaves the reader on the node after it.</summary>
-        private void CollectHyperlinks(XmlReader xr, List<ExcelHyperlink> links, string sheetPart, ref Dictionary<string, string>? externalTargets)
+        private void CollectHyperlinks(XmlReader xr, List<ExcelHyperlink> links, string sheetPart, ref Dictionary<string, string>? externalTargets, MemoryBudget held)
         {
             if (xr.IsEmptyElement) { Advance(xr); return; }
             var depth = xr.Depth;
@@ -203,13 +207,17 @@ namespace SheetStream.Reading
                         var rid = xr.GetAttribute("id", OpenXmlNamespaces.Relationships);
                         if (rid != null)
                         {
-                            if (externalTargets == null) externalTargets = LoadHyperlinkTargets(sheetPart);
+                            if (externalTargets == null) externalTargets = LoadHyperlinkTargets(sheetPart, held);
                             externalTargets.TryGetValue(rid, out url); // A dangling id simply yields no URL.
                         }
                         var location = xr.GetAttribute("location");
                         var tooltip = xr.GetAttribute("tooltip");
                         var display = xr.GetAttribute("display");
                         if (links.Count >= MaxSheetAnnotations) ThrowTooManyAnnotations("hyperlinks");
+                        // A link's texts are attributes, each as long as a tag may be, so a count limit alone
+                        // would let a sheet of long tooltips grow without bound. The URL is shared with the
+                        // relationship list and was charged there.
+                        held.Charge(2L * ((location?.Length ?? 0) + (tooltip?.Length ?? 0) + (display?.Length ?? 0)) + 160);
                         links.Add(new ExcelHyperlink(r.FromRow, r.FromColumn, url,
                             string.IsNullOrEmpty(location) ? null : location,
                             tooltip == null ? null : Decode(tooltip),
@@ -228,13 +236,13 @@ namespace SheetStream.Reading
         /// targets are kept verbatim: they are absolute URIs (or user file paths), not package-relative parts,
         /// so <see cref="Resolve"/> must not touch them.
         /// </summary>
-        private Dictionary<string, string> LoadHyperlinkTargets(string sheetPart)
+        private Dictionary<string, string> LoadHyperlinkTargets(string sheetPart, MemoryBudget held)
         {
             // Same convention LoadWorkbook uses for the workbook: "<folder>/_rels/<file>.rels".
             var folder = sheetPart.Contains("/") ? sheetPart.Substring(0, sheetPart.LastIndexOf('/') + 1) : "";
             var relsPart = folder + "_rels/" + sheetPart.Substring(folder.Length) + ".rels";
             var targets = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var rel in ReadRelationships(relsPart))
+            foreach (var rel in ReadRelationships(relsPart, held))
                 if (rel.Type.EndsWith("/hyperlink", StringComparison.Ordinal)) targets[rel.Id] = rel.Target;
             return targets;
         }
@@ -243,20 +251,6 @@ namespace SheetStream.Reading
             => throw new InvalidDataException($"The sheet lists more than {MaxSheetAnnotations:N0} {what}. The file is damaged or not a genuine workbook.");
 
         /// <summary>Parses an A1 cell or range, returning false (instead of throwing) for anything malformed.</summary>
-        private static bool TryParseRange(string text, out RangeReference range)
-        {
-            try
-            {
-                range = RangeReference.Parse(text);
-                return true;
-            }
-            catch (ArgumentException)
-            {
-                // RangeReference.Parse reports bad input through ArgumentException (and its subclass
-                // ArgumentOutOfRangeException for out-of-sheet corners); both mean "ignore this entry".
-                range = default;
-                return false;
-            }
-        }
+        private static bool TryParseRange(string text, out RangeReference range) => RangeReference.TryParse(text, out range);
     }
 }

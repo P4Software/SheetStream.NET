@@ -31,28 +31,28 @@ namespace SheetStream
                 throw new ArgumentException("The output must be a different file from the template, so the template is never overwritten.", nameof(outputPath));
             TemplateSource source;
             using (var input = new FileStream(templatePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                source = TemplateSource.Load(input);
-            var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16);
-            try
-            {
-                var package = new ExcelPackage(stream, leaveOpen: false, options);
-                package.Workbook.AttachTemplate(source);
-                return package;
-            }
-            catch
-            {
-                stream.Dispose();
-                throw;
-            }
+                source = TemplateSource.Load(input, (options ?? PackageOptions.Default).SourceLimits);
+            return ToFile(Path.GetFullPath(outputPath), options, source);
         }
 
         /// <summary>Opens a template from a stream and writes the filled copy to <paramref name="output"/>.</summary>
         public static ExcelPackage OpenTemplate(Stream template, Stream output, bool leaveOpen = false, PackageOptions? options = null)
         {
-            var source = TemplateSource.Load(template);
-            var package = new ExcelPackage(output, leaveOpen, options);
-            package.Workbook.AttachTemplate(source);
-            return package;
+            if (output == null) throw new ArgumentNullException(nameof(output));
+            try
+            {
+                var source = TemplateSource.Load(template, (options ?? PackageOptions.Default).SourceLimits);
+                var package = new ExcelPackage(output, leaveOpen: true, options);
+                package.Workbook.AttachTemplate(source);
+                package._leaveOpen = leaveOpen;
+                return package;
+            }
+            catch
+            {
+                // No package reaches the caller, so an output stream it handed over is released here.
+                if (!leaveOpen) output.Dispose();
+                throw;
+            }
         }
 
         /// <summary>
@@ -81,18 +81,18 @@ namespace SheetStream
 
                 if (template.SharedStringsPart != null)
                 {
-                    using (var r = template.OpenXml(archive, template.SharedStringsPart)!)
+                    using (var r = template.OpenRequiredXml(archive, template.SharedStringsPart))
                     using (var w = OpenPart(template.SharedStringsPart))
                         Workbook.SharedStrings.WriteTo(w, r);
                     written.Add(template.SharedStringsPart);
                 }
 
-                using (var r = template.OpenXml(archive, template.StylesPart!)!)
+                using (var r = template.OpenRequiredXml(archive, template.StylesPart!))
                 using (var w = OpenPart(template.StylesPart!))
                     Workbook.Styles.WriteMerged(r, w);
                 written.Add(template.StylesPart!);
 
-                using (var r = template.OpenXml(archive, template.WorkbookPart)!)
+                using (var r = template.OpenRequiredXml(archive, template.WorkbookPart))
                 using (var w = OpenPart(template.WorkbookPart))
                     WriteTemplateWorkbook(r, w);
                 written.Add(template.WorkbookPart);
@@ -100,12 +100,12 @@ namespace SheetStream
                 // The calculation chain lists formula cells in evaluation order; after filling it is stale, and a
                 // stale chain makes Excel offer a repair. Drop it with its relationship and content type.
                 var workbookRels = TemplateSource.RelsPartOf(template.WorkbookPart);
-                using (var r = template.OpenXml(archive, workbookRels)!)
+                using (var r = template.OpenRequiredXml(archive, workbookRels))
                 using (var w = OpenPart(workbookRels))
                     CopyWithout(r, w, x => x.LocalName == "Relationship" && (x.GetAttribute("Type") ?? "").EndsWith("/calcChain", StringComparison.Ordinal));
                 written.Add(workbookRels);
 
-                using (var r = template.OpenXml(archive, "[Content_Types].xml")!)
+                using (var r = template.OpenRequiredXml(archive, "[Content_Types].xml"))
                 using (var w = OpenPart("[Content_Types].xml"))
                     CopyWithout(r, w, x => x.LocalName == "Override" && template.CalcChainPart != null
                         && string.Equals((x.GetAttribute("PartName") ?? "").TrimStart('/'), template.CalcChainPart, StringComparison.OrdinalIgnoreCase));
@@ -122,10 +122,22 @@ namespace SheetStream
                     written.Add(pair.Key);
                 }
 
+                // Everything else is copied as it is. The names come from a file this library did not write,
+                // so each is checked before it goes into the output, and the copy as a whole is capped: a zip
+                // directory can point thousands of names at one compressed block, which would otherwise make
+                // a file of a few hundred kilobytes unpack and repack for hours.
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var remaining = template.Limits.MaxStreamedPartBytes;
                 foreach (var entry in archive.Entries)
                 {
-                    if (written.Contains(entry.FullName) || entry.FullName.EndsWith("/", StringComparison.Ordinal)) continue;
-                    using (var source = entry.Open()) WriteRawPart(entry.FullName, source);
+                    var name = entry.FullName;
+                    if (name.EndsWith("/", StringComparison.Ordinal)) continue; // A folder entry carries nothing.
+                    if (!TemplateSource.IsWritablePartName(name))
+                        throw new InvalidDataException($"The workbook contains a part whose name is not a valid part name ('{(name.Length > 60 ? name.Substring(0, 60) + "..." : name)}'). The file is damaged or not a genuine workbook.");
+                    if (!names.Add(name))
+                        throw new InvalidDataException($"The workbook contains more than one part named '{name}'. The file is damaged or not a genuine workbook.");
+                    if (written.Contains(name)) continue;
+                    using (var source = entry.Open()) remaining -= WriteRawPart(name, source, remaining);
                 }
             }
 
@@ -134,12 +146,29 @@ namespace SheetStream
             _output.Flush();
         }
 
-        /// <summary>Copies a part as raw bytes (images, printer settings, custom XML, untouched sheets).</summary>
-        private void WriteRawPart(string entryName, Stream source)
+        /// <summary>
+        /// Copies a part as raw bytes (images, printer settings, custom XML, untouched sheets). Nothing is
+        /// held, but the copy takes as long as the part unpacks, so it is capped like any other streamed part.
+        /// </summary>
+        /// <returns>The number of bytes copied.</returns>
+        private long WriteRawPart(string entryName, Stream source, long maxBytes)
         {
             if (_openPart != null) throw new InvalidOperationException($"Cannot write part '{entryName}' while another part is still being written.");
             var entry = _archive!.CreateEntry(entryName, Options.CompressionLevel);
-            using (var target = entry.Open()) source.CopyTo(target);
+            using (var target = entry.Open())
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (total > maxBytes)
+                        throw new InvalidDataException($"The parts of the workbook that are copied unchanged unpack to more than {Workbook.Template!.Limits.MaxStreamedPartBytes:N0} bytes in all (reached in '{entryName}'). The file is damaged or was built to waste processing time. If it is genuine, raise ReaderOptions.MaxStreamedPartBytes.");
+                    target.Write(buffer, 0, read);
+                }
+                return total;
+            }
         }
 
         /// <summary>
@@ -152,6 +181,7 @@ namespace SheetStream
             var afterCalc = new HashSet<string> { "oleSize", "customWorkbookViews", "pivotCaches", "smartTagPr", "smartTagTypes", "webPublishing", "fileRecoveryPr", "webPublishObjects", "extLst" };
             w.WriteStartDocument(true);
             XmlCopy.MoveToRoot(r);
+            if (r.IsEmptyElement) throw new InvalidDataException("The workbook part is empty: it lists no sheets. The file is damaged.");
             XmlCopy.CopyStartElement(r, w);
             r.Read();
             var wroteCalc = false;
@@ -197,6 +227,10 @@ namespace SheetStream
         {
             w.WriteStartDocument(true);
             XmlCopy.MoveToRoot(r);
+            // The elements to drop are children. If the root itself matches, the part is not what its name
+            // says it is, and copying "nothing" would leave a document without a root element.
+            if (drop(r))
+                throw new InvalidDataException($"A part of the workbook starts with a '{r.LocalName}' element where its container element belongs. The file is damaged.");
             XmlCopy.CopySubtree(r, w, null, drop);
             w.WriteEndDocument();
         }

@@ -13,14 +13,38 @@ namespace SheetStream.Internal
     /// are small (a styled header and a data area), so holding the bytes is cheap and lets several readers
     /// open parts independently.
     /// </summary>
+    /// <remarks>
+    /// The packed file is held as it arrived, so its size is the caller's to bound (an upload size limit).
+    /// What this class bounds is what unpacking can add: every part is opened through <see cref="OpenXml"/>,
+    /// which applies the same limits as <see cref="Reading.ExcelReader"/>, because a workbook handed to
+    /// <c>OpenTemplate</c> or <c>Edit</c> may be one a user uploaded.
+    /// </remarks>
     internal sealed class TemplateSource
     {
         private readonly byte[] _bytes;
 
-        private TemplateSource(byte[] bytes)
+        private TemplateSource(byte[] bytes, Reading.ReaderOptions limits)
         {
             _bytes = bytes;
+            Limits = limits;
+            Budget = new MemoryBudget(limits.MaxLoadedPartBytes);
         }
+
+        /// <summary>
+        /// What the template makes the package keep in memory: its shared strings, styles, sheet list and any
+        /// sheets loaded for editing, all charged against <see cref="Reading.ReaderOptions.MaxLoadedPartBytes"/>.
+        /// </summary>
+        public MemoryBudget Budget { get; }
+
+        /// <summary>Limits applied to everything read out of the template.</summary>
+        public Reading.ReaderOptions Limits { get; }
+
+        /// <summary>
+        /// Called when reading any part of the template fails. The package uses it to give up on saving: a
+        /// workbook built from a template that could not be read is not one to write out, and trying to would
+        /// replace the error that explains the problem with a confusing one from the half-written output.
+        /// </summary>
+        public Action? ReadFailed { get; set; }
 
         /// <summary>Path of the workbook part, normally <c>xl/workbook.xml</c>.</summary>
         public string WorkbookPart { get; private set; } = "xl/workbook.xml";
@@ -62,30 +86,52 @@ namespace SheetStream.Internal
             var texts = new List<string>(SharedStringCount);
             if (SharedStringsPart != null)
             {
-                // A template is a file the application chose, held in memory whole already, so no limits apply.
-                var state = Reading.ExcelReader.TextState.Unlimited();
+                // The table as a whole is bounded by MaxLoadedPartBytes; each item by the cell text limit.
+                var state = new Reading.ExcelReader.TextState(Limits.MaxCellTextLength, long.MaxValue);
                 using (var archive = OpenArchive())
-                using (var r = OpenXml(archive, SharedStringsPart))
+                using (var r = OpenXml(archive, SharedStringsPart, held: true))
                 {
                     while (r != null && r.Read())
-                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "si")
-                            texts.Add(r.IsEmptyElement ? "" : Reading.ExcelReader.ReadRichText(r, state));
+                    {
+                        // Depth 1: the table's own items. An "si" nested in an extension element is not one.
+                        if (r.NodeType != XmlNodeType.Element || r.LocalName != "si" || r.Depth != 1) continue;
+                        state.BeginCell();
+                        var item = r.IsEmptyElement ? "" : Reading.ExcelReader.ReadRichText(r, state);
+                        Budget.ChargeText(item);
+                        texts.Add(item);
+                    }
                 }
             }
             return _sharedStringTexts = texts;
         }
 
         /// <summary>Loads a template from a stream (copied into memory) and parses its structure.</summary>
-        public static TemplateSource Load(Stream stream)
+        public static TemplateSource Load(Stream stream, Reading.ReaderOptions limits)
         {
             if (stream == null) throw new ArgumentNullException(nameof(stream));
             byte[] bytes;
-            using (var ms = new MemoryStream())
+            if (stream.CanSeek)
             {
-                stream.CopyTo(ms);
-                bytes = ms.ToArray();
+                // The size is known, so read into an array of exactly that size: growing a buffer and then
+                // copying it out would hold the file three times over for a moment.
+                var length = stream.Length - stream.Position;
+                if (length > int.MaxValue - 64)
+                    throw new InvalidDataException("The workbook is larger than 2 GB, which cannot be loaded as a template or for editing.");
+                bytes = new byte[(int)length];
+                var filled = 0;
+                int read;
+                while (filled < bytes.Length && (read = stream.Read(bytes, filled, bytes.Length - filled)) > 0) filled += read;
+                if (filled < bytes.Length) Array.Resize(ref bytes, filled); // The stream ended before its reported length.
             }
-            var source = new TemplateSource(bytes);
+            else
+            {
+                using (var ms = new MemoryStream())
+                {
+                    stream.CopyTo(ms);
+                    bytes = ms.ToArray();
+                }
+            }
+            var source = new TemplateSource(bytes, limits);
             source.Parse();
             return source;
         }
@@ -95,7 +141,7 @@ namespace SheetStream.Internal
         {
             try
             {
-                return new ZipArchive(new MemoryStream(_bytes, writable: false), ZipArchiveMode.Read);
+                return ZipDirectory.Open(new MemoryStream(_bytes, writable: false));
             }
             catch (InvalidDataException ex)
             {
@@ -103,12 +149,78 @@ namespace SheetStream.Internal
             }
         }
 
-        /// <summary>Opens a part of the template as an XML reader, or returns null if it does not exist.</summary>
-        public XmlReader? OpenXml(ZipArchive archive, string part)
+        /// <summary>
+        /// Opens a part of the template as an XML reader, or returns null if it does not exist. This is the only
+        /// way template XML is read, so the limits hold for every caller: long tags, long CDATA sections and
+        /// deep nesting are refused by the reader itself.
+        /// </summary>
+        /// <param name="archive">An archive from <see cref="OpenArchive"/>.</param>
+        /// <param name="part">Part path inside the package.</param>
+        /// <param name="held">
+        /// True when the caller keeps what it reads (shared strings, styles, the workbook, relationships, a sheet
+        /// loaded for editing): the part is then capped at <see cref="Reading.ReaderOptions.MaxLoadedPartBytes"/>.
+        /// False for parts that are streamed through to the output, capped at
+        /// <see cref="Reading.ReaderOptions.MaxStreamedPartBytes"/>.
+        /// </param>
+        public XmlReader? OpenXml(ZipArchive archive, string part, bool held = false)
         {
             var entry = archive.GetEntry(part);
-            return entry == null ? null : XmlReader.Create(entry.Open(), XmlCopy.ReaderSettings);
+            if (entry == null) return null;
+            var text = new GuardedPartReader(entry.Open(), part, held ? Limits.MaxLoadedPartBytes : Limits.MaxStreamedPartBytes, held, Limits.MaxTokenChars, Limits.MaxTagChars);
+            return new DepthGuardedXmlReader(XmlReader.Create(text, XmlCopy.ReaderSettings()), () => ReadFailed?.Invoke());
         }
+
+        // Names of the entries in the package, read once: looking a part up must not cost a pass over the
+        // archive's directory each time.
+        private HashSet<string>? _partNames;
+
+        /// <summary>True when the package contains a part with exactly this name.</summary>
+        public bool HasPart(string part)
+        {
+            if (_partNames == null)
+            {
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                using (var archive = OpenArchive())
+                    foreach (var entry in archive.Entries) names.Add(entry.FullName);
+                _partNames = names;
+            }
+            return part.Length > 0 && _partNames.Contains(part);
+        }
+
+        /// <summary>
+        /// True when <paramref name="name"/> is a name a package part can have and this library is willing to
+        /// write into its output: a relative path of plain segments. Refused are empty names, names that
+        /// start with a slash or contain a backslash, "." and ".." segments (a zip written with those can
+        /// place a file outside the folder it is unpacked into), control characters, and names too long to be
+        /// a part of any real workbook.
+        /// </summary>
+        public static bool IsWritablePartName(string name)
+        {
+            if (name.Length == 0 || name.Length > 1024 || name[0] == '/') return false;
+            var segmentStart = 0;
+            for (var i = 0; i <= name.Length; i++)
+            {
+                if (i < name.Length)
+                {
+                    var c = name[i];
+                    if (c == '\\' || c < ' ') return false;
+                    if (c != '/') continue;
+                }
+                var length = i - segmentStart;
+                if (length == 0) return false;
+                if (name[segmentStart] == '.' && (length == 1 || (length == 2 && name[segmentStart + 1] == '.'))) return false;
+                segmentStart = i + 1;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Opens a part the workbook says it has. A relationship that points at a part which is not in the
+        /// package is damage, and is reported as such instead of surfacing later as a null reference.
+        /// </summary>
+        public XmlReader OpenRequiredXml(ZipArchive archive, string part, bool held = false)
+            => OpenXml(archive, part, held)
+               ?? throw new InvalidDataException($"The workbook refers to a part '{part}' that is not in the file. The file is damaged.");
 
         /// <summary>Relationships of a part: id, type and target resolved to a package path.</summary>
         public List<(string Id, string Type, string Target)> ReadRelationships(ZipArchive archive, string sourcePart)
@@ -116,14 +228,18 @@ namespace SheetStream.Internal
             var folder = sourcePart.Contains("/") ? sourcePart.Substring(0, sourcePart.LastIndexOf('/') + 1) : "";
             var relsPart = folder + "_rels/" + sourcePart.Substring(folder.Length) + ".rels";
             var list = new List<(string, string, string)>();
-            using (var r = OpenXml(archive, relsPart))
+            using (var r = OpenXml(archive, relsPart, held: true))
             {
                 if (r == null) return list;
                 while (r.Read())
                 {
                     if (r.NodeType != XmlNodeType.Element || r.LocalName != "Relationship") continue;
                     if (r.GetAttribute("TargetMode") == "External") continue;
-                    list.Add((r.GetAttribute("Id") ?? "", r.GetAttribute("Type") ?? "", Resolve(folder, r.GetAttribute("Target") ?? "")));
+                    var id = r.GetAttribute("Id") ?? "";
+                    var type = r.GetAttribute("Type") ?? "";
+                    var target = Resolve(folder, r.GetAttribute("Target") ?? "");
+                    Budget.Charge(2L * (id.Length + type.Length + target.Length) + 128);
+                    list.Add((id, type, target));
                 }
             }
             return list;
@@ -154,20 +270,38 @@ namespace SheetStream.Internal
                     else if (rel.Type.EndsWith("/calcChain", StringComparison.Ordinal)) CalcChainPart = rel.Target;
                 }
 
-                using (var r = OpenXml(archive, WorkbookPart) ?? throw new InvalidDataException("The template has no workbook part."))
+                var sheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var sheetParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                using (var r = OpenXml(archive, WorkbookPart, held: true) ?? throw new InvalidDataException("The template has no workbook part."))
                 {
                     while (r.Read())
                     {
                         if (r.NodeType != XmlNodeType.Element) continue;
+                        // Only the workbook's own workbookPr: Excel writes an x15:workbookPr in an extension
+                        // list as well, and that one must not reset the date system. See ExcelReader.LoadWorkbook.
                         if (r.LocalName == "workbookPr")
                         {
-                            var d = r.GetAttribute("date1904");
-                            Date1904 = d == "1" || string.Equals(d, "true", StringComparison.OrdinalIgnoreCase);
+                            if (r.Depth == 1 && r.NamespaceURI == OpenXmlNamespaces.Main)
+                            {
+                                var d = r.GetAttribute("date1904");
+                                Date1904 = d == "1" || string.Equals(d, "true", StringComparison.OrdinalIgnoreCase);
+                            }
                             continue;
                         }
-                        if (r.LocalName != "sheet") continue;
+                        if (r.LocalName != "sheet" || r.NamespaceURI != OpenXmlNamespaces.Main) continue;
                         var rid = r.GetAttribute("id", OpenXmlNamespaces.Relationships) ?? "";
-                        if (targets.TryGetValue(rid, out var part)) Sheets.Add((r.GetAttribute("name") ?? "", part));
+                        if (targets.TryGetValue(rid, out var part))
+                        {
+                            var name = r.GetAttribute("name") ?? "";
+                            Budget.Charge(4L * (name.Length + part.Length) + 192);
+                            // Excel allows neither; here two sheets with one name could not be told apart, and
+                            // two sheets sharing a part would be written to the output twice.
+                            if (!sheetNames.Add(name))
+                                throw new InvalidDataException($"The workbook has more than one sheet named '{name}'. The file is damaged.");
+                            if (!sheetParts.Add(part))
+                                throw new InvalidDataException($"Two sheets of the workbook point at the same part '{part}'. The file is damaged.");
+                            Sheets.Add((name, part));
+                        }
                     }
                 }
 
@@ -179,29 +313,40 @@ namespace SheetStream.Internal
         /// <summary>Counts the template's shared strings and indexes the plain ones for reuse.</summary>
         private void ParseSharedStrings(ZipArchive archive)
         {
-            using (var r = OpenXml(archive, SharedStringsPart!))
+            using (var r = OpenXml(archive, SharedStringsPart!, held: true))
             {
                 if (r == null) return;
+                // The table as a whole is bounded by MaxLoadedPartBytes; each item by the cell text limit.
+                var state = new Reading.ExcelReader.TextState(Limits.MaxCellTextLength, long.MaxValue);
                 var index = 0;
                 while (r.Read())
                 {
-                    if (r.NodeType != XmlNodeType.Element || r.LocalName != "si") continue;
+                    // Depth 1 only, matching what SharedStringTable.WriteTo copies: counting an "si" nested in
+                    // an extension element would shift the index of every string appended after it.
+                    if (r.NodeType != XmlNodeType.Element || r.LocalName != "si" || r.Depth != 1) continue;
                     if (!r.IsEmptyElement)
                     {
                         // A plain item is exactly <si><t>text</t></si>; rich-text items are counted but not reused.
-                        var sub = r.ReadSubtree();
-                        sub.Read();
+                        var itemDepth = r.Depth;
                         var tCount = 0;
                         var other = false;
                         string? text = null;
-                        while (sub.Read())
+                        state.BeginCell();
+                        r.Read();
+                        while (!r.EOF && !(r.NodeType == XmlNodeType.EndElement && r.Depth == itemDepth))
                         {
-                            if (sub.NodeType != XmlNodeType.Element) continue;
-                            if (sub.LocalName == "t" && sub.Depth == 1) { tCount++; text = sub.ReadElementContentAsString(); }
-                            else if (sub.Depth == 1) other = true;
+                            if (r.NodeType != XmlNodeType.Element) { r.Read(); continue; }
+                            if (r.LocalName != "t") { other = true; r.Skip(); continue; }
+                            tCount++;
+                            if (r.IsEmptyElement) { text = ""; r.Read(); }
+                            else text = Reading.ExcelReader.ReadElementText(r, state); // Leaves the reader after </t>.
                         }
-                        sub.Dispose();
-                        if (tCount == 1 && !other && text != null && !PlainSharedStrings.ContainsKey(text)) PlainSharedStrings[text] = index;
+                        if (tCount == 1 && !other && text != null && !PlainSharedStrings.ContainsKey(text))
+                        {
+                            Budget.ChargeText(text);
+                            Budget.Charge(64); // The dictionary entry.
+                            PlainSharedStrings[text] = index;
+                        }
                     }
                     index++;
                 }
@@ -209,17 +354,36 @@ namespace SheetStream.Internal
             }
         }
 
-        /// <summary>Resolves a relationship target against the source part's folder.</summary>
+        /// <summary>
+        /// Resolves a relationship target against the source part's folder ("worksheets/sheet1.xml",
+        /// "/xl/x.xml", "../x.xml") to a path inside the package.
+        /// </summary>
+        /// <remarks>
+        /// One pass, building the result as a stack. An earlier version removed segments from the front of a
+        /// list, which made a target of half a million "./" segments (six kilobytes once zipped) take most of
+        /// a minute. ".." above the root is dropped, so the result never climbs out of the package.
+        /// </remarks>
         public static string Resolve(string folder, string target)
         {
-            if (target.StartsWith("/", StringComparison.Ordinal)) return target.Substring(1);
-            var parts = new List<string>((folder + target).Split('/'));
-            for (var i = 0; i < parts.Count; i++)
+            var path = target.StartsWith("/", StringComparison.Ordinal) ? target : folder + target;
+            var kept = new List<string>();
+            var start = 0;
+            while (start <= path.Length)
             {
-                if (parts[i] == "..") { parts.RemoveAt(i); if (i > 0) { parts.RemoveAt(i - 1); i--; } i--; }
-                else if (parts[i] == "." || parts[i].Length == 0) { parts.RemoveAt(i); i--; }
+                var slash = path.IndexOf('/', start);
+                if (slash < 0) slash = path.Length;
+                var length = slash - start;
+                if (length == 2 && path[start] == '.' && path[start + 1] == '.')
+                {
+                    if (kept.Count > 0) kept.RemoveAt(kept.Count - 1);
+                }
+                else if (length > 0 && !(length == 1 && path[start] == '.'))
+                {
+                    kept.Add(path.Substring(start, length));
+                }
+                start = slash + 1;
             }
-            return string.Join("/", parts);
+            return string.Join("/", kept);
         }
 
         /// <summary>Parses an integer attribute value, or returns null.</summary>

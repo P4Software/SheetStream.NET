@@ -16,6 +16,8 @@ namespace SheetStream.Tests;
 /// Covers the EPPlus-parity features: every test builds a workbook, validates it against the ECMA-376 schema
 /// and checks the written structure or reads it back.
 /// </summary>
+/// <remarks>In the "Memory" collection because one test measures the heap of the whole process.</remarks>
+[Collection("Memory")]
 public class FeatureTests
 {
     /// <summary>A 2x1 red PNG, small enough to inline.</summary>

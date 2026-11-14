@@ -2,6 +2,82 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.6.0 (unreleased)
+
+A security and safety release. It closes, for every way of opening a workbook, the class of problem that 0.5.0 fixed only in part, and it changes when a workbook is written. Two changes can break existing code; they are listed first.
+
+### Breaking changes
+
+- **`Dispose` no longer saves.** A package writes its workbook only when you call `Save()`. `Dispose` also runs when your code throws half-way through, and until now that produced a file that opened normally and held half the rows. Code that relied on the `using` block to save now writes nothing; add `package.Save()` where the workbook is complete. The analyzer reports such code at build time (SS0004). `ExcelPackage.CreateBytes`, `CreateBytesAsync` and `ExcelResults.Excel` always saved explicitly and are unaffected.
+- **A sheet too large to edit is refused with `InvalidDataException`**, not `InvalidOperationException`, so that one `catch` covers every limit on a workbook the library did not write. This is the `PackageOptions.MaxEditableCells` check in `Worksheets.Edit`.
+
+### Changed
+
+- **A package that writes to a path is all-or-nothing.** `ExcelPackage.Create(path)` and `OpenTemplate(template, outputPath)` now build the workbook in a temporary file beside the target and put it in place when `Save()` succeeds, as `Edit(path)` already did. A failed or abandoned export leaves whatever was at the path exactly as it was, where it used to leave a truncated file. The target does not exist until `Save()` returns.
+- **`Save()` after a failure is refused** with an `InvalidOperationException` that says why, where it used to write a broken workbook: after a failed save, or after the source workbook of an edit or template could not be read.
+- **`OpenTemplate` and `Edit` apply the reader's limits** to the workbook they load, through the new `PackageOptions.SourceLimits`. They were documented as being for files your application owns; they are now safe on a workbook a user uploaded.
+- **`ReaderOptions.MaxLoadedPartBytes` now bounds memory, not only file size.** Besides capping the unpacked size of each part held in memory, the library adds up what those parts occupy once parsed (a string costs two bytes a character) and refuses a workbook when the total passes the limit. Two things that 0.5 accepted can now be refused at the default of 256 MB, each with a message naming the property to raise: a workbook with about three million or more distinct shared strings of 30 characters, and a `ReadDataTable` of a sheet with roughly 400,000 rows of ten numeric columns or more (a table that size takes a few hundred megabytes). `ReadRows` and `Read<T>` are not affected.
+- **Parts are decoded as text before they reach the XML parser.** UTF-8 and UTF-16 are detected from the byte order mark or the first bytes, and an encoding named in the XML declaration is honoured when the runtime provides it. Bytes that are not valid in the part's encoding are refused as damage.
+- Comments and processing instructions inside the XML of a template sheet that is filled are no longer copied to the output. Excel writes neither.
+
+### Security
+
+Versions up to and including 0.5.1 can be made to exhaust memory, or to run for minutes, by a small crafted `.xlsx`. 0.5.0 fixed the case that was reported (one very long cell) and missed others of the same class. All of the following are fixed in this release, for `ExcelReader`, `OpenTemplate` and `Edit` alike. If your application opens workbooks from people you do not know, upgrade.
+
+- **A CDATA section** was buffered whole by the XML parser before any limit could see it: a 98 KB file reached 418 MB in the reader.
+- **A part encoded as UTF-16** could hide a long attribute from the length check, which counted bytes: characters such as U+3C3C look like markup when seen as bytes.
+- **A row of cells without references** had no width limit: a 524 KB file made the reader hold 313 MB for one row.
+- **Many different element or attribute names** grew the parser's name table without limit, in a streamed sheet as well.
+- **A tag with a very large number of attributes** cost the parser hundreds of megabytes while staying under the length limit that was meant for text.
+- **`OpenTemplate` and `Edit` had no limits at all**: a 429 KB file reached 5.6 GB in `Edit`, and template filling of a 16 KB file of deeply nested elements was still running after five minutes when it was stopped.
+- **A template row with a number far outside Excel's range** made template filling allocate in proportion to the number.
+- **A workbook whose relationships name a part that is not in the file** threw `NullReferenceException` in template and edit mode. It is now reported as damage.
+- **A streamed sheet could be any size**, so a small upload could cost minutes of processing. The new `ReaderOptions.MaxStreamedPartBytes` (default 4 GB) bounds it.
+- **A zip directory can point many names at one compressed block.** Saving an edit or a template copied every one: a 259 KB file made `Save()` unpack and repack 10 GB, and the format allows far more. The parts copied unchanged are now capped in total by `MaxStreamedPartBytes`.
+- **`ReadDataTable` had no bound.** A table is rows times columns, so 3,000 rows with one cell each in the last column (15 KB on disk) built a table of 1 GB. What the table holds is now counted against `MaxLoadedPartBytes`.
+- **Three things took time out of all proportion to the file.** A relationship target made of `./` repeated was resolved in quadratic time (a 6 KB file took 43 seconds to open); a very long number format was inspected again for every cell format, and in edit mode for every cell (a 10 KB file took 18 seconds); and a `DataTable` header of identical names was made unique by counting up from 2 for each one.
+- **A formula from a file could overflow the stack.** With `CacheFormulaResults()`, a formula nested a few thousand levels deep ended the process, which no `catch` can stop. The evaluator now leaves a formula uncached when it is nested deeper than 64 levels or longer than 8,192 characters, Excel's own limits.
+- **`CacheFormulaResults()` on an edited sheet could take 1.6 GB** when the sheet's cells were scattered one to a page of the value store. The store now stops at 256 MB, after which formulas go uncached.
+- **Part names from the source workbook were copied into the output unchecked**, including `../../name` and absolute paths, which can place a file outside the folder a careless tool unpacks into, and the same name twice. Such a workbook is now refused.
+
+Measured with the default limits on seventeen kinds of file built to exhaust memory, each about 100 MB unpacked, through reading, editing, template filling and template copying: the process now peaks at 65 MB or less, where 0.5.1 reached up to 5.9 GB. The one exception is a workbook whose shared strings part is genuinely 100 MB, which uses 250 MB, inside the 256 MB the default limit allows.
+
+### Fixed
+
+- **`Worksheets.Edit` counted only every other cell against `MaxEditableCells`.** A sheet of between one and two times the limit was refused late, after part of it had been loaded, and saving the package afterwards wrote that sheet with cells missing. The count is now exact and made before anything is loaded.
+- **Workbooks in the 1904 date system written by Excel were read four years and a day off.** Excel writes a second `workbookPr` element in an extension list, and that one switched the date system back to 1900. Dates in such workbooks are now right in `ExcelReader` and in `Worksheets.Edit`. Found by comparing the reader with Excel on files Excel wrote.
+- **A `Save()` that could not put the file in place could not be retried.** When the target was open in Excel, `Save()` threw, and a second call returned without doing anything, so the workbook was lost while the message said to try again. The finished workbook now stays in its temporary file and the next `Save()` puts it in place. `IsSaved` is true only once the file is where it was asked to be.
+- `ReadDataTable` threw `DuplicateNameException` when a data row was wider than the header and the header already used the letter of the added column as a text.
+- `ExcelRow.GetDateTime` threw `ArgumentException` for a number outside the range of dates; it is now the `FormatException` every other failed conversion gives.
+- In `Worksheets.Edit`, a date cell read as a plain number when its format id shared its code with an earlier format id.
+- Strings added to a workbook whose shared strings part has an `si` element nested in an extension pointed one place too far.
+- A target with a long file name failed in `Create`, because the temporary file was named after it plus 37 characters.
+- A reader or package that fails to open releases the stream it was given when it was told to own it.
+- **On .NET Framework, a damaged zip could surface as `ArgumentException` or `IOException`.** That runtime reads the zip directory on first use and reports some damage with those types. The directory is now read when the file is opened, on every runtime, and damage is reported as `InvalidDataException`.
+- On .NET Framework, a number read as text had up to 17 digits where 16 are enough (`0.33333333333333331`). `GetString` and `Read<T>` into a string now give the shortest text that reads back, the same on every runtime.
+- Filling a template whose range lists hold very many tokens that are not ranges took seconds per list, an exception per token. Ranges read from a file are now parsed without exceptions.
+- `Cells.Dimension` walked every cell on each call, so appending rows with `Cells[Dimension.LastRow + 1, 1]` was quadratic. `TemplateStyle` re-read the sheet on every call; it now remembers its answers.
+- A template with a number format id near the top of the integer range made the next new format get a negative id, an invalid file.
+- A relationship that points at a missing sheet part, a workbook with two sheets of one name, a part that consists of an empty root element and a part whose root is the wrong element are all reported as a damaged file (`InvalidDataException`). They used to end in `ArgumentException` or `InvalidOperationException`.
+
+### Added
+
+- `PackageOptions.SourceLimits` and `ReaderOptions.MaxStreamedPartBytes` (see above).
+- **Analyzer rule SS0004**, "Package is never saved": a package created in a method that never calls `Save()` on it.
+- Passing a `CellStyle` as a cell value throws `ArgumentException`. `WriteCells(style, "a", "b")` compiles, binds to the overload that takes only values, and used to write the style's type name into the first cell; the message now says to write `WriteCells(style, new[] { "a", "b" })`.
+- A guide for [migrating from ClosedXML](docs/migrating-from-closedxml.md).
+- Fixed limits that need no setting because no real workbook comes near them: 16,384 distinct XML names per part, 16,384 cells per row, a tag no longer than a cell's text limit, row numbers within Excel's range in a sheet that is edited or filled.
+
+### Testing
+
+- About sixty kinds of hostile workbook are run through every way of opening one, and the outcome of each combination is recorded and compared on every build.
+- The same combinations run in a separate process whose heap is capped at 64 MB by the runtime, which proves peak memory in a way an in-process test cannot. They pass at 40 MB.
+- The template and edit code is fuzz-tested like the reader, from library-written workbooks and from workbooks Excel wrote. Deep runs before this release fed several hundred thousand randomly damaged files through every way of opening a workbook, on a dozen seeds.
+- **A separate adversarial review pass was run on the work before release**, with its own exploit harness and fuzzer, and found thirteen problems the tests above had missed: unbounded time, the zip container, and what callers collect. Each is fixed and has a regression test (`ReviewFindingsTests`), and the review's own repros and fuzzer were rerun against the fixes.
+- The limits are tested on .NET Framework 4.8 as well.
+- **A corpus of workbooks written by Excel** (`tests/corpus/excel`), each with Excel's own account of every cell: its value and type, the date it displays, merges, links, sheet order and visibility. The reader is compared with it cell by cell, and again after a template copy and after an edit, so data lost in a round trip shows up as a difference from Excel.
+- `tests/excel-check.ps1` opens workbooks in an installed Excel and fails on any that Excel has to repair. It is run before a release on everything the samples write and on every corpus workbook after a copy, an edit and a fill.
+
 ## 0.5.1 (2026-11-13)
 
 No change to the library's code or behaviour; this release updates what the packages carry and show.

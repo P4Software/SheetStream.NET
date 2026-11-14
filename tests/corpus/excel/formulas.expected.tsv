@@ -1,0 +1,51 @@
+Calc	meta		visible
+Calc	n	A1	1.5
+Calc	s	B1	item 1
+Calc	n	C1	3
+Calc	n	D1	117
+Calc	n	E1	15
+Calc	n	A2	3
+Calc	s	B2	item 2
+Calc	n	C2	6
+Calc	n	D2	9.75
+Calc	n	E2	30
+Calc	n	A3	4.5
+Calc	s	B3	item 3
+Calc	n	C3	9
+Calc	s	D3	item 1 and item 2
+Calc	n	E3	45
+Calc	n	A4	6
+Calc	s	B4	item 4
+Calc	n	C4	12
+Calc	b	D4	1
+Calc	n	A5	7.5
+Calc	s	B5	item 5
+Calc	n	C5	15
+Calc	s	D5	small
+Calc	n	A6	9
+Calc	s	B6	item 6
+Calc	n	C6	18
+Calc	n	D6	0.643
+Calc	n	A7	10.5
+Calc	s	B7	item 7
+Calc	n	C7	21
+Calc	d	D7	2026-11-13 00:00:00.000
+Calc	n	A8	12
+Calc	s	B8	item 8
+Calc	n	C8	24
+Calc	n	D8	12
+Calc	n	A9	13.5
+Calc	s	B9	item 9
+Calc	n	C9	27
+Calc	n	A10	15
+Calc	s	B10	item 10
+Calc	n	C10	30
+Calc	n	A11	16.5
+Calc	s	B11	item 11
+Calc	n	C11	33
+Calc	n	A12	18
+Calc	s	B12	item 12
+Calc	n	C12	36
+Other sheet	meta		visible
+Other sheet	n	A1	117
+Other sheet	n	A2	9

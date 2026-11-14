@@ -1,0 +1,33 @@
+Layout	meta		visible
+Layout	s	A1	Title across three columns
+Layout	s	E2	Block
+Layout	s	A3	Tall
+Layout	n	A7	7
+Layout	s	B7	row 7
+Layout	n	A8	8
+Layout	s	B8	row 8
+Layout	n	A9	9
+Layout	s	B9	row 9
+Layout	n	A10	10
+Layout	s	B10	row 10
+Layout	n	A11	11
+Layout	s	B11	row 11
+Layout	n	A12	12
+Layout	s	B12	row 12
+Layout	s	B14	External link
+Layout	s	B15	Internal link
+Layout	s	B16	Mail link
+Layout	merge	A1:C1	
+Layout	merge	E2:G4	
+Layout	merge	A3:A5	
+Layout	link	B14	https://example.com/path?x=1&y=2||Open the site
+Layout	link	B15	|'It''s a sheet'!A1|Jump inside
+Layout	link	B16	mailto:someone@example.com?subject=Hello||
+It's a sheet	meta		visible
+It's a sheet	s	A1	quoted name
+Hidden	meta		hidden
+Hidden	s	A1	hidden sheet
+Very hidden	meta		veryHidden
+Very hidden	s	A1	very hidden sheet
+Ñandú 日本	meta		visible
+Ñandú 日本	s	B2	unicode sheet name

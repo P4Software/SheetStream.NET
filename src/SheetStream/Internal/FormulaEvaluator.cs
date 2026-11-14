@@ -23,6 +23,12 @@ namespace SheetStream.Internal
         /// not yet known, divides by zero or produces a non-finite number.</returns>
         public static bool TryEvaluate(string formula, FormulaValueStore values, int row, int column, string sheetName, out double result)
         {
+            // A formula of Excel's own maximum length (8,192 characters) is as long as a genuine one gets.
+            if (formula.Length > MaxFormulaLength)
+            {
+                result = 0;
+                return false;
+            }
             var parser = new Parser(formula, values, row, column, sheetName);
             result = parser.Run();
             if (parser.Failed || double.IsNaN(result) || double.IsInfinity(result))
@@ -32,6 +38,17 @@ namespace SheetStream.Internal
             }
             return true;
         }
+
+        /// <summary>Longest formula the evaluator looks at: Excel's own limit on formula text.</summary>
+        internal const int MaxFormulaLength = 8192;
+
+        /// <summary>
+        /// Deepest nesting of parentheses, function calls and signs the evaluator follows: Excel's own limit
+        /// on nested functions. The parser is recursive, and a formula can come from a workbook this library
+        /// did not write; without a limit a few thousand opening parentheses overflow the stack, which ends
+        /// the process without an exception anyone can catch.
+        /// </summary>
+        internal const int MaxDepth = 64;
 
         private enum Function { Sum, Average, Count, CountA, Min, Max, Round, Abs }
 
@@ -48,6 +65,7 @@ namespace SheetStream.Internal
             private readonly int _column;
             private readonly string _sheetName;
             private int _pos;
+            private int _depth;
 
             public Parser(string formula, FormulaValueStore values, int row, int column, string sheetName)
             {
@@ -113,6 +131,25 @@ namespace SheetStream.Internal
 
             // factor := ('-' | '+') factor | primary '%'*
             private double ParseFactor()
+            {
+                // Every level of nesting passes through here once (a sign, a parenthesis or a function
+                // argument each lead back to a factor), so this is the one place the depth is counted.
+                if (++_depth > MaxDepth)
+                {
+                    _depth--;
+                    return Fail();
+                }
+                try
+                {
+                    return ParseFactorCore();
+                }
+                finally
+                {
+                    _depth--;
+                }
+            }
+
+            private double ParseFactorCore()
             {
                 SkipSpaces();
                 if (_pos < _s.Length && (_s[_pos] == '-' || _s[_pos] == '+'))

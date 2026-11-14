@@ -75,8 +75,24 @@ namespace SheetStream
                 if (!create) return null!;
                 cell = new BufferedCell();
                 cols[column] = cell;
+                NoteBufferedCell(row, column);
             }
             return cell;
+        }
+
+        // The last row and column that hold a cell, kept current as cells are added so that the usual
+        // "append below the data" loop (Cells[Dimension.LastRow + 1, 1]) does not walk the whole sheet for
+        // every row it adds. Removing a cell may shrink them, which only a recount can tell.
+        private bool _dimensionKnown;
+        private int _dimensionRow;
+        private int _dimensionColumn;
+
+        /// <summary>Records that a cell now exists at this position.</summary>
+        internal void NoteBufferedCell(int row, int column)
+        {
+            if (!_dimensionKnown) return;
+            if (row > _dimensionRow) _dimensionRow = row;
+            if (column > _dimensionColumn) _dimensionColumn = column;
         }
 
         /// <summary>
@@ -99,6 +115,7 @@ namespace SheetStream
             if (_buffer == null || !_buffer.TryGetValue(row, out var cols) || !cols.TryGetValue(column, out var cell)) return;
             if (cell.SharedFormulaMaster) ThrowSharedFormulaMaster(row, column);
             cols.Remove(column);
+            _dimensionKnown = false;
             // Keep the row entry when it carries original row attributes (height, hidden): an empty <row> still
             // needs to be written for them. Otherwise an empty row would only add noise to the file.
             if (cols.Count == 0 && (_rowAttributes == null || !_rowAttributes.ContainsKey(row))) _buffer.Remove(row);
@@ -121,9 +138,10 @@ namespace SheetStream
         /// <summary>Last row and column that hold a buffered cell, or (0, 0) when there is none.</summary>
         internal (int LastRow, int LastColumn) BufferDimension()
         {
+            if (_buffer == null) return (0, 0);
+            if (_dimensionKnown) return (_dimensionRow, _dimensionColumn);
             var lastRow = 0;
             var lastColumn = 0;
-            if (_buffer == null) return (0, 0);
             foreach (var rowPair in _buffer)
             {
                 if (rowPair.Value.Count == 0) continue;
@@ -131,6 +149,9 @@ namespace SheetStream
                 foreach (var column in rowPair.Value.Keys)
                     if (column > lastColumn) lastColumn = column;
             }
+            _dimensionRow = lastRow;
+            _dimensionColumn = lastColumn;
+            _dimensionKnown = true;
             return (lastRow, lastColumn);
         }
 

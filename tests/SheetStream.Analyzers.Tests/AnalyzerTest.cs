@@ -23,6 +23,9 @@ class Order { public int Id { get; set; } public string Name { get; set; } = """
 
 class Exporter
 {
+    ExcelPackage _kept;
+    void Hand(ExcelPackage package) { }
+
     void Export(Workbook workbook, IEnumerable<Order> orders, DataTable table, Worksheet given, int n, bool flag)
     {
 {{BODY}}
@@ -35,9 +38,12 @@ class Exporter
     /// <paramref name="expected"/> results given explicitly, which is how a test pins the full message text of a
     /// <c>{|#0:...|}</c> location marker.
     /// </summary>
-    public static Task Verify(string body, params DiagnosticResult[] expected)
+    public static Task Verify(string body, params DiagnosticResult[] expected) => Verify<WorksheetStreamingAnalyzer>(body, expected);
+
+    /// <summary>The same for another analyzer of this assembly.</summary>
+    public static Task Verify<TAnalyzer>(string body, params DiagnosticResult[] expected) where TAnalyzer : Microsoft.CodeAnalysis.Diagnostics.DiagnosticAnalyzer, new()
     {
-        var test = new CSharpAnalyzerTest<WorksheetStreamingAnalyzer, DefaultVerifier>
+        var test = new CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
         {
             TestCode = Template.Replace("{{BODY}}", body),
             // net8.0 reference assemblies match the net8.0 build of SheetStream the test project links against.

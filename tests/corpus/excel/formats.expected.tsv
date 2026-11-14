@@ -1,0 +1,75 @@
+Formats	meta		visible
+Formats	d	A1	2025-12-09 18:00:00.000
+Formats	s	B1	yyyy-mm-dd hh:mm:ss
+Formats	d	D1	2024-07-27 06:00:00.000
+Formats	d	A2	2025-12-09 18:00:00.000
+Formats	s	B2	m/d/yyyy
+Formats	d	D2	2024-07-28 06:00:00.000
+Formats	d	A3	2025-12-09 18:00:00.000
+Formats	s	B3	dddd, mmmm d, yyyy
+Formats	d	D3	2024-07-29 06:00:00.000
+Formats	n	A4	46000.75
+Formats	s	B4	hh:mm
+Formats	d	D4	2024-07-30 06:00:00.000
+Formats	n	A5	46000.75
+Formats	s	B5	h:mm:ss AM/PM
+Formats	n	D5	45504.25
+Formats	n	A6	0.5
+Formats	s	B6	hh:mm:ss
+Formats	n	D6	45505.25
+Formats	d	A7	1900-01-01 00:00:00.000
+Formats	s	B7	yyyy-mm-dd
+Formats	n	D7	45506.25
+Formats	d	A8	1900-02-28 00:00:00.000
+Formats	s	B8	yyyy-mm-dd
+Formats	n	D8	45507.25
+Formats	d	A9	1900-03-01 00:00:00.000
+Formats	s	B9	yyyy-mm-dd
+Formats	d	D9	2024-08-04 06:00:00.000
+Formats	d	A10	9999-12-31 00:00:00.000
+Formats	s	B10	yyyy-mm-dd
+Formats	n	D10	45509.25
+Formats	d	A11	2025-12-09 23:59:59.914
+Formats	s	B11	yyyy-mm-dd hh:mm:ss
+Formats	t	D11	45510.25
+Formats	t	A12	1.25
+Formats	s	B12	[h]:mm:ss
+Formats	n	D12	45511.25
+Formats	t	A13	0.0625
+Formats	s	B13	[h]:mm
+Formats	n	D13	45512.25
+Formats	t	A14	100.5
+Formats	s	B14	[m]:ss
+Formats	n	D14	45513.25
+Formats	t	A15	36.5
+Formats	s	B15	[s]
+Formats	n	A16	1234.5678
+Formats	s	B16	#,##0.00
+Formats	n	A17	0.256
+Formats	s	B17	0.0%
+Formats	n	A18	1234.5
+Formats	s	B18	0.00E+00
+Formats	n	A19	2.5
+Formats	s	B19	# ?/?
+Formats	n	A20	1234.5
+Formats	s	B20	$#,##0.00
+Formats	n	A21	12.5
+Formats	s	B21	0.0 "days"
+Formats	n	A22	7
+Formats	s	B22	0 "months"
+Formats	n	A23	3
+Formats	s	B23	"d"0
+Formats	n	A24	1500
+Formats	s	B24	[Red]0;[Blue]-0
+Formats	n	A25	42
+Formats	s	B25	General
+Formats	n	A26	5
+Formats	s	B26	0 \\d
+Formats	d	A27	2025-12-09 00:00:00.000
+Formats	s	B27	yyyy
+Formats	d	A28	2025-12-09 00:00:00.000
+Formats	s	B28	mmm-yy
+Formats	d	A29	2025-12-09 12:00:00.000
+Formats	s	B29	[$-409]d-mmm-yyyy h:mm
+Formats	n	A30	0.75
+Formats	s	B30	mm:ss.0
