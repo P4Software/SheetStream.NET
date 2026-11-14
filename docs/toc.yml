@@ -18,5 +18,7 @@
   href: analyzers.md
 - name: Gap analysis versus EPPlus 8
   href: gap-analysis-epplus-8.md
+- name: "Article: a small file, a lot of memory"
+  href: small-file-large-memory.md
 - name: API reference
   href: api/
