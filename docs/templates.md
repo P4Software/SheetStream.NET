@@ -1,3 +1,8 @@
+---
+title: "Fill Excel templates from code"
+description: "Design the report in Excel, then let SheetStream.NET pour the data in. Everything you do not touch is copied from the template unchanged."
+---
+
 # Filling templates
 
 Design the report in Excel (logo, colours, a styled header row, totals, charts, print settings) and let SheetStream pour the data in. Everything you do not touch is copied from the template unchanged.

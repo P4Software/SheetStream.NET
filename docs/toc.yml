@@ -1,24 +1,11 @@
-- name: Guide
-  href: index.md
-- name: Migrating from EPPlus
-  href: migrating-from-epplus.md
-- name: Migrating from ClosedXML
-  href: migrating-from-closedxml.md
-- name: Reading workbooks
-  href: reading-workbooks.md
-- name: Filling templates
-  href: templates.md
-- name: Editing existing workbooks
-  href: editing-workbooks.md
-- name: Pivot tables
-  href: pivot-tables.md
-- name: Trimming, Native AOT and the source generator
-  href: aot-and-source-generator.md
-- name: Analyzers
-  href: analyzers.md
-- name: Gap analysis versus EPPlus 8
-  href: gap-analysis-epplus-8.md
-- name: "Article: a small file, a lot of memory"
-  href: small-file-large-memory.md
+# Top bar: deliberately short. Do not add entries that point straight at a guide page: DocFX then
+# treats this file as that page's table of contents, and the page loses its side navigation.
+# Section links live in nav/toc.yml, which becomes the side table of contents of every guide page.
+- name: Documentation
+  href: nav/
 - name: API reference
   href: api/
+- name: GitHub
+  href: https://github.com/P4Software/SheetStream.NET
+- name: NuGet
+  href: https://www.nuget.org/packages/SheetStream.NET

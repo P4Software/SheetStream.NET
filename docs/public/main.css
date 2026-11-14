@@ -1,9 +1,171 @@
 /* Site-specific tweaks for the DocFX "modern" template (picked up from public/main.css). */
 
+/* Brand tokens. Values match the P4 Software logo lockup. The site is light only, so there is
+   no second set of values for a dark scheme. */
+:root {
+  --ss-brand: #0a5fad;       /* on white: about 6.5:1, passes AA for text */
+  --ss-brand-deep: #084a8a;  /* on the tinted active background: about 8:1 */
+  --ss-brand-tint: rgba(10, 95, 173, 0.08);
+  --ss-ink: #212529;
+  --ss-ink-muted: #495057;   /* on white: about 8.2:1; used for menu text and small labels */
+  --ss-rule: #dee2e6;
+}
+
 /* The template shows the logo at the image's own size; keep it a navbar-sized icon, scaled
    proportionally. The P4 Software logo must never be stretched. */
 #logo,
 .navbar-brand img {
   height: 32px;
   width: auto;
+}
+
+/* ---- Light only ------------------------------------------------------------------------
+   public/main.js forces the light theme. The template's theme switch is hidden here because
+   offering a choice that the script immediately undoes would be a broken control. */
+#navbar form.icons {
+  display: none;
+}
+
+/* ---- Top bar ---------------------------------------------------------------------------
+   The template breaks camelCase words with <wbr> so that long API names wrap. In a navbar that
+   turns "GitHub" into "Git" over "Hub" as soon as space gets tight; menu labels never wrap. */
+#navbar .navbar-nav .nav-link wbr {
+  /* white-space: nowrap does not remove a <wbr> break opportunity; removing the element does. */
+  display: none;
+}
+
+#navbar .navbar-nav .nav-link {
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--ss-ink-muted);
+}
+
+#navbar .navbar-nav .nav-link:hover,
+#navbar .navbar-nav .nav-link:focus-visible {
+  color: var(--ss-brand);
+}
+
+/* The template marks the current section only when the page sits below the item's folder, which
+   is true for the API reference but not for the guide pages (they live at the site root next to
+   the home page). Guide pages are exactly the pages that carry no yaml-mime, so the first item,
+   "Documentation", is shown as current there. Keep it first in toc.yml. */
+#navbar .navbar-nav .nav-link.active,
+body[data-yaml-mime=""] #navbar .navbar-nav .nav-item:first-child .nav-link {
+  color: var(--ss-brand);
+  box-shadow: inset 0 -2px 0 var(--ss-brand);
+}
+
+/* With the theme switch hidden nothing else pushes the menu left; keep it beside the brand. */
+#navbar .navbar-nav {
+  margin-right: auto;
+}
+
+/* Let the search box give way before the menu does. */
+#navbar form.search {
+  min-width: 0;
+}
+
+/* ---- Side table of contents -----------------------------------------------------------
+   Structure comes from docs/nav/toc.yml: one top-level page plus three groups. */
+.toc ul {
+  font-size: 0.9rem;
+}
+
+.toc li {
+  margin: 0.15rem 0;
+}
+
+/* 24px minimum target height (WCAG 2.2, 2.5.8), with room to spare on touch screens. */
+.toc li > a {
+  display: inline-block;
+  padding: 0.3rem 0;
+  line-height: 1.35;
+}
+
+@media (pointer: coarse) {
+  .toc li > a {
+    padding: 0.5rem 0;
+  }
+}
+
+/* Group labels: quieter than the pages beneath them, so the eye lands on page names. Only groups
+   without a page of their own (href="#") are labels; the API namespace node links to a real page
+   and keeps normal link styling. */
+.toc li.expander > a[href="#"] {
+  color: var(--ss-ink-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.toc li.expander > .expand-stub::before {
+  margin-top: 0.55em;
+}
+
+/* A hairline ties each group's pages together. */
+.toc li.expander > ul {
+  margin: 0 0 0.6rem 0.2rem;
+  border-left: 1px solid var(--ss-rule);
+}
+
+.toc li:not(.expander) > a:not(.nav-link),
+.toc li.expander.active > a:not(.nav-link):not([href="#"]) {
+  /* The template drops .nav-link from the active page, which leaves default link blue. The second
+     selector is a namespace in the API reference that is itself the current page. */
+  color: var(--ss-brand-deep);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Current page: bar over the hairline plus a tint, so it reads without relying on colour alone. */
+.toc li.active:not(.expander) {
+  background: var(--ss-brand-tint);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.toc li.active:not(.expander)::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--ss-brand);
+}
+
+/* The top-level "Getting started" page has no group line to sit on; indent matches the groups. */
+.toc > .flex-fill > ul > li:not(.expander).active::before {
+  left: 0;
+}
+
+/* On phones the side table of contents sits behind a bare "hamburger" icon next to the unrelated
+   "..." menu in the top bar. Naming the button makes it clear which one holds the pages. */
+.actionbar button[data-bs-target="#tocOffcanvas"] {
+  min-height: 44px;
+  color: var(--ss-ink-muted);
+}
+
+/* Flex only below the breakpoint: the template hides this button from md up with d-md-none, which
+   is not !important here, so a plain display rule would bring it back on desktop. */
+@media (max-width: 767.98px) {
+  .actionbar button[data-bs-target="#tocOffcanvas"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+}
+
+.actionbar button[data-bs-target="#tocOffcanvas"]::after {
+  content: "Contents";
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* ---- Guide pages ----------------------------------------------------------------------
+   On the guide pages the breadcrumb would show only the group name, which is not a page and has
+   nowhere to link to. The side table of contents already shows where the reader is. The API
+   pages keep their breadcrumb (namespace > type), which is real navigation there. */
+body[data-yaml-mime=""] #breadcrumb {
+  display: none;
 }

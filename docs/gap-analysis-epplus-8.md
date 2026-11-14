@@ -1,3 +1,8 @@
+---
+title: "Gap analysis versus EPPlus 8"
+description: "Area-by-area comparison of SheetStream.NET 0.5.0 and EPPlus 8: where each is stronger, how big the remaining gaps are and the order to close them."
+---
+
 # Gap analysis: SheetStream.NET 0.5.0 versus EPPlus 8
 
 *Written 2026-10-14 against EPPlus 8.7.1 (NuGet, 2026-09-22) and SheetStream 0.4.0; revised 2026-11-13 for SheetStream.NET 0.5.0 (the SheetStream side only: the EPPlus facts were not re-checked for the revision). EPPlus facts come from EPPlus Software's own feature page, wiki, API reference, release notes and licence pages; the source list is at the end. SheetStream facts come from the repository and its tests. Nothing here is a benchmark of EPPlus 8 itself: its licence does not allow P4 Software to run it, so timings use the last LGPL release, 4.5.3.3.*

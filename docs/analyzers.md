@@ -1,3 +1,8 @@
+---
+title: "Roslyn analyzers (SS0001-SS0004)"
+description: "Roslyn analyzers that ship in the SheetStream.NET package and warn at build time when layout, row order or write mode break the streaming rules."
+---
+
 # Analyzers
 
 SheetStream streams each worksheet straight into the file. That is what makes it fast, and it is also why a few

@@ -1,3 +1,8 @@
+---
+title: "Migrating from ClosedXML"
+description: "What moving an export from ClosedXML to SheetStream.NET looks like, what you gain and give up, and when to keep ClosedXML for part of the work."
+---
+
 # Migrating from ClosedXML
 
 ClosedXML is a good library: MIT licensed, a pleasant API, a calculation engine, and it can change any part of an existing workbook. It keeps the whole workbook in memory to do that, which is the one thing that hurts when an export grows. If your exports are large, or run many at once on a web server, this page shows what moving them to SheetStream.NET looks like. If you edit large workbooks or need formulas calculated in .NET, stay with ClosedXML for that part; the two libraries live happily in one application.
