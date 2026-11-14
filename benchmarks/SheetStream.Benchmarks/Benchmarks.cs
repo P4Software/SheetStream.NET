@@ -56,6 +56,12 @@ public abstract class LongShapeBenchmarks : ScenarioBenchmarks
     [Benchmark(Description = "SheetStream (Fastest zip)")]
     public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
 
+    [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
+    public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
+
+    [Benchmark(Description = "SpreadCheetah (Optimal zip)")]
+    public long SpreadCheetahOptimal() => Run(Writers.Get("SpreadCheetah-Optimal"));
+
     [Benchmark(Description = "EPPlus 4.5.3.3")]
     public long EPPlus() => Run(Writers.Get("EPPlus 4.5.3.3"));
 
@@ -95,6 +101,12 @@ public abstract class WideShapeBenchmarks : ScenarioBenchmarks
 
     [Benchmark(Description = "SheetStream (Fastest zip)")]
     public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
+
+    [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
+    public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
+
+    [Benchmark(Description = "SpreadCheetah (Optimal zip)")]
+    public long SpreadCheetahOptimal() => Run(Writers.Get("SpreadCheetah-Optimal"));
 
     [Benchmark(Description = "EPPlus 4.5.3.3")]
     public long EPPlus() => Run(Writers.Get("EPPlus 4.5.3.3"));

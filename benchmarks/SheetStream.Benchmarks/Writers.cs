@@ -5,6 +5,7 @@ using NPOI.SS.UserModel;
 using NPOI.XSSF.Streaming;
 using NPOI.XSSF.UserModel;
 using EP = OfficeOpenXml;
+using SC = SpreadCheetah;
 using SS = SheetStream;
 
 namespace SheetStream.Benchmarks;
@@ -33,6 +34,8 @@ public static class Writers
     {
         new SheetStreamWriter(CompressionLevel.Optimal),
         new SheetStreamWriter(CompressionLevel.Fastest),
+        new SpreadCheetahWriter(SC.SpreadCheetahCompressionLevel.Fastest),
+        new SpreadCheetahWriter(SC.SpreadCheetahCompressionLevel.Optimal),
         new EPPlusWriter(),
         new ClosedXmlWriter(),
         new MiniExcelWriter(),
@@ -106,6 +109,88 @@ public sealed class SheetStreamWriter : ILibraryWriter
             for (int c = 0; c < cols; c++) row.WriteCell(grid[r, c]);
         }
         package.Save();
+    }
+}
+
+/// <summary>
+/// SpreadCheetah: a forward-only streaming writer, the closest design to SheetStream in this suite. Rows are
+/// arrays of cell structs; one array is reused for every row, which is the pattern its README recommends, and
+/// styles are added once and passed per cell. Its API is asynchronous only, so each scenario runs as one async
+/// method that is waited on once at the end: the output is a memory buffer, so every await completes
+/// synchronously and no thread is blocked on I/O.
+/// </summary>
+/// <remarks>
+/// SpreadCheetah's default zip level is Fastest, where SheetStream and the other libraries default to Optimal.
+/// It is therefore measured twice, like SheetStream: at its own default, and at Optimal, so that each
+/// SpreadCheetah row has a SheetStream row at the same compression level to be read against.
+/// </remarks>
+public sealed class SpreadCheetahWriter : ILibraryWriter
+{
+    private readonly SC.SpreadCheetahCompressionLevel _level;
+
+    /// <summary>Creates a writer using the given zip compression level.</summary>
+    public SpreadCheetahWriter(SC.SpreadCheetahCompressionLevel level) => _level = level;
+
+    /// <inheritdoc />
+    public string Name => _level == SC.SpreadCheetahCompressionLevel.Fastest ? "SpreadCheetah" : "SpreadCheetah-Optimal";
+
+    private SC.SpreadCheetahOptions Options => new SC.SpreadCheetahOptions { CompressionLevel = _level };
+
+    /// <inheritdoc />
+    public void WriteLong(Stream output, LongRow[] rows) => WriteLongAsync(output, rows).GetAwaiter().GetResult();
+
+    /// <inheritdoc />
+    public void WriteWide(Stream output, double[,] grid) => WriteWideAsync(output, grid).GetAwaiter().GetResult();
+
+    private async Task WriteLongAsync(Stream output, LongRow[] rows)
+    {
+        await using var spreadsheet = await SC.Spreadsheet.CreateNewAsync(output, Options);
+        await spreadsheet.StartWorksheetAsync("Data");
+
+        var boldStyle = new SC.Styling.Style();
+        boldStyle.Font.Bold = true;
+        var bold = spreadsheet.AddStyle(boldStyle);
+        var number = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.NumberFormat) });
+        var date = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.DateFormat) });
+
+        // One array for the whole sheet: AddRowAsync writes the row out before it returns, so the cells can be
+        // overwritten for the next row.
+        var cells = new SC.Cell[Data.LongHeaders.Length];
+        for (int c = 0; c < cells.Length; c++) cells[c] = new SC.Cell(Data.LongHeaders[c], bold);
+        await spreadsheet.AddRowAsync(cells);
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            cells[0] = new SC.Cell(r.Id);
+            cells[1] = new SC.Cell(r.Name);
+            cells[2] = new SC.Cell(r.Category);
+            cells[3] = new SC.Cell(r.Quantity);
+            cells[4] = new SC.Cell(r.Price, number);
+            cells[5] = new SC.Cell(r.Amount, number);
+            cells[6] = new SC.Cell(r.Date, date);
+            cells[7] = new SC.Cell(r.Region);
+            cells[8] = new SC.Cell(r.Score, number);
+            cells[9] = new SC.Cell(r.Code);
+            await spreadsheet.AddRowAsync(cells);
+        }
+        await spreadsheet.FinishAsync();
+    }
+
+    private async Task WriteWideAsync(Stream output, double[,] grid)
+    {
+        await using var spreadsheet = await SC.Spreadsheet.CreateNewAsync(output, Options);
+        await spreadsheet.StartWorksheetAsync("Data");
+        int rows = grid.GetLength(0), cols = grid.GetLength(1);
+
+        // DataCell is the unstyled cell type, the cheapest one SpreadCheetah offers; reused for every row.
+        var cells = new SC.DataCell[cols];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++) cells[c] = new SC.DataCell(grid[r, c]);
+            await spreadsheet.AddRowAsync(cells);
+        }
+        await spreadsheet.FinishAsync();
     }
 }
 
