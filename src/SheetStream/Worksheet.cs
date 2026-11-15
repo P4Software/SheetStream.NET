@@ -292,6 +292,7 @@ namespace SheetStream
             FlushBuffer();
             EnsureBodyStarted(); // A sheet with no rows still needs a (possibly empty) sheetData element.
             _row.End();
+            _row.ReleaseBuffer();
 
             if (_templateSource != null)
             {

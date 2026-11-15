@@ -23,9 +23,10 @@ namespace SheetStream.Internal
 
         /// <summary>
         /// Writes <paramref name="value"/> as plain digits (with a leading minus sign when negative) at the start
-        /// of <paramref name="buffer"/> and returns how many characters were used.
+        /// of <paramref name="buffer"/> (or at <paramref name="offset"/>, which lets the row writer format straight into
+        /// its staging buffer) and returns how many characters were used. The caller guarantees the room.
         /// </summary>
-        public static int Format(long value, char[] buffer)
+        public static int Format(long value, char[] buffer, int offset = 0)
         {
             // The magnitude is taken from the bitwise complement so that long.MinValue, which has no positive
             // counterpart in a long, still comes out right.
@@ -36,14 +37,14 @@ namespace SheetStream.Internal
             for (var rest = magnitude; rest >= 10; rest /= 10) digits++;
 
             var length = negative ? digits + 1 : digits;
-            var position = length;
+            var position = offset + length;
             do
             {
                 buffer[--position] = (char)('0' + (int)(magnitude % 10));
                 magnitude /= 10;
             }
             while (magnitude != 0);
-            if (negative) buffer[0] = '-';
+            if (negative) buffer[offset] = '-';
             return length;
         }
 
@@ -53,20 +54,20 @@ namespace SheetStream.Internal
         /// caller falls back to a string. NaN and the infinities are not handled; the row writer turns them into
         /// an error cell before it gets here.
         /// </summary>
-        public static int Format(double value, char[] buffer)
+        public static int Format(double value, char[] buffer, int offset = 0)
         {
 #if NET8_0_OR_GREATER
-            return value.TryFormat(buffer, out var written, "R", CultureInfo.InvariantCulture) ? written : -1;
+            return value.TryFormat(buffer.AsSpan(offset), out var written, "R", CultureInfo.InvariantCulture) ? written : -1;
 #else
             return -1;
 #endif
         }
 
-        /// <summary>Writes <paramref name="value"/> in invariant culture, or returns -1 as <see cref="Format(double, char[])"/> does.</summary>
-        public static int Format(decimal value, char[] buffer)
+        /// <summary>Writes <paramref name="value"/> in invariant culture, or returns -1 as <see cref="Format(double, char[], int)"/> does.</summary>
+        public static int Format(decimal value, char[] buffer, int offset = 0)
         {
 #if NET8_0_OR_GREATER
-            return value.TryFormat(buffer, out var written, default, CultureInfo.InvariantCulture) ? written : -1;
+            return value.TryFormat(buffer.AsSpan(offset), out var written, default, CultureInfo.InvariantCulture) ? written : -1;
 #else
             return -1;
 #endif

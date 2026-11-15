@@ -159,14 +159,33 @@ public class CellWritingAllocationTests
         Assert.True(perCell < 0.5, $"Writing a cell allocated {perCell:F2} bytes on average ({large - small:N0} bytes over {ExtraCells:N0} extra cells).");
     }
 
-    private static long Measure(int rows)
+    /// <summary>
+    /// The cell kinds the first test leaves out and the characters the XML writer escapes: text with <c>&amp;</c>,
+    /// <c>&lt;</c> and <c>&gt;</c> (escaped by hand into the staging buffer), text with surrounding spaces, a long
+    /// text that is written in pieces, gaps that need the cell address, empty styled cells, floats and durations.
+    /// </summary>
+    [Fact]
+    public void WritingEscapedTextAndGaps_AllocatesNothingPerCell()
+    {
+        WriteSheet(2_000, extended: true);
+        var small = Measure(2_000, extended: true);
+        var large = Measure(22_000, extended: true);
+
+        const int ExtraCells = 20_000 * 8; // Eight cells per row written; the Skip is not a cell.
+        var perCell = (large - small) / (double)ExtraCells;
+        Assert.True(perCell < 0.5, $"Writing a cell allocated {perCell:F2} bytes on average ({large - small:N0} bytes over {ExtraCells:N0} extra cells).");
+    }
+
+    private static long Measure(int rows, bool extended = false)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        WriteSheet(rows);
+        WriteSheet(rows, extended);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    private static void WriteSheet(int rows)
+    private static readonly string LongText = new string('x', 20_000) + " & " + new string('y', 20_000); // Longer than the staging buffer.
+
+    private static void WriteSheet(int rows, bool extended = false)
     {
         var names = new[] { "North", "South", "East", "West" };
         var date = new DateTime(2026, 1, 1);
@@ -176,6 +195,19 @@ public class CellWritingAllocationTests
         var sheet = package.Workbook.Worksheets.Add("S");
         for (var i = 0; i < rows; i++)
         {
+            if (extended)
+            {
+                sheet.Row()
+                    .WriteInlineString("Tom & Jerry <fun> 5 > 3")                // Entities in the text.
+                    .WriteInlineString("  padded  ")                           // xml:space="preserve".
+                    .WriteCell("a & b")                                        // A shared string with an entity.
+                    .Skip(2).WriteCell(i, dated)                               // A gap, so this cell carries its address.
+                    .WriteEmpty(money)                                         // A styled cell with no value.
+                    .WriteCell((float)i / 3)                                   // float
+                    .WriteCell(TimeSpan.FromMinutes(i))                        // duration
+                    .WriteInlineString(i % 1000 == 0 ? LongText : "short");    // Now and then a text longer than the buffer.
+                continue;
+            }
             sheet.Row()
                 .WriteCell(i)                         // int
                 .WriteCell(names[i & 3])              // shared string
