@@ -30,6 +30,9 @@ namespace SheetStream
         // and may leave out its r attribute, exactly when NextColumn is this plus one.
         private int _lastWrittenColumn;
 
+        // PackageOptions.WriteCellReferences, read once per row so each cell pays one bool test and no more.
+        private bool _alwaysWriteReference;
+
         // True when the sheet wants each cell's display text (AutoFit, or a table header being captured).
         // Computed once per row so the common path pays a single bool test per cell.
         private bool _observe;
@@ -75,6 +78,7 @@ namespace SheetStream
             RowIndex = rowIndex;
             NextColumn = 1;
             _lastWrittenColumn = 0;
+            _alwaysWriteReference = _sheet.Workbook.Package.Options.WriteCellReferences;
             var style = options?.Style;
             _rowStyle = style != null && !style.IsDefault ? style : null;
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
@@ -549,7 +553,8 @@ namespace SheetStream
             // previous cell of its row, or in column A when it is the first. So it is written only when this
             // cell is NOT the next one in line (after Skip, an unstyled WriteEmpty, or any other gap), which
             // keeps the position exact while the common dense row pays nothing for it, in bytes or in time.
-            if (NextColumn != _lastWrittenColumn + 1)
+            // PackageOptions.WriteCellReferences switches the shortcut off for readers that need every address.
+            if (_alwaysWriteReference || NextColumn != _lastWrittenColumn + 1)
             {
                 _w.WriteStartAttribute("r");
                 _w.WriteString(CellReference.ColumnLetters(NextColumn));
