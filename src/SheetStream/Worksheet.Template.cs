@@ -88,7 +88,7 @@ namespace SheetStream
             var (row, column) = RangeReference.ParseCell(cell);
             var wanted = CellReference.ToA1(row, column);
             if (_templateStyles != null && _templateStyles.TryGetValue(wanted, out var known)) return known;
-            var found = FindTemplateStyle(row, wanted);
+            var found = FindTemplateStyle(row, column, wanted);
             (_templateStyles ??= new Dictionary<string, CellStyle>(StringComparer.Ordinal))[wanted] = found;
             return found;
         }
@@ -97,26 +97,48 @@ namespace SheetStream
         // would otherwise re-read the sheet for every row it writes.
         private Dictionary<string, CellStyle>? _templateStyles;
 
-        private CellStyle FindTemplateStyle(int row, string wanted)
+        private CellStyle FindTemplateStyle(int row, int column, string wanted)
         {
             if (_templateSource == null) throw new InvalidOperationException("TemplateStyle is only available on sheets opened from a template.");
             using (var archive = _templateSource.OpenArchive())
             using (var r = _templateSource.OpenRequiredXml(archive, TemplatePart!))
             {
+                // Cells and rows may omit their r attribute (SheetStream itself does for consecutive cells); the
+                // position is then the row after the previous one, and the column after the previous cell.
+                var currentRow = 0;
+                var nextColumn = 1;
                 while (r.Read())
                 {
                     if (r.NodeType != XmlNodeType.Element) continue;
                     if (r.LocalName == "row")
                     {
                         // Rows are in ascending order; once past the wanted row, use the row's own style if any.
-                        var rr = TemplateSource.Int(r.GetAttribute("r"));
-                        if (rr.HasValue && rr.Value > row) break;
+                        currentRow = TemplateSource.Int(r.GetAttribute("r")) ?? currentRow + 1;
+                        nextColumn = 1;
+                        if (currentRow > row) break;
                         continue;
                     }
-                    if (r.LocalName == "c" && string.Equals(r.GetAttribute("r"), wanted, StringComparison.OrdinalIgnoreCase))
+                    if (r.LocalName == "c")
                     {
-                        var s = TemplateSource.Int(r.GetAttribute("s")) ?? 0;
-                        return s == 0 ? Workbook.Styles.Default : new CellStyle(s);
+                        var reference = r.GetAttribute("r");
+                        bool isWanted;
+                        if (reference != null)
+                        {
+                            isWanted = string.Equals(reference, wanted, StringComparison.OrdinalIgnoreCase);
+                            // Keep counting after a referenced cell, so a following unreferenced one lands right.
+                            // A reference this method cannot read is not the wanted cell, and not a place to resume from.
+                            if (RangeReference.TryParse(reference, out var parsed)) nextColumn = parsed.FromColumn + 1;
+                        }
+                        else
+                        {
+                            isWanted = currentRow == row && nextColumn == column;
+                            nextColumn++;
+                        }
+                        if (isWanted)
+                        {
+                            var s = TemplateSource.Int(r.GetAttribute("s")) ?? 0;
+                            return s == 0 ? Workbook.Styles.Default : new CellStyle(s);
+                        }
                     }
                 }
             }

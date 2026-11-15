@@ -25,6 +25,10 @@ namespace SheetStream
         private CellStyle? _rowStyle;
         private int _lastStyleId;
 
+        // Column of the last <c> element written in the open row, 0 before the first. A cell is consecutive,
+        // and may leave out its r attribute, exactly when NextColumn is this plus one.
+        private int _lastWrittenColumn;
+
         // True when the sheet wants each cell's display text (AutoFit, or a table header being captured).
         // Computed once per row so the common path pays a single bool test per cell.
         private bool _observe;
@@ -69,6 +73,7 @@ namespace SheetStream
         {
             RowIndex = rowIndex;
             NextColumn = 1;
+            _lastWrittenColumn = 0;
             var style = options?.Style;
             _rowStyle = style != null && !style.IsDefault ? style : null;
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
@@ -528,8 +533,9 @@ namespace SheetStream
         private string NumberText(double value) => _sheet.Workbook.Styles.DisplayFormat(_lastStyleId).Render(value);
 
         /// <summary>
-        /// Opens a <c>&lt;c&gt;</c> element. The reference is written as two strings (cached column letters,
-        /// then the row text computed once per row) so no per-cell string is allocated.
+        /// Opens a <c>&lt;c&gt;</c> element. The reference is only written when the cell is not the next one in
+        /// its row, and then as two strings (cached column letters, then the row text computed once per row)
+        /// so no per-cell string is allocated.
         /// </summary>
         private void BeginCell(CellStyle? style, string? type)
         {
@@ -537,10 +543,18 @@ namespace SheetStream
                 throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
 
             _w.WriteStartElement("c");
-            _w.WriteStartAttribute("r");
-            _w.WriteString(CellReference.ColumnLetters(NextColumn));
-            _w.WriteString(_rowText);
-            _w.WriteEndAttribute();
+            // The r attribute is optional (ECMA-376 18.3.1.4): a cell without one sits in the column after the
+            // previous cell of its row, or in column A when it is the first. So it is written only when this
+            // cell is NOT the next one in line (after Skip, an unstyled WriteEmpty, or any other gap), which
+            // keeps the position exact while the common dense row pays nothing for it, in bytes or in time.
+            if (NextColumn != _lastWrittenColumn + 1)
+            {
+                _w.WriteStartAttribute("r");
+                _w.WriteString(CellReference.ColumnLetters(NextColumn));
+                _w.WriteString(_rowText);
+                _w.WriteEndAttribute();
+            }
+            _lastWrittenColumn = NextColumn;
 
             var effective = style ?? _rowStyle;
             _lastStyleId = effective?.Id ?? 0;

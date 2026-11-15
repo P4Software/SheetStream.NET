@@ -2,6 +2,12 @@
 
 All notable changes to SheetStream. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- **Smaller sheet files and faster writes: cells no longer repeat their address.** A cell that sits in the column right after the previous cell of its row is written without its `r="B2"` attribute, which the Open XML specification makes optional (a cell without one belongs in the next column; the first cell of a row belongs in column A). A cell that follows a gap, whether from `Skip()` or an empty cell with no style, still carries its address, so every value stays exactly where you put it. Excel, ExcelReader, `Worksheets.Edit` and `OpenTemplate` all read these files as before. If you read the XML of a generated sheet yourself with a tool that expects an address on every cell (for example `Cell.CellReference` in the Open XML SDK, which then returns null), work the column out from the cell's position in its row, as the specification describes.
+
 ## 0.6.0 (2026-11-14)
 
 A security and safety release. It closes, for every way of opening a workbook, the class of problem that 0.5.0 fixed only in part, and it changes when a workbook is written. Two changes can break existing code; they are listed first.

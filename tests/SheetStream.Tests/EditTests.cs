@@ -71,7 +71,7 @@ public class EditTests
     {
         var book = doc.WorkbookPart;
         var sheet = book.Workbook.Sheets.Elements<X.Sheet>().Single(x => x.Name.Value == sheetName);
-        return ((WorksheetPart)book.GetPartById(sheet.Id)).Worksheet.Descendants<X.Cell>().ToDictionary(c => c.CellReference.Value);
+        return ((WorksheetPart)book.GetPartById(sheet.Id)).Worksheet.CellsByAddress();
     }
 
     [Fact]
@@ -381,10 +381,11 @@ public class EditTests
         });
         var shared = PatchSheet(plain, "xl/worksheets/sheet1.xml", xml =>
         {
-            Assert.Contains("<c r=\"B2\"><f>A2*2</f>", xml);
-            Assert.Contains("<c r=\"B3\"><v>0</v></c>", xml);
-            return xml.Replace("<c r=\"B2\"><f>A2*2</f>", "<c r=\"B2\"><f t=\"shared\" ref=\"B2:B3\" si=\"0\">A2*2</f>")
-                      .Replace("<c r=\"B3\"><v>0</v></c>", "<c r=\"B3\"><f t=\"shared\" si=\"0\"/><v>8</v></c>");
+            // Consecutive cells carry no r attribute, so B2 and B3 are told apart by their place in the row.
+            Assert.Contains("<c><f>A2*2</f>", xml);
+            Assert.Contains("<c><v>4</v></c><c><v>0</v></c>", xml);
+            return xml.Replace("<c><f>A2*2</f>", "<c r=\"B2\"><f t=\"shared\" ref=\"B2:B3\" si=\"0\">A2*2</f>")
+                      .Replace("<c><v>4</v></c><c><v>0</v></c>", "<c><v>4</v></c><c r=\"B3\"><f t=\"shared\" si=\"0\"/><v>8</v></c>");
         });
 
         var edited = EditBytes(shared, p =>
@@ -447,7 +448,7 @@ public class EditTests
         Assert.Equal(9, rows[3].Height.Value);                                   // Empty row kept for its height.
         Assert.Equal(42, rows[4].Height.Value);
         Assert.Equal("0.25", rows[4].DyDescent.InnerText);
-        var cells = ws.Descendants<X.Cell>().ToDictionary(c => c.CellReference.Value);
+        var cells = ws.CellsByAddress();
         Assert.Equal(2, cells["A2"].InlineString.Elements<X.Run>().Count());    // Rich runs intact.
         Assert.NotNull(cells["A2"].InlineString.Elements<X.Run>().Last().RunProperties.GetFirstChild<X.Bold>());
         Assert.Equal("added", doc.WorkbookPart.SharedStringTablePart.SharedStringTable.ElementAt(int.Parse(cells["B4"].CellValue.Text)).InnerText);
