@@ -21,7 +21,8 @@ namespace SheetStream
     {
         private readonly Worksheet _sheet;
         private XmlWriter _w = null!;
-        private string _rowText = "";
+        // Scratch space for formatting numbers without creating a string per cell (see WriteNumber).
+        private readonly char[] _numberBuffer = new char[CharNumbers.BufferLength];
         private CellStyle? _rowStyle;
         private int _lastStyleId;
 
@@ -77,13 +78,14 @@ namespace SheetStream
             var style = options?.Style;
             _rowStyle = style != null && !style.IsDefault ? style : null;
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
-            _rowText = rowIndex.ToString(CultureInfo.InvariantCulture);
             _observe = _sheet.ShouldObserveRow(rowIndex);
             _cache = _sheet.IsCachingFormulaResults;
             IsOpen = true;
 
             _w.WriteStartElement("row");
-            _w.WriteAttributeString("r", _rowText);
+            _w.WriteStartAttribute("r");
+            WriteInteger(rowIndex);
+            _w.WriteEndAttribute();
             if (rawAttributes != null)
                 for (var i = 0; i < rawAttributes.Count; i++) rawAttributes[i].WriteTo(_w);
             if (_rowStyle != null)
@@ -177,7 +179,7 @@ namespace SheetStream
                 return WriteInlineString(value, style);
             BeginCell(style, "s");
             _w.WriteStartElement("v");
-            _w.WriteValue(index);
+            WriteInteger(index);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCell(value);
@@ -242,7 +244,7 @@ namespace SheetStream
             if (double.IsNaN(value) || double.IsInfinity(value)) return WriteError("#NUM!", style);
             BeginCell(style, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value);
+            WriteNumber(value);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
@@ -258,7 +260,7 @@ namespace SheetStream
             EnsureOpen();
             BeginCell(style, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value);
+            WriteInteger(value);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
@@ -271,7 +273,7 @@ namespace SheetStream
             EnsureOpen();
             BeginCell(style, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value);
+            WriteInteger(value);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCell(_observe ? NumberText(value) : null);
@@ -284,7 +286,7 @@ namespace SheetStream
             EnsureOpen();
             BeginCell(style, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value);
+            WriteNumber(value);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, (double)value);
             EndCell(_observe ? NumberText((double)value) : null);
@@ -323,7 +325,7 @@ namespace SheetStream
             var serial = ExcelDate.ToSerial(value);
             BeginCell(effective, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(serial);
+            WriteNumber(serial);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, serial);
             // Display width follows the style's date format: "10/13/2026", "2026-10-13", "13-Oct-26"...
@@ -342,7 +344,7 @@ namespace SheetStream
             var effective = style ?? (_rowStyle == null ? styles.DurationStyle : _rowDurationStyle ??= styles.WithNumberFormat(_rowStyle, NumberFormats.Duration));
             BeginCell(effective, null);
             _w.WriteStartElement("v");
-            _w.WriteValue(value.TotalDays);
+            WriteNumber(value.TotalDays);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.TotalDays);
             EndCell(_observe ? NumberText(value.TotalDays) : null);
@@ -442,7 +444,7 @@ namespace SheetStream
             BeginCell(style, null);
             WriteF(text);
             _w.WriteStartElement("v");
-            _w.WriteValue(cachedValue);
+            WriteNumber(cachedValue);
             _w.WriteEndElement();
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, cachedValue);
             EndCell(_observe ? NumberText(cachedValue) : null);
@@ -551,7 +553,7 @@ namespace SheetStream
             {
                 _w.WriteStartAttribute("r");
                 _w.WriteString(CellReference.ColumnLetters(NextColumn));
-                _w.WriteString(_rowText);
+                WriteInteger(RowIndex);
                 _w.WriteEndAttribute();
             }
             _lastWrittenColumn = NextColumn;
@@ -561,10 +563,36 @@ namespace SheetStream
             if (effective != null && !effective.IsDefault)
             {
                 _w.WriteStartAttribute("s");
-                _w.WriteValue(effective.Id);
+                WriteInteger(effective.Id);
                 _w.WriteEndAttribute();
             }
             if (type != null) _w.WriteAttributeString("t", type);
+        }
+
+        /// <summary>
+        /// Writes an integer as text content (or an attribute value) through the reusable buffer. Unlike
+        /// <c>XmlWriter.WriteValue(int)</c> it creates no string, which is what keeps a cell allocation-free.
+        /// </summary>
+        private void WriteInteger(long value) => _w.WriteChars(_numberBuffer, 0, CharNumbers.Format(value, _numberBuffer));
+
+        /// <summary>
+        /// Writes a double like <c>XmlWriter.WriteValue(double)</c> does (shortest round-trip text, invariant
+        /// culture), but through the reusable buffer. On <c>netstandard2.0</c>, which cannot format into a buffer,
+        /// it falls back to the string-creating call.
+        /// </summary>
+        private void WriteNumber(double value)
+        {
+            var length = CharNumbers.Format(value, _numberBuffer);
+            if (length < 0) _w.WriteValue(value);
+            else _w.WriteChars(_numberBuffer, 0, length);
+        }
+
+        /// <summary>Decimal counterpart of <see cref="WriteNumber(double)"/>.</summary>
+        private void WriteNumber(decimal value)
+        {
+            var length = CharNumbers.Format(value, _numberBuffer);
+            if (length < 0) _w.WriteValue(value);
+            else _w.WriteChars(_numberBuffer, 0, length);
         }
 
         private void EndCell(string? displayText)
