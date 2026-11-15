@@ -52,6 +52,8 @@ namespace SheetStream
             OmitXmlDeclaration = false,
         };
 
+        private static readonly XmlWriterSettings NoCheckSettings = new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = true, Indent = false, NewLineHandling = NewLineHandling.None, CheckCharacters = false };
+
         private readonly Stream _output;
         private bool _leaveOpen;
         private ZipArchive? _archive;
@@ -301,7 +303,9 @@ namespace SheetStream
 
             var entry = _archive.CreateEntry(entryName, Options.CompressionLevel);
             var buffered = new BufferedStream(entry.Open(), Options.BufferSize);
-            var writer = XmlWriter.Create(buffered, WriterSettings);
+            // EXPERIMENT (measurement only, not for release): SS_EXP_NOCHK turns off the writer's character checks.
+            var settings = Environment.GetEnvironmentVariable("SS_EXP_NOCHK") != null ? NoCheckSettings : WriterSettings;
+            var writer = XmlWriter.Create(buffered, settings);
             _openPart = new PartWriter(writer, this);
             return _openPart;
         }
