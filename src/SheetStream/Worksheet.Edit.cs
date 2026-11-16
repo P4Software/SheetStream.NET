@@ -397,6 +397,8 @@ namespace SheetStream
                     case '&': sb.Append("&amp;"); break;
                     case '<': sb.Append("&lt;"); break;
                     case '>': sb.Append("&gt;"); break;
+                    // A raw CR in the file is read back as LF; the character reference keeps it (see XmlTextUtil.WriteText).
+                    case '\r': sb.Append("&#xD;"); break;
                     default: sb.Append(c); break;
                 }
             }

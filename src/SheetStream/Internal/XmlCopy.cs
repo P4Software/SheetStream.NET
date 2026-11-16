@@ -130,7 +130,12 @@ namespace SheetStream.Internal
                 case XmlNodeType.Text: XmlTextUtil.WriteText(w, r.Value); break; // A CR the parser was given as &#xD; must not become a raw one.
                 case XmlNodeType.CDATA: w.WriteCData(r.Value); break;
                 case XmlNodeType.Whitespace:
-                case XmlNodeType.SignificantWhitespace: w.WriteWhitespace(r.Value); break;
+                case XmlNodeType.SignificantWhitespace:
+                    // A text made only of white space (&#xD;, " &#xD;&#xA; ") is reported as a whitespace node, and WriteWhitespace
+                    // writes a CR raw, which is read back as LF. Written as text it keeps its CRs.
+                    if (r.Value.IndexOf('\r') >= 0) XmlTextUtil.WriteText(w, r.Value);
+                    else w.WriteWhitespace(r.Value);
+                    break;
                 case XmlNodeType.Comment: w.WriteComment(r.Value); break;
                 case XmlNodeType.ProcessingInstruction: w.WriteProcessingInstruction(r.Name, r.Value); break;
                 case XmlNodeType.EndElement: w.WriteFullEndElement(); break;

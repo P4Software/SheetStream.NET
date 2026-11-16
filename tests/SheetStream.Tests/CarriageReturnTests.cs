@@ -100,37 +100,62 @@ public class CarriageReturnTests
         AssertValid(bytes);
     }
 
-    /// <summary>A workbook written here is a fine template or edit source: the text it holds must come out the other side unchanged.</summary>
-    [Fact]
-    public void CarriageReturns_SurviveTemplateAndEditCopies()
-    {
-        var original = ExcelPackage.CreateBytes(wb =>
-        {
-            var s = wb.Worksheets.Add("S");
-            s.Row().WriteCell("keep\r\nme").WriteCell(1);
-        }, new PackageOptions { StringStorage = StringStorage.Shared });
+    /// <summary>The texts the copy tests write: ones with a CR among other characters, and ones made of nothing but white space.</summary>
+    private static readonly string[] CopyTexts = { "a\r\nb", "\r", "\r\n", " \r ", "\r\r", "a\rb", "\r\n\r\nz", "plain" };
 
+    /// <summary>
+    /// One row per text with the text in a cell of the layout under test (A: as <see cref="PackageOptions.StringStorage"/> stores it, B: inline,
+    /// C: the cached text of a formula, D: the runs of a rich-text cell). The copies below must hand every one of them back unchanged.
+    /// </summary>
+    private static byte[] WriteCopyTexts(StringStorage storage) => ExcelPackage.CreateBytes(wb =>
+    {
+        var s = wb.Worksheets.Add("S");
+        foreach (var text in CopyTexts)
+            s.Row().WriteCell(text).WriteInlineString(text).WriteFormula("\"x\"", text).WriteRichText(new RichText(text) { Bold = true }, new RichText("tail"));
+    }, new PackageOptions { StringStorage = storage });
+
+    private static void AssertCopyTexts(byte[] workbook)
+    {
+        var rows = Read(workbook);
+        for (var i = 0; i < CopyTexts.Length; i++)
+        {
+            Assert.Equal(CopyTexts[i], rows[i][0]);
+            Assert.Equal(CopyTexts[i], rows[i][1]);
+            Assert.Equal(CopyTexts[i], rows[i][2]);
+            Assert.Equal(CopyTexts[i] + "tail", rows[i][3]);
+        }
+    }
+
+    /// <summary>A workbook written here is a fine template or edit source: the text it holds must come out the other side unchanged, in every layout.</summary>
+    [Theory]
+    [InlineData(StringStorage.Shared)]
+    [InlineData(StringStorage.Inline)]
+    [InlineData(StringStorage.Auto)]
+    public void CarriageReturns_SurviveTemplateAndEditCopies(StringStorage storage)
+    {
+        var original = WriteCopyTexts(storage);
+        AssertCopyTexts(original);
+
+        // A template filled below the existing rows: the rows above are copied through the XML writer, and so is the string table.
         var filled = new MemoryStream();
         using (var package = ExcelPackage.OpenTemplate(new MemoryStream(original), filled, leaveOpen: true))
         {
-            package.Workbook.Worksheets.Open("S").Row(2).WriteCell("new\r\ntext");
+            package.Workbook.Worksheets.Open("S").Row(CopyTexts.Length + 5).WriteCell("new\r\ntext");
             package.Save();
         }
-        var rows = Read(filled.ToArray());
-        Assert.Equal("keep\r\nme", rows[0][0]);
-        Assert.Equal("new\r\ntext", rows[1][0]);
+        AssertCopyTexts(filled.ToArray());
+        Assert.Equal("new\r\ntext", Read(filled.ToArray()).Last()[0]);
 
+        // Editing one cell: every other cell keeps its original XML, which is re-escaped when the sheet is read back in.
         var edited = new MemoryStream();
         using (var package = ExcelPackage.Edit(new MemoryStream(original), edited, leaveOpen: true))
         {
-            package.Workbook.Worksheets.Edit("S").Cells["B1"].Value = "edited\r\nvalue";
+            package.Workbook.Worksheets.Edit("S").Cells["F1"].Value = "edited\r\nvalue";
             package.Save();
         }
-        rows = Read(edited.ToArray());
-        Assert.Equal("keep\r\nme", rows[0][0]);
-        Assert.Equal("edited\r\nvalue", rows[0][1]);
+        AssertCopyTexts(edited.ToArray());
+        Assert.Equal("edited\r\nvalue", Read(edited.ToArray())[0][5]);
     }
-
     /// <summary>The bytes of text without a carriage return are what they were.</summary>
     [Fact]
     public void TextWithoutACarriageReturn_IsWrittenAsBefore()
