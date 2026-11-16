@@ -189,6 +189,43 @@ public class StringStorageTests
         Assert.True(Count(Part(bytes, "xl/worksheets/sheet2.xml"), "t=\"inlineStr\"") > rows - 8 * StringColumnPolicy.ProbeCells);
     }
 
+    /// <summary>
+    /// Every sheet takes a scope, which needs an array as long as the table is then. Sized exactly it is reallocated for every sheet
+    /// (quadratic in the number of sheets: 1,000 small sheets cost three times the memory they should); it must grow geometrically.
+    /// </summary>
+    [Fact]
+    public void Auto_ManySmallSheets_DoNotReallocateTheScopeArrayForEverySheet()
+    {
+        // The table itself: 300 scopes, each begun after 640 more entries (what a 200-row sheet of five unique columns adds).
+        var table = new SharedStringTable(long.MaxValue / 4);
+        long allocatedByScopes = 0;
+        for (var sheet = 0; sheet < 300; sheet++)
+        {
+            for (var i = 0; i < 640; i++) table.TryGetOrAdd("s" + sheet + "_" + i, out _);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            table.BeginScope(out _);
+            allocatedByScopes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        // 192,000 entries: four bytes each is 0.8 MB; doubling costs at most about three times that. Resizing to the exact size every time cost 115 MB.
+        Assert.True(allocatedByScopes < 4_000_000, $"The scopes allocated {allocatedByScopes:N0} bytes.");
+
+        // And through a package: the first sheet is the same bytes whether or not other sheets follow it, and every sheet reads back.
+        void Fill(Workbook wb, int sheets)
+        {
+            for (var n = 0; n < sheets; n++)
+            {
+                var s = wb.Worksheets.Add("S" + n);
+                for (var i = 0; i < 200; i++) s.Row().WriteCell("a" + n + "_" + i).WriteCell("b" + n + "_" + i).WriteCell("c" + n + "_" + i).WriteCell("d" + n + "_" + i).WriteCell("e" + n + "_" + i);
+            }
+        }
+        var one = ExcelPackage.CreateBytes(wb => Fill(wb, 1), Options(StringStorage.Auto));
+        var many = ExcelPackage.CreateBytes(wb => Fill(wb, 300), Options(StringStorage.Auto));
+        Assert.Equal(Part(one, "xl/worksheets/sheet1.xml"), Part(many, "xl/worksheets/sheet1.xml"));
+        using var reader = ExcelReader.Open(new MemoryStream(many), false);
+        Assert.Equal(300, reader.SheetNames.Count);
+        Assert.Equal("e299_199", reader.ReadRows(299).Last()[4]);
+    }
+
     /// <summary>A column that really repeats must still be shared on a second sheet, with its own values and with the first sheet's.</summary>
     [Fact]
     public void Auto_ARepeatingColumnOnASecondSheet_IsStillShared()

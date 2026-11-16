@@ -141,8 +141,11 @@ namespace SheetStream
         // One sheet of a new package has watermark 0, so nothing changes for it.
 
         // Per entry below the current watermark: the stamp of the last scope that used it (0 = none). Allocated when a
-        // scope starts with a non-empty table, so a package with one sheet never has it; 4 bytes per entry, which the
-        // entry's EntryOverhead in the budget more than covers.
+        // scope starts with a non-empty table, so a package with one sheet never has it. It grows geometrically, never
+        // to the exact size: sized exactly at every sheet it would be reallocated and copied for each of 1,000 small
+        // sheets, which is quadratic. It is 4 bytes per entry, 8 at worst while it has room to spare, for the entries this
+        // package adds, which the entry's EntryOverhead in the budget (32 characters) more than covers; for the entries
+        // of a template, which the budget does not charge, it is the same few bytes on top of what the template itself costs.
         private int[] _usedBy = Array.Empty<int>();
         private int _scopes;
 
@@ -153,7 +156,14 @@ namespace SheetStream
         internal int BeginScope(out int watermark)
         {
             watermark = UniqueCount;
-            if (_usedBy.Length < watermark) Array.Resize(ref _usedBy, watermark);
+            if (_usedBy.Length < watermark)
+            {
+                // Twice the old length (at least 16, at least what is needed now), but never more than the table can ever hold:
+                // the budget allows one entry per EntryOverhead characters, plus the template's own.
+                var most = Math.Min((long)int.MaxValue / 2, _templateCount + _budget / EntryOverhead + 1);
+                var grown = (int)Math.Max(watermark, Math.Min(most, Math.Max(16L, 2L * _usedBy.Length)));
+                Array.Resize(ref _usedBy, grown);
+            }
             return ++_scopes;
         }
 
