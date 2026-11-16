@@ -662,7 +662,11 @@ namespace SheetStream
             return this;
         }
 
-        /// <summary>Writes a formula with a precomputed numeric result that non-calculating readers will see.</summary>
+        /// <summary>
+        /// Writes a formula with a precomputed numeric result that non-calculating readers will see. <c>NaN</c> and the
+        /// infinities are not results Excel can store, so for them the formula is written without a result and Excel
+        /// calculates it when the file is opened.
+        /// </summary>
         public RowWriter WriteFormula(string formula, double cachedValue, CellStyle? style = null)
             => WriteFormulaWithNumber(PrepareFormula(formula), cachedValue, style);
 

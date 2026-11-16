@@ -92,6 +92,13 @@ public class FailStopTests
             $"{others.Count} of {thrown.Count} exceptions were not IOException. First: {others.FirstOrDefault()?.GetType().Name}: {others.FirstOrDefault()?.Message}");
     }
 
+    /// <summary>Save fails with an I/O error that still says what the output reported (here: the full disk), not with a bookkeeping error.</summary>
+    private static void AssertSaveReportsTheOriginalFailure(ExcelPackage package)
+    {
+        var failure = Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+        Assert.Contains("The disk is full.", failure.Message);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -111,7 +118,7 @@ public class FailStopTests
         }
         Assert.True(thrown.Count > 0, "The write failure never reached the caller.");
         AssertOnlyIOExceptions(thrown);
-        Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+        AssertSaveReportsTheOriginalFailure(package);
     }
 
     /// <summary>
@@ -139,7 +146,8 @@ public class FailStopTests
         {
             Assert.Empty(thrown);
         }
-        Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+        if (autoFit) Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+        else AssertSaveReportsTheOriginalFailure(package);
         Assert.False(package.IsSaved);
     }
 

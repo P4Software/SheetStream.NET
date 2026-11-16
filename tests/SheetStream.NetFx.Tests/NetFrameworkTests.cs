@@ -438,6 +438,31 @@ namespace SheetStream.NetFx.Tests
             Assert.True(failures.Count == 0, string.Join("\n", failures));
         }
 
+        [Theory]
+        [InlineData(16353)]
+        [InlineData(16354)]
+        [InlineData(16355)]
+        public void TemplateSheet_RichTextWithAnEmojiAtTheFlushBoundary_IsWrittenWhole(int offset)
+        {
+            // The staging buffer is decoded back to text in 16 KB blocks; a block that ends inside the emoji's four
+            // bytes used to make the next decode one char too long for its buffer (offset 16354 is the unlucky one).
+            var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
+            var text = new string('a', offset) + "\U0001F600" + new string('b', 20000);
+            using (var output = new MemoryStream())
+            {
+                using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true))
+                {
+                    package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text));
+                    package.Save();
+                }
+                using (var reader = ExcelReader.Open(new MemoryStream(output.ToArray())))
+                {
+                    var read = (string)reader.ReadRows("S").Single()[0]!;
+                    Assert.True(read.Length == text.Length && string.CompareOrdinal(read, text) == 0, "The text read back differs from the text written.");
+                }
+            }
+        }
+
         [Fact]
         public void FormulaWithNaNOrInfinityAsResult_StoresNoResult_AsOnModernDotNet()
         {

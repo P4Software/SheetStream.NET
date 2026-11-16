@@ -13,7 +13,7 @@ All notable changes to SheetStream. Versions follow [Semantic Versioning](https:
 
 ### Fixed
 
-- **A formula written with `NaN` or an infinity as its result no longer stores a result.** `WriteFormula(formula, double.NaN)` (and the infinities) wrote text that Excel cannot use as a number, and a different text on .NET (`NaN`, `Infinity`) than on .NET Framework (`NaN`, `INF`). The formula is now written without a stored result on every build, so Excel calculates it when the file is opened.
+- **A formula written with `NaN` or an infinity as its result no longer stores a result.** `WriteFormula(formula, double.NaN)` (and the infinities) wrote `NaN`, `INF` or `-INF` as the stored result, which Excel cannot use as a number. The formula is now written without a stored result on every build, so Excel calculates it when the file is opened.
 
 ## 0.6.0 (2026-11-14)
 
