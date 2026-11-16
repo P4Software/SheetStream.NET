@@ -36,7 +36,7 @@ public class TemplateRichTextBoundaryTests
         }
 
         using var reader = ExcelReader.Open(new MemoryStream(xlsx));
-        var texts = reader.ReadRows("S").SelectMany(r => r.Values).OfType<string>().Where(s => s != "x").ToList();
+        var texts = reader.ReadRows("S").SelectMany(r => r.Values).OfType<string>().Where(s => s != "x" && s != Filler).ToList();
         var actual = Assert.Single(texts);
         // Compared without Assert.Equal on the strings themselves: a failure would print 36,000 characters.
         Assert.True(actual.Length == expected.Length && string.CompareOrdinal(actual, expected) == 0,
@@ -44,10 +44,16 @@ public class TemplateRichTextBoundaryTests
     }
 
     /// <summary>
-    /// Text with the wide character at <paramref name="offset"/> and a full buffer of ASCII after it. The whole text stays under
-    /// the 32,767 characters Excel allows in a cell (and the library accepts): the offsets are about 16,350, so 16,000 follow.
+    /// Text with the wide character at <paramref name="offset"/> and 16,000 ASCII characters after it. A cell may hold at most
+    /// 32,767 characters, so the text alone cannot make the block after the first flush a full 16 KB (the rest of it is about
+    /// 16,030 bytes); <see cref="Filler"/> in the next cell of the row does. A full block is what makes the decoder, which
+    /// carries up to three bytes over from the flush, produce one character more than the buffer has bytes (the bug these
+    /// tests guard).
     /// </summary>
     private static string TextWithWideCharacterAt(int offset, string wide) => new string('a', offset) + wide + new string('b', 16_000);
+
+    /// <summary>The cell written after the rich text, so that the second block handed to the decoder is a whole buffer.</summary>
+    private static readonly string Filler = new string('c', 2_000);
 
     /// <summary>Offsets around the first flush: the cell's 27 bytes of markup plus the text fill the 16 KB buffer near 16,350.</summary>
     private static IEnumerable<int> Offsets() => Enumerable.Range(16_330, 71);
@@ -63,7 +69,7 @@ public class TemplateRichTextBoundaryTests
             using var output = new MemoryStream();
             using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true))
             {
-                package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text));
+                package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text)).WriteInlineString(Filler);
                 package.Save();
             }
             AssertWellFormedAndReadsBack(output.ToArray(), text);
@@ -81,7 +87,11 @@ public class TemplateRichTextBoundaryTests
             using var output = new MemoryStream();
             using (var package = ExcelPackage.Edit(new MemoryStream(input), output, leaveOpen: true))
             {
-                package.Workbook.Worksheets.Edit("S").Cells[2, 1].Value = new[] { new RichText(text) };
+                {
+                var edited = package.Workbook.Worksheets.Edit("S");
+                edited.Cells[2, 1].Value = new[] { new RichText(text) };
+                edited.Cells[2, 2].Value = Filler;
+            }
                 package.Save();
             }
             AssertWellFormedAndReadsBack(output.ToArray(), text);
@@ -154,7 +164,7 @@ public class TemplateRichTextBoundaryTests
             using var output = new MemoryStream();
             using var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true);
             var sheet = package.Workbook.Worksheets.Open("S");
-            try { sheet.Row(1).WriteRichText(new RichText(text)); }
+            try { sheet.Row(1).WriteRichText(new RichText(text)).WriteInlineString(Filler); }
             catch (Exception) { /* The caller swallows it, on purpose. */ }
             sheet.Row(2).WriteCell("after");
 

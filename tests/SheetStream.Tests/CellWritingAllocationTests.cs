@@ -222,14 +222,17 @@ public class CellWritingAllocationTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    // Longer than the 16 KB staging buffer of a sheet filled into a template, and under the 32,767 characters a cell may hold.
+    // A cell holds at most 32,767 characters, so this text (32,003 characters, 32 KB or more as UTF-8) is longer than the write buffer
+    // only because WriteSheet sets the buffer to LongTextBuffer, not the 64 KB default.
+    private const int LongTextBuffer = 16 * 1024;
+
     private static readonly string LongText = new string('x', 16_000) + " & " + new string('y', 16_000);
 
     private static void WriteSheet(int rows, bool extended = false)
     {
         var names = new[] { "North", "South", "East", "West" };
         var date = new DateTime(2026, 1, 1);
-        using var package = new ExcelPackage(new DiscardingStream(), leaveOpen: true, new PackageOptions { CompressionLevel = CompressionLevel.Fastest });
+        using var package = new ExcelPackage(new DiscardingStream(), leaveOpen: true, new PackageOptions { CompressionLevel = CompressionLevel.Fastest, BufferSize = LongTextBuffer });
         var money = package.Workbook.Styles.Create(o => o.NumberFormat = "#,##0.00");
         var dated = package.Workbook.Styles.Create(o => o.NumberFormat = "yyyy-mm-dd");
         var sheet = package.Workbook.Worksheets.Add("S");
@@ -245,7 +248,7 @@ public class CellWritingAllocationTests
                     .WriteEmpty(money)                                         // A styled cell with no value.
                     .WriteCell((float)i / 3)                                   // float
                     .WriteCell(TimeSpan.FromMinutes(i))                        // duration
-                    .WriteInlineString(i % 1000 == 0 ? LongText : "short");    // Now and then a text longer than the buffer.
+                    .WriteInlineString(i % 1000 == 0 ? LongText : "short");    // Now and then a text longer than the (16 KB) buffer.
                 continue;
             }
             sheet.Row()

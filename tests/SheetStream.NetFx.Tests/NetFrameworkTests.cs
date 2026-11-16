@@ -447,17 +447,22 @@ namespace SheetStream.NetFx.Tests
             // The staging buffer is decoded back to text in 16 KB blocks; a block that ends inside the emoji's four
             // bytes used to make the next decode one char too long for its buffer (offset 16354 is the unlucky one).
             var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
-            var text = new string('a', offset) + "\U0001F600" + new string('b', 16000); // The whole text stays under the 32,767 characters a cell may hold.
+            // A cell holds at most 32,767 characters, so the rich text alone leaves a block of about 16,030 bytes after the first
+            // flush. The filler cell after it makes the second block a whole 16 KB, which is what overflowed the decoder's buffer.
+            var text = new string('a', offset) + "\U0001F600" + new string('b', 16000);
+            var filler = new string('c', 2000);
             using (var output = new MemoryStream())
             {
                 using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true))
                 {
-                    package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text));
+                    package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text)).WriteInlineString(filler);
                     package.Save();
                 }
                 using (var reader = ExcelReader.Open(new MemoryStream(output.ToArray())))
                 {
-                    var read = (string)reader.ReadRows("S").Single()[0]!;
+                    var row = reader.ReadRows("S").Single();
+                    Assert.Equal(filler, row[1]);
+                    var read = (string)row[0]!;
                     Assert.True(read.Length == text.Length && string.CompareOrdinal(read, text) == 0, "The text read back differs from the text written.");
                 }
             }
