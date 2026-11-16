@@ -19,6 +19,19 @@ internal enum ScriptKind
     Empty,
     /// <summary><c>Skip(n)</c>, with <see cref="ScriptCell.Integer"/> columns.</summary>
     Skip,
+    /// <summary><c>WriteFormula(text)</c>: no cached result.</summary>
+    Formula,
+    /// <summary><c>WriteFormula(text, number)</c>.</summary>
+    FormulaNumber,
+    /// <summary><c>WriteFormula(text, string)</c>, the cached text in <see cref="ScriptCell.Text2"/>.</summary>
+    FormulaText,
+    /// <summary><c>WriteFormula(text, bool)</c>.</summary>
+    FormulaBool,
+    /// <summary>
+    /// <c>WriteRichText</c>: a first run of <see cref="ScriptCell.Text"/> formatted by the bits of <see cref="ScriptCell.Integer"/>
+    /// (1 bold, 2 italic, 4 underline, 8 strike, 16 size, 32 font name, 64 colour) and, when <see cref="ScriptCell.Text2"/> is set, a plain second run.
+    /// </summary>
+    RichText,
 }
 
 /// <summary>One call on a <see cref="RowWriter"/>. A plain struct so scripts are cheap to build in thousands.</summary>
@@ -31,6 +44,8 @@ internal struct ScriptCell
     public DateTime Date;
     public TimeSpan Span;
     public string? Text;
+    /// <summary>Second text of the kinds that have one (the cached result of a text formula, the second rich-text run).</summary>
+    public string? Text2;
     /// <summary>Index into the style array handed to <see cref="RawCellScript.Apply"/>, or -1 for no style.</summary>
     public int Style;
 }
@@ -93,10 +108,31 @@ internal sealed class RawCellScript
                     case ScriptKind.NullText: w.WriteCell((string?)null, style); break;
                     case ScriptKind.Empty: w.WriteEmpty(style); break;
                     case ScriptKind.Skip: w.Skip((int)cell.Integer); break;
+                    case ScriptKind.Formula: w.WriteFormula(cell.Text!, style); break;
+                    case ScriptKind.FormulaNumber: w.WriteFormula(cell.Text!, cell.Number, style); break;
+                    case ScriptKind.FormulaText: w.WriteFormula(cell.Text!, cell.Text2!, style); break;
+                    case ScriptKind.FormulaBool: w.WriteFormula(cell.Text!, cell.Integer != 0, style); break;
+                    case ScriptKind.RichText: w.WriteRichText(style, Runs(cell)); break;
                     default: throw new InvalidOperationException(cell.Kind.ToString());
                 }
             }
         }
+    }
+
+    /// <summary>The runs of a <see cref="ScriptKind.RichText"/> cell; the reference writer builds the same ones.</summary>
+    public static RichText[] Runs(ScriptCell cell)
+    {
+        var first = new RichText(cell.Text!)
+        {
+            Bold = (cell.Integer & 1) != 0,
+            Italic = (cell.Integer & 2) != 0,
+            Underline = (cell.Integer & 4) != 0,
+            Strikethrough = (cell.Integer & 8) != 0,
+        };
+        if ((cell.Integer & 16) != 0) first.Size = 13.5;
+        if ((cell.Integer & 32) != 0) first.FontName = "Cour\u00ECer & <New>";
+        if ((cell.Integer & 64) != 0) first.Color = "#C00000";
+        return cell.Text2 == null ? new[] { first } : new[] { first, new RichText(cell.Text2) };
     }
 
     // ---- Builders --------------------------------------------------------------------------------------------------
@@ -198,6 +234,37 @@ internal sealed class RawCellScript
             row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = s, Style = -1 });
             row.Add(new ScriptCell { Kind = ScriptKind.Text, Text = s, Style = style++ % StyleCount });
             row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = s, Style = style++ % StyleCount });
+        }
+        foreach (var s in NastyStrings)
+        {
+            if (string.IsNullOrWhiteSpace(s)) continue; // A blank formula is refused.
+            var row = script.NewRow();
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = s, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaText, Text = "A1&B1", Text2 = s, Style = style++ % StyleCount });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = s, Text2 = s, Integer = style % 128, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = "head", Text2 = s, Integer = 0, Style = style++ % StyleCount });
+        }
+        {
+            var row = script.NewRow();
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = "SUM(A1:A9)", Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = "=A1*2", Style = 4 });
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = "  =  A1+1  ", Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = "=", Style = -1 });             // An empty formula body.
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaNumber, Text = "A1+1", Number = 3, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaNumber, Text = "B1/3", Number = 1.0 / 3, Style = 7 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaNumber, Text = "B1", Number = -0.0, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaNumber, Text = "B1", Number = 1e21, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaText, Text = "A1", Text2 = "", Style = -1 });  // An empty cached text is <v />.
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaText, Text = "A1", Text2 = "result", Style = 2 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaText, Text = "A1", Text2 = " padded ", Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaBool, Text = "A1>0", Integer = 1, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.FormulaBool, Text = "A1>0", Integer = 0, Style = 9 });
+            row.Add(new ScriptCell { Kind = ScriptKind.Skip, Integer = 4 });
+            row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = "after a gap", Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = "plain", Integer = 0, Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = "every format", Text2 = " and more", Integer = 127, Style = 5 });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = "", Style = -1 });
+            row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = " lead", Text2 = "trail ", Integer = 1, Style = -1 });
         }
         // Gaps: the r attribute appears exactly where a cell is not the next one in line.
         {
@@ -330,13 +397,27 @@ internal sealed class RawCellScript
                 else if (pick < 52) row.Add(new ScriptCell { Kind = ScriptKind.Bool, Integer = r.Next(2), Style = style });
                 else if (pick < 72) row.Add(new ScriptCell { Kind = ScriptKind.Text, Text = RandomText(r), Style = style });
                 else if (pick < 90) row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = RandomText(r), Style = style });
-                else if (pick < 93) row.Add(new ScriptCell { Kind = ScriptKind.NullText, Style = style });
-                else if (pick < 96) row.Add(new ScriptCell { Kind = ScriptKind.Empty, Style = style });
-                else row.Add(new ScriptCell { Kind = ScriptKind.Skip, Integer = r.Next(0, 4) });
+                else if (pick < 91) row.Add(new ScriptCell { Kind = ScriptKind.NullText, Style = style });
+                else if (pick < 93) row.Add(new ScriptCell { Kind = ScriptKind.Empty, Style = style });
+                else if (pick < 94) row.Add(new ScriptCell { Kind = ScriptKind.Skip, Integer = r.Next(0, 4) });
+                else if (pick < 95) row.Add(new ScriptCell { Kind = ScriptKind.Formula, Text = RandomFormula(r), Style = style });
+                else if (pick < 96) row.Add(new ScriptCell { Kind = ScriptKind.FormulaNumber, Text = RandomFormula(r), Number = Finite(RandomDouble(r)), Style = style });
+                else if (pick < 97) row.Add(new ScriptCell { Kind = ScriptKind.FormulaText, Text = RandomFormula(r), Text2 = RandomText(r), Style = style });
+                else if (pick < 98) row.Add(new ScriptCell { Kind = ScriptKind.FormulaBool, Text = RandomFormula(r), Integer = r.Next(2), Style = style });
+                else row.Add(new ScriptCell { Kind = ScriptKind.RichText, Text = RandomText(r), Text2 = r.Next(2) == 0 ? null : RandomText(r), Integer = r.Next(128), Style = style });
             }
         }
         return script;
     }
+
+    /// <summary>A formula text that is never blank (a blank one is refused), with the same nasty characters as any other text.</summary>
+    private static string RandomFormula(Random r)
+    {
+        var text = RandomText(r);
+        return string.IsNullOrWhiteSpace(text) ? "A" + text + "1" : text;
+    }
+
+    private static double Finite(double value) => double.IsNaN(value) || double.IsInfinity(value) ? 0.5 : value;
 
     private static long RandomLong(Random r)
     {

@@ -34,14 +34,14 @@ public class CellWritingAllocationTests
         0m, 1m, -1m, 1.10m, 0.0000000000000000000000000001m, decimal.MaxValue, decimal.MinValue, 123456789.123456789m, -0.5m, 100m, 79228162514264337593543950335m,
     };
 
-    private static string Text(char[] buffer, int length) => new string(buffer, 0, length);
+    private static string Text(byte[] buffer, int length) => System.Text.Encoding.ASCII.GetString(buffer, 0, length);
 
     [Fact]
     public void Integers_FormatLikeTheInvariantCulture()
     {
-        var buffer = new char[CharNumbers.BufferLength];
+        var buffer = new byte[Utf8Numbers.MaxLength];
         foreach (var value in AwkwardLongs)
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
 
         var random = new Random(20261115); // Fixed seed: a failure must reproduce.
         for (var i = 0; i < 200_000; i++)
@@ -49,16 +49,16 @@ public class CellWritingAllocationTests
             // Spread over every magnitude, not only the huge ones a raw NextInt64 would give.
             var value = random.NextInt64() >> random.Next(0, 64);
             if (random.Next(2) == 0) value = -value;
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
         }
     }
 
     [Fact]
     public void Doubles_FormatLikeXmlConvert()
     {
-        var buffer = new char[CharNumbers.BufferLength];
+        var buffer = new byte[Utf8Numbers.MaxLength];
         foreach (var value in AwkwardDoubles)
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
 
         var random = new Random(20261116);
         for (var i = 0; i < 200_000; i++)
@@ -68,22 +68,61 @@ public class CellWritingAllocationTests
                 ? BitConverter.Int64BitsToDouble(random.NextInt64())
                 : Math.Round((random.NextDouble() - 0.3) * Math.Pow(10, random.Next(-4, 9)), random.Next(0, 6));
             if (double.IsNaN(value) || double.IsInfinity(value)) continue; // Never reaches the formatter: the writer turns them into #NUM!.
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
+        }
+    }
+
+    /// <summary>
+    /// The fast path for short decimals (<c>1234.5</c>, <c>0.07</c>) must give the text of the runtime's own shortest
+    /// round-trip formatter for every value it accepts, and leave the rest to it. These shapes are the ones the fast
+    /// path decides on: decimals of every length and magnitude, the near misses (binary noise like 0.1 + 0.2) and the
+    /// edges of its range. A fixed seed, so a failure reproduces.
+    /// </summary>
+    [Fact]
+    public void Doubles_FastPathAgreesWithTheRuntimeFormatter()
+    {
+        var buffer = new byte[Utf8Numbers.MaxLength];
+        void Check(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return;
+            var written = Utf8Numbers.Format(value, buffer, 3);
+            Assert.Equal(value.ToString("R", System.Globalization.CultureInfo.InvariantCulture), System.Text.Encoding.ASCII.GetString(buffer, 3, written));
+        }
+
+        foreach (var edge in new[] { 0.0, -0.0, 1e-4, 9.999999999999999e-5, 0.0001, 0.00011, 1e-5, 1, 1e14, 123456789012345.0, 999999999999999.0, 999999999999999.9, 1e15, 4503599627370496.0, 0.1 + 0.2, 1.0000000000000002 })
+        {
+            Check(edge);
+            Check(-edge);
+        }
+
+        var random = new Random(20261118);
+        for (var i = 0; i < 1_500_000; i++)
+        {
+            var places = random.Next(0, 9);
+            var digits = random.Next(1, 16);
+            var value = (long)(random.NextDouble() * Math.Pow(10, digits)) / Math.Pow(10, places);
+            Check(value);
+            Check(-value);
+            Check(value + random.Next(1, 100) / 100.0);            // Sums of short decimals: often noise.
+            Check(value * 1.1);
+            Check(random.Next(0, 10000) * 1.25 + 0.99);
+            Check(Math.Round(random.NextDouble() * 1e6, random.Next(0, 7)));
+            Check(random.NextDouble() * Math.Pow(10, random.Next(-8, 18)));
         }
     }
 
     [Fact]
     public void Decimals_FormatLikeXmlConvert()
     {
-        var buffer = new char[CharNumbers.BufferLength];
+        var buffer = new byte[Utf8Numbers.MaxLength];
         foreach (var value in AwkwardDecimals)
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
 
         var random = new Random(20261117);
         for (var i = 0; i < 50_000; i++)
         {
             var value = new decimal(random.Next(), random.Next(), random.Next(0, 1 << 20), random.Next(2) == 0, (byte)random.Next(0, 29));
-            Assert.Equal(XmlConvert.ToString(value), Text(buffer, CharNumbers.Format(value, buffer)));
+            Assert.Equal(XmlConvert.ToString(value), Text(buffer, Utf8Numbers.Format(value, buffer, 0)));
         }
     }
 

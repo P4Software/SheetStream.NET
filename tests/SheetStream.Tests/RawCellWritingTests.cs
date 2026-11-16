@@ -17,8 +17,11 @@ public class RawCellWritingTests
 {
     private static readonly XNamespaceHolder Ns = new();
 
-    /// <summary>The staging buffer's size, as the boundary scripts need it. Kept in step with the writer by the test below.</summary>
-    private const int BufferLength = 1 << 14;
+    /// <summary>
+    /// The size of the buffer rows are composed in (the write buffer of the zip entry, <see cref="PackageOptions.BufferSize"/>),
+    /// as the boundary scripts need it. Kept in step with the option's default by the test below.
+    /// </summary>
+    private const int BufferLength = 64 * 1024;
 
     private sealed class XNamespaceHolder
     {
@@ -27,7 +30,7 @@ public class RawCellWritingTests
     }
 
     [Fact]
-    public void TheTestsKnowTheBufferSize() => Assert.Equal(BufferLength, RowWriter.RawCapacity);
+    public void TheTestsKnowTheBufferSize() => Assert.Equal(BufferLength, new PackageOptions().BufferSize);
 
     // ---- The differential tests ---------------------------------------------------------------------------------
 
@@ -56,6 +59,37 @@ public class RawCellWritingTests
     [InlineData(false, true, true)]
     public void TextAroundTheBufferSize_IsNeverCutOrReordered(bool shared, bool references, bool autoFit)
         => AssertSameAsReference(RawCellScript.BufferBoundaries(BufferLength), shared, references, autoFit);
+
+    /// <summary>
+    /// The smallest write buffer there is (4 KB, whatever <see cref="PackageOptions.BufferSize"/> asks for), so that every
+    /// flush lands somewhere new: inside text, inside an entity, between a cell's pieces and between rows.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    public void ASmallBuffer_NeverCutsOrReordersAnything(bool shared, bool references, bool autoFit)
+    {
+        AssertSameAsReference(RawCellScript.BufferBoundaries(4096), shared, references, autoFit, bufferSize: 100);
+        AssertSameAsReference(RawCellScript.Curated(), shared, references, autoFit, bufferSize: 100);
+        AssertSameAsReference(RawCellScript.Fuzz(7, 400), shared, references, autoFit, bufferSize: 100);
+    }
+
+    /// <summary>
+    /// A sheet filled into a template is written by the same cell code but around an XML writer that also copies the
+    /// template's elements, so its rows are handed over as text (and the row element is the XML writer's). Its cells
+    /// must be the same too.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ASheetFilledIntoATemplate_IsWrittenExactlyAsXmlWriterWroteIt(bool shared, bool references)
+    {
+        AssertSameAsReferenceThroughTemplate(RawCellScript.Curated(), shared, references);
+        AssertSameAsReferenceThroughTemplate(RawCellScript.BufferBoundaries(RowWriter.XmlTargetBufferLength), shared, references);
+        for (var seed = 1; seed <= 6; seed++)
+            AssertSameAsReferenceThroughTemplate(RawCellScript.Fuzz(900 + seed, 120), shared, references);
+    }
 
     /// <summary>
     /// Random cells and random nasty text from fixed seeds (never <c>string.GetHashCode</c>, which differs from one
@@ -117,6 +151,43 @@ public class RawCellWritingTests
         }
     }
 
+    /// <summary>
+    /// The row element is written by hand for new sheets and by the XML writer for template sheets; both must give the
+    /// attributes in the order XmlWriter always wrote them, and an empty row must close itself with " />".
+    /// </summary>
+    [Fact]
+    public void RowOptions_AreWrittenInTheSameOrderAsBefore()
+    {
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var tint = wb.Styles.Create(o => o.Fill.BackgroundColor = "#FFEEDD");
+            var s = wb.Worksheets.Add("S");
+            s.Row(1, new RowOptions { Style = tint, Height = 20.5, Hidden = true, OutlineLevel = 2, Collapsed = true }).WriteCell(1);
+            s.Row(2, null, 15);                                   // An empty row with a height.
+            s.Row(3, new RowOptions { OutlineLevel = 1 }).WriteCell("x");
+            s.Row(4, tint).WriteCell(2.5);                        // The row style reaches the cell.
+        });
+
+        var data = SheetData(bytes);
+        Assert.StartsWith("<sheetData><row r=\"1\" s=\"1\" customFormat=\"1\" ht=\"20.5\" customHeight=\"1\" hidden=\"1\" outlineLevel=\"2\" collapsed=\"1\"><c s=\"1\"><v>1</v></c></row>", data);
+        Assert.Contains("<row r=\"2\" ht=\"15\" customHeight=\"1\" />", data);
+        Assert.Contains("<row r=\"3\" outlineLevel=\"1\"><c t=\"s\"><v>0</v></c></row>", data);
+        Assert.Contains("<row r=\"4\" s=\"1\" customFormat=\"1\"><c s=\"1\"><v>2.5</v></c></row>", data);
+    }
+
+    [Fact]
+    public void ARowHeightOutOfRange_IsRefusedWithoutBreakingTheSheet()
+    {
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            s.Row(1).WriteCell(1);
+            Assert.Throws<ArgumentOutOfRangeException>(() => s.Row(2, null, 500));
+            s.Row(3).WriteCell(3);
+        });
+        Assert.DoesNotContain("<row r=\"2\"", SheetData(bytes));
+    }
+
     [Fact]
     public void AnEmptyRow_StillClosesItself()
     {
@@ -133,7 +204,7 @@ public class RawCellWritingTests
 
     // ---- The reference: the cell-writing code as it was before the buffer, on a real XmlWriter --------------------
 
-    private static void AssertSameAsReference(RawCellScript script, bool shared, bool references, bool autoFit)
+    private static void AssertSameAsReference(RawCellScript script, bool shared, bool references, bool autoFit, int bufferSize = BufferLength)
     {
         string expected = null!;
         var bytes = ExcelPackage.CreateBytes(wb =>
@@ -143,11 +214,44 @@ public class RawCellWritingTests
             if (autoFit) sheet.AutoFitColumns();
             script.Apply(sheet, styles);
             expected = Reference(script, styles, wb.Styles, shared, references);
-        }, new PackageOptions { UseSharedStrings = shared, WriteCellReferences = references, CompressionLevel = CompressionLevel.Fastest });
+        }, new PackageOptions
+        {
+            UseSharedStrings = shared,
+            WriteCellReferences = references,
+            CompressionLevel = CompressionLevel.Fastest,
+            BufferSize = bufferSize,
+            // The reference writes every distinct string to the table, so the memory budget must not turn any inline.
+            MaxSharedStringChars = long.MaxValue / 2,
+        });
 
         var actual = SheetData(bytes);
         var at = FirstDifference(expected, actual);
         Assert.True(at < 0, $"Output differs from the XmlWriter reference at character {at} (shared={shared}, references={references}, autoFit={autoFit}).\nExpected: {Around(expected, at)}\n  Actual: {Around(actual, at)}");
+    }
+
+    private static void AssertSameAsReferenceThroughTemplate(RawCellScript script, bool shared, bool references)
+    {
+        var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
+        var options = new PackageOptions
+        {
+            UseSharedStrings = shared,
+            WriteCellReferences = references,
+            CompressionLevel = CompressionLevel.Fastest,
+            MaxSharedStringChars = long.MaxValue / 2,
+        };
+        string expected = null!;
+        using var output = new MemoryStream();
+        using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true, options))
+        {
+            var styles = RawCellScript.CreateStyles(package.Workbook);
+            script.Apply(package.Workbook.Worksheets.Open("S"), styles);
+            expected = Reference(script, styles, package.Workbook.Styles, shared, references);
+            package.Save();
+        }
+
+        var actual = SheetData(output.ToArray());
+        var at = FirstDifference(expected, actual);
+        Assert.True(at < 0, $"Output differs from the XmlWriter reference at character {at} (template, shared={shared}, references={references}).\nExpected: {Around(expected, at)}\n  Actual: {Around(actual, at)}");
     }
 
     private static int FirstDifference(string a, string b)
@@ -256,6 +360,16 @@ public class RawCellWritingTests
                     next++;
                 }
 
+                // The formula text as the library prepares it: trimmed, without a leading '=', sanitised.
+                void Formula(string text)
+                {
+                    var body = text.Trim();
+                    if (body[0] == '=') body = body.Substring(1);
+                    w.WriteStartElement("f");
+                    w.WriteString(XmlTextUtil.Sanitize(body));
+                    w.WriteEndElement();
+                }
+
                 void Number(double value, CellStyle? style)
                 {
                     if (double.IsNaN(value) || double.IsInfinity(value))
@@ -303,6 +417,38 @@ public class RawCellWritingTests
                         case ScriptKind.NullText: Empty(style); break;
                         case ScriptKind.Empty: Empty(style); break;
                         case ScriptKind.Skip: next += (int)cell.Integer; break;
+                        case ScriptKind.Formula: Begin(style, null); Formula(cell.Text!); w.WriteEndElement(); next++; break;
+                        case ScriptKind.FormulaNumber:
+                            Begin(style, null);
+                            Formula(cell.Text!);
+                            w.WriteStartElement("v");
+                            w.WriteValue(cell.Number);
+                            w.WriteEndElement();
+                            w.WriteEndElement();
+                            next++;
+                            break;
+                        case ScriptKind.FormulaText:
+                            Begin(style, "str");
+                            Formula(cell.Text!);
+                            w.WriteElementString("v", XmlTextUtil.Sanitize(cell.Text2!));
+                            w.WriteEndElement();
+                            next++;
+                            break;
+                        case ScriptKind.FormulaBool:
+                            Begin(style, "b");
+                            Formula(cell.Text!);
+                            w.WriteElementString("v", cell.Integer != 0 ? "1" : "0");
+                            w.WriteEndElement();
+                            next++;
+                            break;
+                        case ScriptKind.RichText:
+                            Begin(style, "inlineStr");
+                            w.WriteStartElement("is");
+                            foreach (var run in RawCellScript.Runs(cell)) run.WriteTo(w);
+                            w.WriteEndElement();
+                            w.WriteEndElement();
+                            next++;
+                            break;
                         default: throw new InvalidOperationException(cell.Kind.ToString());
                     }
                 }

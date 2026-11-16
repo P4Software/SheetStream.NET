@@ -52,8 +52,6 @@ namespace SheetStream
             OmitXmlDeclaration = false,
         };
 
-        private static readonly XmlWriterSettings NoCheckSettings = new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = true, Indent = false, NewLineHandling = NewLineHandling.None, CheckCharacters = false };
-
         private readonly Stream _output;
         private bool _leaveOpen;
         private ZipArchive? _archive;
@@ -302,15 +300,34 @@ namespace SheetStream
             if (_openPart != null) throw new InvalidOperationException($"Cannot open part '{entryName}' while another part is still being written.");
 
             var entry = _archive.CreateEntry(entryName, Options.CompressionLevel);
-            var buffered = new BufferedStream(entry.Open(), Options.BufferSize);
-            // EXPERIMENT (measurement only, not for release): SS_EXP_NOCHK turns off the writer's character checks.
-            var settings = Environment.GetEnvironmentVariable("SS_EXP_NOCHK") != null ? NoCheckSettings : WriterSettings;
-            var writer = XmlWriter.Create(buffered, settings);
+            // One buffer for every part: only one part is open at a time. See PartStream for why it is not a BufferedStream.
+            _partBuffer ??= new byte[Math.Max(Options.BufferSize, MinPartBuffer)];
+            var stream = new PartStream(entry.Open(), _partBuffer);
+            var writer = XmlWriter.Create(stream, WriterSettings);
+            _openStream = stream;
             _openPart = new PartWriter(writer, this);
             return _openPart;
         }
 
-        private void PartClosed() => _openPart = null;
+        // The write buffer shared by the streams of all parts, and the stream of the part that is open now (the row
+        // writer composes a sheet's rows straight into it).
+        private byte[]? _partBuffer;
+        private PartStream? _openStream;
+
+        /// <summary>
+        /// The smallest write buffer. The row writer reserves room for the fixed text of a cell before writing it, so
+        /// the buffer must never be smaller than that, whatever <see cref="PackageOptions.BufferSize"/> says.
+        /// </summary>
+        private const int MinPartBuffer = 4096;
+
+        /// <summary>The stream under the open part's <see cref="XmlWriter"/>, or <c>null</c> when no part is open.</summary>
+        internal PartStream? OpenPartStream => _openStream;
+
+        private void PartClosed()
+        {
+            _openPart = null;
+            _openStream = null;
+        }
 
         /// <summary>Declares the content type of a part written outside the fixed set (path without leading slash).</summary>
         internal void RegisterPart(string partName, string contentType) => _overrides.Add(("/" + partName, contentType));

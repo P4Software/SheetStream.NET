@@ -57,14 +57,26 @@ public static class Writers
 public sealed class SheetStreamWriter : ILibraryWriter
 {
     private readonly CompressionLevel _level;
+    private readonly bool _writeCellReferences;
 
     /// <summary>Creates a writer using the given zip compression level.</summary>
-    public SheetStreamWriter(CompressionLevel level) => _level = level;
+    /// <param name="level">Zip compression level.</param>
+    /// <param name="writeCellReferences">
+    /// Writes the address (<c>r="B2"</c>) on every cell. The writer scenarios leave it off, SheetStream's default,
+    /// because that is what the writing benchmark measures. The file the reader benchmarks read turns it on: some
+    /// readers under test (NPOI's SAX reader) need the address of every cell, and a reader table should compare
+    /// readers on a file they can all read, not penalise one for a writer-side default.
+    /// </param>
+    public SheetStreamWriter(CompressionLevel level, bool writeCellReferences = false)
+    {
+        _level = level;
+        _writeCellReferences = writeCellReferences;
+    }
 
     /// <inheritdoc />
     public string Name => _level == CompressionLevel.Optimal ? "SheetStream" : "SheetStream-Fastest";
 
-    private SS.PackageOptions Options => new SS.PackageOptions { CompressionLevel = _level };
+    private SS.PackageOptions Options => new SS.PackageOptions { CompressionLevel = _level, WriteCellReferences = _writeCellReferences };
 
     /// <inheritdoc />
     public void WriteLong(Stream output, LongRow[] rows)

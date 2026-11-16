@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Xml;
 using SheetStream.Internal;
@@ -20,37 +21,56 @@ namespace SheetStream
     public sealed class RowWriter
     {
         private readonly Worksheet _sheet;
-        private XmlWriter _w = null!;
-        // Scratch space for formatting numbers without creating a string per cell (see WriteNumber).
-        private readonly char[] _numberBuffer = new char[CharNumbers.BufferLength];
-        private CellStyle? _rowStyle;
-        private int _lastStyleId;
 
-        // Cells of the common kinds are not handed to the XmlWriter one element and attribute at a time (its name
-        // checks, state machine and virtual calls cost more than the cell's own text). Their finished XML is
-        // composed here and passed over with a single WriteRaw. The buffer is a fixed size per sheet, flushed when
-        // nearly full, so it never grows with the sheet; it is allocated when the first row opens and dropped when
-        // the sheet is sealed. WriteRaw does no escaping or validation, so everything put here is escaped by hand
-        // in exactly the way XmlWriter escapes text (see AppendText).
-        internal const int RawCapacity = 1 << 14;
+        // ---- Where the bytes go -------------------------------------------------------------------------------------
+        //
+        // A sheet's rows are UTF-8 composed by hand, in a byte buffer, because the XmlWriter's per-element and
+        // per-attribute work (name checks, state machine, virtual calls, re-encoding characters) costs more than the
+        // text of a cell. There are two targets for that buffer:
+        //
+        //  * Direct (new sheets): the buffer IS the write buffer of the zip entry (a PartStream), so a cell is formatted
+        //    once, in place, and reaches the compressor in large blocks. The <row> element is written by hand too.
+        //    The XmlWriter has finished the sheet's header and left the <sheetData> start tag open; it is closed
+        //    just before the first row, and from then on the XmlWriter writes nothing until the rows are done.
+        //  * XML (sheets filled from a template, or edited): rows are interleaved with elements the XmlWriter copies
+        //    from the template, so the bytes are decoded back to text and handed to XmlWriter.WriteRaw, and the
+        //    row element, with the attributes of the row it replaces, is written by the XmlWriter.
+        //
+        // Both targets are written by the same cell code. Escaping is done by hand in exactly the way XmlWriter
+        // escapes text (see AppendText), and a test compares the result with a real XmlWriter, character for character.
+        private PartStream? _stream;
+        private XmlWriter? _w;
+        private XmlWriter? _closeBeforeFirstRow;
+        private byte[] _buf = Array.Empty<byte>();
+        private int _n;
+
+        // XML target only: the staging buffer is its own array (16 KB, dropped when the sheet is sealed) and its
+        // contents are decoded into _chars. The decoder keeps state, so a flush may fall inside a character.
+        internal const int XmlTargetBufferLength = 1 << 14;
+        private char[]? _chars;
+        private Decoder? _decoder;
 
         // Room every composed cell needs on top of its text. The longest fixed part is an inline string with an
-        // address, a style and xml:space (about 80 characters) and a number is at most 40, so 192 is generous.
+        // address, a style and xml:space (about 80 bytes) and a number is at most 40, so 192 is generous.
         // Text is the only variable part and is written in pieces that flush as needed.
         private const int CellReserve = 192;
-        private char[] _raw = Array.Empty<char>();
-        private int _rawLength;
 
         // The row number as text, formatted once per row for the r attribute of any cell that needs one.
-        private readonly char[] _rowDigits = new char[CharNumbers.BufferLength];
+        private readonly byte[] _rowDigits = new byte[Utf8Numbers.MaxLength];
         private int _rowDigitsLength;
+
+        // True from the start of a row until its first cell: such a row is written as <row r="3" /> like XmlWriter did.
+        private bool _rowEmpty;
 
         // Column of the last <c> element written in the open row, 0 before the first. A cell is consecutive,
         // and may leave out its r attribute, exactly when NextColumn is this plus one.
         private int _lastWrittenColumn;
 
-        // PackageOptions.WriteCellReferences, read once per row so each cell pays one bool test and no more.
+        // PackageOptions.WriteCellReferences and UseSharedStrings, read once per row so each cell pays one bool test
+        // and no chain of property reads.
         private bool _alwaysWriteReference;
+        private bool _useSharedStrings;
+        private SharedStringTable? _sharedStrings;
 
         // True when the sheet wants each cell's display text (AutoFit, or a table header being captured).
         // Computed once per row so the common path pays a single bool test per cell.
@@ -60,10 +80,17 @@ namespace SheetStream
         // row, so with the feature off (the default) each cell pays one false branch and nothing else.
         private bool _cache;
 
+        private CellStyle? _rowStyle;
+        private int _lastStyleId;
+
         // Row style combined with a date / date-time / duration format, derived once per row on first use.
         private CellStyle? _rowDateStyle;
         private CellStyle? _rowDateTimeStyle;
         private CellStyle? _rowDurationStyle;
+
+        // Renders rich text runs, the one kind of cell that still needs an XmlWriter. See WriteRichText.
+        private XmlWriter? _fragment;
+        private MemoryStream? _fragmentBytes;
 
         internal RowWriter(Worksheet sheet)
         {
@@ -79,8 +106,26 @@ namespace SheetStream
         /// <summary>True between <see cref="Begin"/> and <see cref="End"/>.</summary>
         internal bool IsOpen { get; private set; }
 
-        /// <summary>Connects the writer to the sheet body (the part itself, or the AutoFit spill file).</summary>
-        internal void Attach(XmlWriter writer) => _w = writer;
+        /// <summary>
+        /// Connects the writer to a stream whose buffer it composes rows in directly (new sheets). When
+        /// <paramref name="partToClose"/> is given, it is the part's XML writer, which is left with an unfinished
+        /// <c>&lt;sheetData&gt;</c> start tag that the first row has to close; it is flushed so everything it wrote is
+        /// in the stream before the first byte of the first row.
+        /// </summary>
+        internal void AttachDirect(PartStream stream, XmlWriter? partToClose)
+        {
+            _stream = stream;
+            _w = null;
+            _closeBeforeFirstRow = partToClose;
+        }
+
+        /// <summary>Connects the writer to an XmlWriter that also carries other content around the rows (templates, edits).</summary>
+        internal void AttachXml(XmlWriter writer)
+        {
+            _stream = null;
+            _w = writer;
+            _closeBeforeFirstRow = null;
+        }
 
         /// <summary>Re-reads whether the open row is observed, after a table was added on it.</summary>
         internal void RefreshObservation()
@@ -97,21 +142,80 @@ namespace SheetStream
             RowIndex = rowIndex;
             NextColumn = 1;
             _lastWrittenColumn = 0;
-            _alwaysWriteReference = _sheet.Workbook.Package.Options.WriteCellReferences;
+            var workbook = _sheet.Workbook;
+            _alwaysWriteReference = workbook.Package.Options.WriteCellReferences;
+            _useSharedStrings = workbook.UseSharedStrings;
+            _sharedStrings = workbook.SharedStrings;
             var style = options?.Style;
             _rowStyle = style != null && !style.IsDefault ? style : null;
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
             _observe = _sheet.ShouldObserveRow(rowIndex);
             _cache = _sheet.IsCachingFormulaResults;
-            IsOpen = true;
+            _rowDigitsLength = Utf8Numbers.Format(rowIndex, _rowDigits, 0);
 
-            if (_raw.Length == 0) _raw = new char[RawCapacity];
-            FlushRaw(); // Nothing is pending after End; this keeps the ordering obvious.
-            _rowDigitsLength = CharNumbers.Format(rowIndex, _rowDigits);
-            _w.WriteStartElement("row");
-            _w.WriteStartAttribute("r");
-            WriteInteger(rowIndex);
-            _w.WriteEndAttribute();
+            // Checked before the row is marked open, so a bad height leaves nothing half written.
+            if (options != null)
+            {
+                var h = options.Height;
+                if (h.HasValue && (h.Value < 0 || h.Value > 409)) throw new ArgumentOutOfRangeException(nameof(options), h.Value, "Row height must be between 0 and 409 points.");
+            }
+
+            IsOpen = true;
+            if (_stream != null) BeginDirect(options);
+            else BeginXml(options, rawAttributes);
+        }
+
+        /// <summary>The row's own element, written by hand: <c>&lt;row r="3"&gt;</c> and the optional attributes.</summary>
+        private void BeginDirect(RowOptions? options)
+        {
+            var stream = _stream!;
+            if (_closeBeforeFirstRow != null)
+            {
+                // The header is done and <sheetData> is still an open start tag. WriteRaw of nothing closes it (and
+                // is the only way to, short of writing a child), then the flush moves what the XmlWriter holds
+                // into the stream, ahead of the rows. Not done earlier so that a sheet with no rows keeps the
+                // self-closing <sheetData />.
+                var part = _closeBeforeFirstRow;
+                _closeBeforeFirstRow = null;
+                part.WriteRaw(string.Empty);
+                part.Flush();
+            }
+            _buf = stream.Buffer;
+            _n = stream.Count;
+
+            Room();
+            AppendFixed(RowOpen);
+            AppendDigits(_rowDigits, _rowDigitsLength);
+            AppendFixed(Quote);
+            if (_rowStyle != null || options != null)
+            {
+                // Rows with options are the exception, so these attributes are composed as strings.
+                var sb = new StringBuilder();
+                if (_rowStyle != null)
+                    sb.Append(" s=\"").Append(_rowStyle.Id.ToString(CultureInfo.InvariantCulture)).Append("\" customFormat=\"1\"");
+                if (options != null)
+                {
+                    if (options.Height.HasValue)
+                        sb.Append(" ht=\"").Append(options.Height.Value.ToString(CultureInfo.InvariantCulture)).Append("\" customHeight=\"1\"");
+                    if (options.Hidden) sb.Append(" hidden=\"1\"");
+                    if (options.OutlineLevel > 0) sb.Append(" outlineLevel=\"").Append(options.OutlineLevel.ToString(CultureInfo.InvariantCulture)).Append('"');
+                    if (options.Collapsed) sb.Append(" collapsed=\"1\"");
+                }
+                if (sb.Length > 0)
+                {
+                    EnsureRoom(sb.Length + 8);
+                    AppendAscii(sb.ToString());
+                }
+            }
+            AppendFixed(TagEnd);
+            _rowEmpty = true;
+        }
+
+        /// <summary>The row's element written through the XmlWriter, which also writes the attributes copied from an edited row.</summary>
+        private void BeginXml(RowOptions? options, IReadOnlyList<RawAttribute>? rawAttributes)
+        {
+            _w!.WriteStartElement("row");
+            _w.WriteAttributeString("r", RowIndex.ToString(CultureInfo.InvariantCulture));
             if (rawAttributes != null)
                 for (var i = 0; i < rawAttributes.Count; i++) rawAttributes[i].WriteTo(_w);
             if (_rowStyle != null)
@@ -123,32 +227,61 @@ namespace SheetStream
             {
                 if (options.Height.HasValue)
                 {
-                    var h = options.Height.Value;
-                    if (h < 0 || h > 409) throw new ArgumentOutOfRangeException(nameof(options), h, "Row height must be between 0 and 409 points.");
-                    _w.WriteAttributeString("ht", h.ToString(CultureInfo.InvariantCulture));
+                    _w.WriteAttributeString("ht", options.Height.Value.ToString(CultureInfo.InvariantCulture));
                     _w.WriteAttributeString("customHeight", "1");
                 }
                 if (options.Hidden) _w.WriteAttributeString("hidden", "1");
                 if (options.OutlineLevel > 0) _w.WriteAttributeString("outlineLevel", options.OutlineLevel.ToString(CultureInfo.InvariantCulture));
                 if (options.Collapsed) _w.WriteAttributeString("collapsed", "1");
             }
+            if (_buf.Length == 0) _buf = new byte[XmlTargetBufferLength];
+            _n = 0;
         }
 
         /// <summary>Closes the <c>&lt;row&gt;</c> element if one is open.</summary>
         internal void End()
         {
             if (!IsOpen) return;
-            // The row's cells are still in the staging buffer; they must reach the writer before its end tag.
-            FlushRaw();
-            _w.WriteEndElement();
+            if (_stream != null)
+            {
+                if (_rowEmpty)
+                {
+                    // Nothing was written after the start tag's closing '>', so it is the last byte: take it back
+                    // and write the empty element the way XmlWriter does, with a space before the slash.
+                    _n--;
+                    Room();
+                    AppendFixed(EmptyEnd);
+                }
+                else
+                {
+                    Room();
+                    AppendFixed(RowClose);
+                }
+                _stream.Count = _n;
+            }
+            else
+            {
+                // The row's cells are still in the staging buffer; they must reach the writer before its end tag.
+                FlushStaged();
+                _w!.WriteEndElement();
+            }
             IsOpen = false;
         }
 
         /// <summary>
-        /// Gives the staging buffer back once the sheet is sealed. Every write method checks for an open row
-        /// first, so nothing can reach the empty buffer afterwards.
+        /// Lets go of the staging memory once the sheet is sealed. Every write method checks for an open row
+        /// first, so nothing can reach the empty buffer afterwards. The direct target's buffer belongs to the
+        /// package's part stream and stays where it is.
         /// </summary>
-        internal void ReleaseBuffer() => _raw = Array.Empty<char>();
+        internal void ReleaseBuffer()
+        {
+            _buf = Array.Empty<byte>();
+            _n = 0;
+            _chars = null;
+            _decoder = null;
+            _fragment = null;
+            _fragmentBytes = null;
+        }
 
         /// <summary>Leaves <paramref name="count"/> columns empty.</summary>
         public RowWriter Skip(int count = 1)
@@ -168,7 +301,7 @@ namespace SheetStream
             {
                 BeginCellRaw(effective, null);
                 // XmlWriter closes a childless element as " />" (with the space); keep the file byte for byte.
-                AppendFixed(" />");
+                AppendFixed(EmptyEnd);
             }
             NextColumn++;
             return this;
@@ -181,7 +314,7 @@ namespace SheetStream
         public RowWriter WriteCell(string? value, CellStyle? style = null)
         {
             if (value == null) return WriteEmpty(style);
-            return _sheet.Workbook.UseSharedStrings ? WriteSharedString(value, style) : WriteInlineString(value, style);
+            return _useSharedStrings ? WriteSharedString(value, style) : WriteInlineString(value, style);
         }
 
         /// <summary>
@@ -194,10 +327,10 @@ namespace SheetStream
             EnsureOpen();
             BeginCellRaw(style, TypeInline);
             var text = XmlTextUtil.Sanitize(value);
-            AppendFixed(XmlTextUtil.NeedsSpacePreserve(text) ? "><is><t xml:space=\"preserve\">" : "><is><t>");
+            AppendFixed(XmlTextUtil.NeedsSpacePreserve(text) ? InlineOpenPreserve : InlineOpen);
             AppendText(text);
-            EnsureRoom();
-            AppendFixed("</t></is></c>");
+            EnsureRoom(CellReserve);
+            AppendFixed(InlineClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCellRaw(value);
             return this;
@@ -208,12 +341,12 @@ namespace SheetStream
             EnsureOpen();
             // A new string that no longer fits the table's memory budget is written inline instead; strings
             // already in the table keep being shared.
-            if (!_sheet.Workbook.SharedStrings.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index))
+            if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index))
                 return WriteInlineString(value, style);
             BeginCellRaw(style, TypeSharedString);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendInteger(index);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCellRaw(value);
             return this;
@@ -231,12 +364,17 @@ namespace SheetStream
         public RowWriter WriteRichText(CellStyle? style, params RichText[] runs)
         {
             if (runs == null || runs.Length == 0) throw new ArgumentException("A rich-text cell needs at least one run.", nameof(runs));
+            // Checked before anything is written, so a bad call leaves the row as it was.
+            foreach (var run in runs)
+                if (run == null) throw new ArgumentException("Runs cannot be null.", nameof(runs));
             EnsureOpen();
+
             // Rich text is written inline: shared strings would need the same run markup and rarely repeat.
-            BeginCell(style, "inlineStr");
-            _w.WriteStartElement("is");
-            foreach (var run in runs) (run ?? throw new ArgumentException("Runs cannot be null.", nameof(runs))).WriteTo(_w);
-            _w.WriteEndElement();
+            BeginCellRaw(style, TypeInline);
+            AppendFixed(IsOpenTag);
+            AppendRuns(runs);
+            EnsureRoom(CellReserve);
+            AppendFixed(IsCloseTag);
             string? text = null;
             if (_observe)
             {
@@ -245,8 +383,44 @@ namespace SheetStream
                 text = sb.ToString();
             }
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
-            EndCell(text);
+            EndCellRaw(text);
             return this;
+        }
+
+        /// <summary>
+        /// Renders the runs with a real XmlWriter (they are the only markup here with enough structure to be worth
+        /// it, and rich text is not a bulk case) and copies the finished bytes into the staging buffer. The runs use
+        /// plain element names, so the output is the same as if they had been written in place.
+        /// </summary>
+        private void AppendRuns(RichText[] runs)
+        {
+            if (_fragment == null)
+            {
+                _fragmentBytes = new MemoryStream();
+                _fragment = XmlWriter.Create(_fragmentBytes, new XmlWriterSettings
+                {
+                    Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                    CloseOutput = false,
+                    ConformanceLevel = ConformanceLevel.Fragment,
+                    OmitXmlDeclaration = true,
+                    NewLineHandling = NewLineHandling.None,
+                });
+            }
+            try
+            {
+                foreach (var run in runs) run.WriteTo(_fragment);
+                _fragment.Flush();
+            }
+            catch
+            {
+                // A writer that threw is in an unknown state; the next rich text cell starts a new one.
+                _fragment = null;
+                _fragmentBytes = null;
+                throw;
+            }
+            var bytes = _fragmentBytes!;
+            AppendBytes(bytes.GetBuffer(), (int)bytes.Length);
+            bytes.SetLength(0);
         }
 
         /// <summary>
@@ -276,9 +450,9 @@ namespace SheetStream
             EnsureOpen();
             if (double.IsNaN(value) || double.IsInfinity(value)) return WriteError("#NUM!", style);
             BeginCellRaw(style, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendNumber(value);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCellRaw(_observe ? NumberText(value) : null);
             return this;
@@ -292,9 +466,9 @@ namespace SheetStream
         {
             EnsureOpen();
             BeginCellRaw(style, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendInteger(value);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCellRaw(_observe ? NumberText(value) : null);
             return this;
@@ -305,9 +479,9 @@ namespace SheetStream
         {
             EnsureOpen();
             BeginCellRaw(style, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendInteger(value);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value);
             EndCellRaw(_observe ? NumberText(value) : null);
             return this;
@@ -318,9 +492,9 @@ namespace SheetStream
         {
             EnsureOpen();
             BeginCellRaw(style, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendNumber(value);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, (double)value);
             EndCellRaw(_observe ? NumberText((double)value) : null);
             return this;
@@ -331,7 +505,7 @@ namespace SheetStream
         {
             EnsureOpen();
             BeginCellRaw(style, TypeBoolean);
-            AppendFixed(value ? "><v>1</v></c>" : "><v>0</v></c>");
+            AppendFixed(value ? BooleanTrue : BooleanFalse);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn); // Booleans do not take part in SUM/AVERAGE over a range.
             EndCellRaw(value ? "TRUE" : "FALSE");
             return this;
@@ -355,9 +529,9 @@ namespace SheetStream
             // Not ToOADate: Excel's serials differ from OLE dates before 1 March 1900 (see ExcelDate).
             var serial = ExcelDate.ToSerial(value);
             BeginCellRaw(effective, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendNumber(serial);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, serial);
             // Display width follows the style's date format: "10/13/2026", "2026-10-13", "13-Oct-26"...
             EndCellRaw(_observe ? NumberText(serial) : null);
@@ -374,9 +548,9 @@ namespace SheetStream
             var styles = _sheet.Workbook.Styles;
             var effective = style ?? (_rowStyle == null ? styles.DurationStyle : _rowDurationStyle ??= styles.WithNumberFormat(_rowStyle, NumberFormats.Duration));
             BeginCellRaw(effective, null);
-            AppendFixed("><v>");
+            AppendFixed(ValueOpen);
             AppendNumber(value.TotalDays);
-            AppendFixed("</v></c>");
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, value.TotalDays);
             EndCellRaw(_observe ? NumberText(value.TotalDays) : null);
             return this;
@@ -457,11 +631,12 @@ namespace SheetStream
             var text = PrepareFormula(formula);
             if (_cache && _sheet.TryEvaluateFormula(text, RowIndex, NextColumn, out var value))
                 return WriteFormulaWithNumber(text, value, style);
-            BeginCell(style, null);
-            WriteF(text);
+            BeginCellRaw(style, null);
+            AppendFormula(text);
+            AppendFixed(CellClose);
             // A later SUM over this cell cannot know its value, so it must not get one either.
             if (_cache) _sheet.RecordUnknown(RowIndex, NextColumn);
-            EndCell(null);
+            EndCellRaw(null);
             return this;
         }
 
@@ -472,13 +647,15 @@ namespace SheetStream
         /// <summary>Shared by the explicit cached-value overload and the evaluator path; <paramref name="text"/> is already prepared.</summary>
         private RowWriter WriteFormulaWithNumber(string text, double cachedValue, CellStyle? style)
         {
-            BeginCell(style, null);
-            WriteF(text);
-            _w.WriteStartElement("v");
-            WriteNumber(cachedValue);
-            _w.WriteEndElement();
+            BeginCellRaw(style, null);
+            AppendFormula(text);
+            EnsureRoom(CellReserve);
+            AppendFixed(ValueElementOpen);
+            AppendNumber(cachedValue);
+            AppendFixed(ValueElementClose);
+            AppendFixed(CellClose);
             if (_cache) _sheet.RecordNumber(RowIndex, NextColumn, cachedValue);
-            EndCell(_observe ? NumberText(cachedValue) : null);
+            EndCellRaw(_observe ? NumberText(cachedValue) : null);
             return this;
         }
 
@@ -487,11 +664,25 @@ namespace SheetStream
         {
             if (cachedValue == null) throw new ArgumentNullException(nameof(cachedValue));
             var text = PrepareFormula(formula);
-            BeginCell(style, "str");
-            WriteF(text);
-            _w.WriteElementString("v", XmlTextUtil.Sanitize(cachedValue));
+            BeginCellRaw(style, TypeStr);
+            AppendFormula(text);
+            var result = XmlTextUtil.Sanitize(cachedValue);
+            EnsureRoom(CellReserve);
+            // An element with no text is written as <v /> by XmlWriter.WriteElementString.
+            if (result.Length == 0)
+            {
+                AppendFixed(ValueElementEmpty);
+            }
+            else
+            {
+                AppendFixed(ValueElementOpen);
+                AppendText(result);
+                EnsureRoom(CellReserve);
+                AppendFixed(ValueElementClose);
+            }
+            AppendFixed(CellClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
-            EndCell(cachedValue);
+            EndCellRaw(cachedValue);
             return this;
         }
 
@@ -499,11 +690,13 @@ namespace SheetStream
         public RowWriter WriteFormula(string formula, bool cachedValue, CellStyle? style = null)
         {
             var text = PrepareFormula(formula);
-            BeginCell(style, "b");
-            WriteF(text);
-            _w.WriteElementString("v", cachedValue ? "1" : "0");
+            BeginCellRaw(style, TypeBoolean);
+            AppendFormula(text);
+            EnsureRoom(CellReserve);
+            AppendFixed(cachedValue ? ValueElementTrue : ValueElementFalse);
+            AppendFixed(CellClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
-            EndCell(cachedValue ? "TRUE" : "FALSE");
+            EndCellRaw(cachedValue ? "TRUE" : "FALSE");
             return this;
         }
 
@@ -516,11 +709,13 @@ namespace SheetStream
             return text[0] == '=' ? text.Substring(1) : text;
         }
 
-        private void WriteF(string text)
+        /// <summary>Appends the closing <c>&gt;</c> of the cell's start tag and its <c>&lt;f&gt;</c> element.</summary>
+        private void AppendFormula(string text)
         {
-            _w.WriteStartElement("f");
-            _w.WriteString(XmlTextUtil.Sanitize(text));
-            _w.WriteEndElement();
+            AppendFixed(FormulaOpen);
+            AppendText(XmlTextUtil.Sanitize(text));
+            EnsureRoom(CellReserve);
+            AppendFixed(FormulaClose);
         }
 
         /// <summary>Writes an error cell (<c>#N/A</c>, <c>#DIV/0!</c>...), used when an edited workbook's error value is written back.</summary>
@@ -540,21 +735,39 @@ namespace SheetStream
         internal void WriteRawCell(string? type, IReadOnlyList<RawAttribute>? attributes, string innerXml, CellStyle? style)
         {
             EnsureOpen();
-            BeginCell(style, type);
+            // Edited workbooks are the only source of raw cells, and they write through an XmlWriter. The attributes
+            // may carry namespaces whose declarations only that writer knows.
+            if (_w == null) throw new InvalidOperationException("Raw cells belong to edited workbooks, whose rows are written through an XML writer.");
+
+            if (NextColumn > CellReference.MaxColumns)
+                throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
+            FlushStaged();
+            _w.WriteStartElement("c");
+            // The rules for the address and the style are those of BeginCellRaw; keep the two in step.
+            if (_alwaysWriteReference || NextColumn != _lastWrittenColumn + 1)
+                _w.WriteAttributeString("r", CellReference.ColumnLetters(NextColumn) + RowIndex.ToString(CultureInfo.InvariantCulture));
+            _lastWrittenColumn = NextColumn;
+            var effective = style ?? _rowStyle;
+            _lastStyleId = effective?.Id ?? 0;
+            if (effective != null && !effective.IsDefault)
+                _w.WriteAttributeString("s", effective.Id.ToString(CultureInfo.InvariantCulture));
+            if (type != null) _w.WriteAttributeString("t", type);
             if (attributes != null)
                 for (var i = 0; i < attributes.Count; i++) attributes[i].WriteTo(_w);
             if (innerXml.Length > 0) _w.WriteRaw(innerXml);
-            EndCell(null);
+            _w.WriteEndElement();
+            NextColumn++;
         }
 
         private RowWriter WriteError(string errorCode, CellStyle? style)
         {
-            BeginCell(style, "e");
-            _w.WriteStartElement("v");
-            _w.WriteString(errorCode);
-            _w.WriteEndElement();
+            BeginCellRaw(style, TypeError);
+            AppendFixed(ValueOpen);
+            AppendText(errorCode);
+            EnsureRoom(CellReserve);
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
-            EndCell(errorCode);
+            EndCellRaw(errorCode);
             return this;
         }
 
@@ -565,19 +778,67 @@ namespace SheetStream
         /// </summary>
         private string NumberText(double value) => _sheet.Workbook.Styles.DisplayFormat(_lastStyleId).Render(value);
 
+        // ---- Cells composed as bytes ----------------------------------------------------------------------------------
+
+        // The fixed pieces of a cell, as UTF-8 bytes. Their text is the text XmlWriter wrote.
+        private static byte[] Bytes(string ascii)
+        {
+            var bytes = new byte[ascii.Length];
+            for (var i = 0; i < ascii.Length; i++) bytes[i] = (byte)ascii[i];
+            return bytes;
+        }
+
+        private static readonly byte[] RowOpen = Bytes("<row r=\"");
+        private static readonly byte[] RowClose = Bytes("</row>");
+        private static readonly byte[] Quote = Bytes("\"");
+        private static readonly byte[] TagEnd = Bytes(">");
+        // XmlWriter closes a childless element as " />" (with the space).
+        private static readonly byte[] EmptyEnd = Bytes(" />");
+        private static readonly byte[] CellOpen = Bytes("<c");
+        private static readonly byte[] CellClose = Bytes("</c>");
+        private static readonly byte[] AddressOpen = Bytes(" r=\"");
+        private static readonly byte[] StyleOpen = Bytes(" s=\"");
+        // Type attributes of the cell kinds, with their leading space.
+        private static readonly byte[] TypeSharedString = Bytes(" t=\"s\"");
+        private static readonly byte[] TypeInline = Bytes(" t=\"inlineStr\"");
+        private static readonly byte[] TypeBoolean = Bytes(" t=\"b\"");
+        private static readonly byte[] TypeStr = Bytes(" t=\"str\"");
+        private static readonly byte[] TypeError = Bytes(" t=\"e\"");
+        private static readonly byte[] ValueOpen = Bytes("><v>");
+        private static readonly byte[] ValueClose = Bytes("</v></c>");
+        private static readonly byte[] BooleanTrue = Bytes("><v>1</v></c>");
+        private static readonly byte[] BooleanFalse = Bytes("><v>0</v></c>");
+        private static readonly byte[] InlineOpen = Bytes("><is><t>");
+        private static readonly byte[] InlineOpenPreserve = Bytes("><is><t xml:space=\"preserve\">");
+        private static readonly byte[] InlineClose = Bytes("</t></is></c>");
+        private static readonly byte[] IsOpenTag = Bytes("><is>");
+        private static readonly byte[] IsCloseTag = Bytes("</is></c>");
+        private static readonly byte[] FormulaOpen = Bytes("><f>");
+        private static readonly byte[] FormulaClose = Bytes("</f>");
+        private static readonly byte[] ValueElementOpen = Bytes("<v>");
+        private static readonly byte[] ValueElementClose = Bytes("</v>");
+        private static readonly byte[] ValueElementEmpty = Bytes("<v />");
+        private static readonly byte[] ValueElementTrue = Bytes("<v>1</v>");
+        private static readonly byte[] ValueElementFalse = Bytes("<v>0</v>");
+        private static readonly byte[] EntityAmpersand = Bytes("&amp;");
+        private static readonly byte[] EntityLess = Bytes("&lt;");
+        private static readonly byte[] EntityGreater = Bytes("&gt;");
+
         /// <summary>
-        /// Opens a <c>&lt;c&gt;</c> element. The reference is only written when the cell is not the next one in
-        /// its row, and then as two strings (cached column letters, then the row text computed once per row)
-        /// so no per-cell string is allocated.
+        /// Appends <c>&lt;c</c>, the optional <c>r</c> and <c>s</c> attributes and <paramref name="typeAttribute"/>
+        /// (already formatted, with its leading space), leaving the start tag open. The address is only written
+        /// when the cell is not the next one in its row, and then as two pieces (cached column letters, then the
+        /// row text computed once per row) so no per-cell string is allocated.
         /// </summary>
-        private void BeginCell(CellStyle? style, string? type)
+        private void BeginCellRaw(CellStyle? style, byte[]? typeAttribute)
         {
             if (NextColumn > CellReference.MaxColumns)
                 throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
 
-            // Cells composed in the staging buffer come first in the file; this one goes through the XmlWriter.
-            FlushRaw();
-            _w.WriteStartElement("c");
+            // One check per cell guarantees room for everything fixed in it (see CellReserve).
+            if (_buf.Length - _n < CellReserve) FlushStaged();
+            _rowEmpty = false;
+            AppendFixed(CellOpen);
             // The r attribute is optional (ECMA-376 18.3.1.4): a cell without one sits in the column after the
             // previous cell of its row, or in column A when it is the first. So it is written only when this
             // cell is NOT the next one in line (after Skip, an unstyled WriteEmpty, or any other gap), which
@@ -585,84 +846,10 @@ namespace SheetStream
             // PackageOptions.WriteCellReferences switches the shortcut off for readers that need every address.
             if (_alwaysWriteReference || NextColumn != _lastWrittenColumn + 1)
             {
-                _w.WriteStartAttribute("r");
-                _w.WriteString(CellReference.ColumnLetters(NextColumn));
-                WriteInteger(RowIndex);
-                _w.WriteEndAttribute();
-            }
-            _lastWrittenColumn = NextColumn;
-
-            var effective = style ?? _rowStyle;
-            _lastStyleId = effective?.Id ?? 0;
-            if (effective != null && !effective.IsDefault)
-            {
-                _w.WriteStartAttribute("s");
-                WriteInteger(effective.Id);
-                _w.WriteEndAttribute();
-            }
-            if (type != null) _w.WriteAttributeString("t", type);
-        }
-
-        /// <summary>
-        /// Writes an integer as text content (or an attribute value) through the reusable buffer. Unlike
-        /// <c>XmlWriter.WriteValue(int)</c> it creates no string, which is what keeps a cell allocation-free.
-        /// </summary>
-        private void WriteInteger(long value) => _w.WriteChars(_numberBuffer, 0, CharNumbers.Format(value, _numberBuffer));
-
-        /// <summary>
-        /// Writes a double like <c>XmlWriter.WriteValue(double)</c> does (shortest round-trip text, invariant
-        /// culture), but through the reusable buffer. On <c>netstandard2.0</c>, which cannot format into a buffer,
-        /// it falls back to the string-creating call.
-        /// </summary>
-        private void WriteNumber(double value)
-        {
-            var length = CharNumbers.Format(value, _numberBuffer);
-            if (length < 0) _w.WriteValue(value);
-            else _w.WriteChars(_numberBuffer, 0, length);
-        }
-
-        /// <summary>Decimal counterpart of <see cref="WriteNumber(double)"/>.</summary>
-        private void WriteNumber(decimal value)
-        {
-            var length = CharNumbers.Format(value, _numberBuffer);
-            if (length < 0) _w.WriteValue(value);
-            else _w.WriteChars(_numberBuffer, 0, length);
-        }
-
-        private void EndCell(string? displayText)
-        {
-            _w.WriteEndElement();
-            if (_observe && displayText != null) _sheet.Observe(RowIndex, NextColumn, displayText, _lastStyleId);
-            NextColumn++;
-        }
-
-        // ---- Cells composed as raw XML --------------------------------------------------------------------------
-
-        // Type attributes of the common cell kinds, with their leading space, as XmlWriter wrote them.
-        private const string TypeSharedString = " t=\"s\"";
-        private const string TypeInline = " t=\"inlineStr\"";
-        private const string TypeBoolean = " t=\"b\"";
-
-        /// <summary>
-        /// Raw counterpart of <see cref="BeginCell"/>: appends <c>&lt;c</c>, the optional <c>r</c> and <c>s</c>
-        /// attributes and <paramref name="typeAttribute"/> (already formatted, with its leading space) to the staging
-        /// buffer, leaving the start tag open. The rules for when the address is written are the ones of
-        /// <see cref="BeginCell"/>; keep the two in step.
-        /// </summary>
-        private void BeginCellRaw(CellStyle? style, string? typeAttribute)
-        {
-            if (NextColumn > CellReference.MaxColumns)
-                throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
-
-            // One check per cell guarantees room for everything fixed in it (see CellReserve).
-            if (_raw.Length - _rawLength < CellReserve) FlushRaw();
-            AppendFixed("<c");
-            if (_alwaysWriteReference || NextColumn != _lastWrittenColumn + 1)
-            {
-                AppendFixed(" r=\"");
-                AppendFixed(CellReference.ColumnLetters(NextColumn));
+                AppendFixed(AddressOpen);
+                AppendAscii(CellReference.ColumnLetters(NextColumn));
                 AppendDigits(_rowDigits, _rowDigitsLength);
-                AppendFixed("\"");
+                AppendFixed(Quote);
             }
             _lastWrittenColumn = NextColumn;
 
@@ -670,80 +857,110 @@ namespace SheetStream
             _lastStyleId = effective?.Id ?? 0;
             if (effective != null && !effective.IsDefault)
             {
-                AppendFixed(" s=\"");
+                AppendFixed(StyleOpen);
                 AppendInteger(effective.Id);
-                AppendFixed("\"");
+                AppendFixed(Quote);
             }
             if (typeAttribute != null) AppendFixed(typeAttribute);
         }
 
-        /// <summary>Raw counterpart of <see cref="EndCell"/>: the closing tag is already in the buffer.</summary>
         private void EndCellRaw(string? displayText)
         {
             if (_observe && displayText != null) _sheet.Observe(RowIndex, NextColumn, displayText, _lastStyleId);
             NextColumn++;
         }
 
-        /// <summary>Hands everything staged so far to the XmlWriter, in order. Does nothing when the buffer is empty.</summary>
-        private void FlushRaw()
+        /// <summary>Hands everything staged so far on, in order. Does nothing when the buffer is empty.</summary>
+        private void FlushStaged()
         {
-            // An empty flush must not reach WriteRaw: it would close the open start tag, and a row with no cells
-            // is written as a self-closing element.
-            if (_rawLength == 0) return;
-            var length = _rawLength;
-            _rawLength = 0;
-            _w.WriteRaw(_raw, 0, length);
+            var count = _n;
+            if (count == 0) return;
+            _n = 0;
+            if (_stream != null)
+            {
+                _stream.Count = count;
+                _stream.Drain();
+                return;
+            }
+
+            // XML target: back to text for WriteRaw. An empty flush must not reach WriteRaw: it would close the open
+            // start tag, and a row with no cells is written as a self-closing element.
+            var chars = _chars ??= new char[_buf.Length];
+            var decoder = _decoder ??= new UTF8Encoding(false).GetDecoder();
+            var length = decoder.GetChars(_buf, 0, count, chars, 0, flush: false);
+            if (length > 0) _w!.WriteRaw(chars, 0, length);
         }
 
-        /// <summary>Makes sure a short closing fragment fits after text that may have filled the buffer.</summary>
-        private void EnsureRoom()
+        /// <summary>Makes sure <paramref name="count"/> bytes fit, flushing the staged bytes if they do not.</summary>
+        private void EnsureRoom(int count)
         {
-            if (_raw.Length - _rawLength < CellReserve) FlushRaw();
+            if (_buf.Length - _n < count) FlushStaged();
         }
 
-        /// <summary>Appends a short constant or cached string. The caller has reserved room (see <see cref="CellReserve"/>).</summary>
-        private void AppendFixed(string text)
+        private void Room()
         {
-            var raw = _raw;
-            var position = _rawLength;
-            for (var i = 0; i < text.Length; i++) raw[position + i] = text[i];
-            _rawLength = position + text.Length;
+            if (_buf.Length - _n < CellReserve) FlushStaged();
         }
 
-        private void AppendDigits(char[] digits, int length)
+        /// <summary>Appends a short constant. The caller has reserved room (see <see cref="CellReserve"/>).</summary>
+        private void AppendFixed(byte[] constant)
         {
-            var raw = _raw;
-            var position = _rawLength;
-            for (var i = 0; i < length; i++) raw[position + i] = digits[i];
-            _rawLength = position + length;
+            var buf = _buf;
+            var position = _n;
+            for (var i = 0; i < constant.Length; i++) buf[position + i] = constant[i];
+            _n = position + constant.Length;
+        }
+
+        /// <summary>Appends a short string that holds only ASCII (column letters, numbers). The caller has reserved room.</summary>
+        private void AppendAscii(string text)
+        {
+            var buf = _buf;
+            var position = _n;
+            for (var i = 0; i < text.Length; i++) buf[position + i] = (byte)text[i];
+            _n = position + text.Length;
+        }
+
+        private void AppendDigits(byte[] digits, int length)
+        {
+            var buf = _buf;
+            var position = _n;
+            for (var i = 0; i < length; i++) buf[position + i] = digits[i];
+            _n = position + length;
         }
 
         /// <summary>Appends an integer in plain digits, straight into the staging buffer.</summary>
-        private void AppendInteger(long value) => _rawLength += CharNumbers.Format(value, _raw, _rawLength);
+        private void AppendInteger(long value) => _n += Utf8Numbers.Format(value, _buf, _n);
 
-        /// <summary>
-        /// Appends a double the way <c>XmlWriter.WriteValue(double)</c> writes it. Where the runtime cannot format
-        /// into a buffer (<c>netstandard2.0</c>) the string-creating call is used, as before.
-        /// </summary>
-        private void AppendNumber(double value)
-        {
-            var length = CharNumbers.Format(value, _raw, _rawLength);
-            if (length < 0) AppendFixed(XmlConvert.ToString(value));
-            else _rawLength += length;
-        }
+        /// <summary>Appends a double the way <c>XmlWriter.WriteValue(double)</c> writes it.</summary>
+        private void AppendNumber(double value) => _n += Utf8Numbers.Format(value, _buf, _n);
 
         /// <summary>Decimal counterpart of <see cref="AppendNumber(double)"/>.</summary>
-        private void AppendNumber(decimal value)
+        private void AppendNumber(decimal value) => _n += Utf8Numbers.Format(value, _buf, _n);
+
+        /// <summary>Appends bytes that are already UTF-8, in pieces if they are more than fit.</summary>
+        private void AppendBytes(byte[] source, int count)
         {
-            var length = CharNumbers.Format(value, _raw, _rawLength);
-            if (length < 0) AppendFixed(XmlConvert.ToString(value));
-            else _rawLength += length;
+            var start = 0;
+            while (count > 0)
+            {
+                var room = _buf.Length - _n;
+                if (room == 0)
+                {
+                    FlushStaged();
+                    room = _buf.Length;
+                }
+                var piece = count < room ? count : room;
+                Buffer.BlockCopy(source, start, _buf, _n, piece);
+                _n += piece;
+                start += piece;
+                count -= piece;
+            }
         }
 
         /// <summary>
         /// Appends element text the way <c>XmlWriter.WriteString</c> writes it: <c>&amp;</c>, <c>&lt;</c> and
         /// <c>&gt;</c> become entities and everything else, including quotes, tabs and line breaks (the writer is set
-        /// to leave newlines alone), is copied unchanged. The text has been through
+        /// to leave newlines alone), is copied unchanged, as UTF-8. The text has been through
         /// <see cref="XmlTextUtil.Sanitize"/>, so it holds no character XML cannot carry. It is scanned once; runs
         /// without a special character are copied in bulk, and a string longer than the buffer goes out in pieces.
         /// </summary>
@@ -755,36 +972,62 @@ namespace SheetStream
                 var c = text[i];
                 // '&', '<' and '>' are all at or below '>', so almost every character is rejected by one compare.
                 if (c > '>') continue;
-                string entity;
-                if (c == '&') entity = "&amp;";
-                else if (c == '<') entity = "&lt;";
-                else if (c == '>') entity = "&gt;";
+                byte[] entity;
+                if (c == '&') entity = EntityAmpersand;
+                else if (c == '<') entity = EntityLess;
+                else if (c == '>') entity = EntityGreater;
                 else continue;
 
                 AppendRun(text, runStart, i - runStart);
-                if (_raw.Length - _rawLength < 8) FlushRaw();
+                if (_buf.Length - _n < 8) FlushStaged();
                 AppendFixed(entity);
                 runStart = i + 1;
             }
             AppendRun(text, runStart, text.Length - runStart);
         }
 
-        /// <summary>Copies <paramref name="count"/> characters of <paramref name="text"/>, flushing whenever the buffer fills.</summary>
+        private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
+
+        /// <summary>
+        /// Copies <paramref name="count"/> characters of <paramref name="text"/> as UTF-8, flushing whenever the buffer
+        /// fills. ASCII, which is nearly all text, is a plain loop; anything else is encoded in blocks that never end
+        /// inside a surrogate pair, so a flush never lands inside a character.
+        /// </summary>
         private void AppendRun(string text, int start, int count)
         {
             while (count > 0)
             {
-                var room = _raw.Length - _rawLength;
-                if (room == 0)
+                if (_buf.Length - _n < 16) FlushStaged();
+                var buf = _buf;
+                var n = _n;
+                var room = buf.Length - n;
+                var limit = count < room ? count : room;
+                var i = 0;
+                for (; i < limit; i++)
                 {
-                    FlushRaw();
-                    room = _raw.Length;
+                    var c = text[start + i];
+                    if (c >= 0x80) break;
+                    buf[n + i] = (byte)c;
                 }
-                var piece = count < room ? count : room;
-                text.CopyTo(start, _raw, _rawLength, piece);
-                _rawLength += piece;
-                start += piece;
-                count -= piece;
+                n += i;
+                start += i;
+                count -= i;
+                _n = n;
+                if (i == limit) continue; // Finished, or the buffer is full and the loop flushes it.
+
+                // A character above ASCII: encode a block of what is left. A character takes at most three bytes,
+                // and a surrogate pair four for two characters, so room / 3 characters always fit.
+                room = buf.Length - n;
+                var chars = count < room / 3 ? count : room / 3;
+                if (chars > 0 && chars < count && char.IsHighSurrogate(text[start + chars - 1])) chars--;
+                if (chars == 0)
+                {
+                    FlushStaged();
+                    continue;
+                }
+                _n = n + Utf8.GetBytes(text, start, chars, buf, n);
+                start += chars;
+                count -= chars;
             }
         }
 

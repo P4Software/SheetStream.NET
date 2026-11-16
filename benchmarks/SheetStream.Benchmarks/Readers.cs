@@ -92,8 +92,12 @@ public static class Checksum
 
 /// <summary>
 /// Produces the input file for the read benchmarks: the Long scenario written once by SheetStream at its
-/// default settings. The same bytes are handed to every reader through a fresh read-only
-/// <see cref="MemoryStream"/>, so no reader pays for disk I/O and none can disturb the shared buffer.
+/// default settings, except that every cell carries its address (<c>PackageOptions.WriteCellReferences</c>).
+/// SheetStream's default leaves the address off a cell that follows its neighbour, which is valid and read correctly
+/// by most libraries, but NPOI's SAX reader cannot read it, so the reader guard would reject that reader for a
+/// writer-side default. The writer scenarios do not use this file and stay on the default. The same bytes are
+/// handed to every reader through a fresh read-only <see cref="MemoryStream"/>, so no reader pays for disk I/O
+/// and none can disturb the shared buffer.
 /// </summary>
 public static class ReadInput
 {
@@ -101,7 +105,7 @@ public static class ReadInput
     public static byte[] Create(int rows)
     {
         using var output = new ReusableOutput(Scenarios.OutputCapacity(Scenarios.Long));
-        new SheetStreamWriter(CompressionLevel.Optimal).WriteLong(output, Data.CreateLong(rows));
+        new SheetStreamWriter(CompressionLevel.Optimal, writeCellReferences: true).WriteLong(output, Data.CreateLong(rows));
         return output.ToArray();
     }
 

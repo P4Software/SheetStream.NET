@@ -68,6 +68,48 @@ namespace SheetStream.NetFx.Tests
         }
 
         [Fact]
+        public void DoublesAreWrittenAsXmlConvertFormatsThem()
+        {
+            // Short decimals take a fast path that must give the text the runtime's own formatter gives, and on
+            // .NET Framework that formatter (XmlConvert.ToString) is the one that is not always the shortest form.
+            // So compare the text in the file with it, for decimals, binary noise and every magnitude.
+            var random = new Random(20261119);
+            var values = new List<double>();
+            for (var i = 0; i < 60000; i++)
+            {
+                var places = random.Next(0, 9);
+                var whole = (long)(random.NextDouble() * Math.Pow(10, random.Next(1, 16)));
+                var v = whole / Math.Pow(10, places);
+                values.Add(v);
+                values.Add(-v);
+                values.Add(v + random.Next(1, 100) / 100.0);
+                values.Add(random.Next(0, 10000) * 1.25 + 0.99);
+                values.Add(random.NextDouble() * Math.Pow(10, random.Next(-8, 18)));
+            }
+            values.AddRange(new[] { 0.0, 1e-4, 9.999999999999999e-5, 1e-5, 1e15, 999999999999999.0, 0.1 + 0.2, 123456789012345.0, 4503599627370496.0 });
+
+            var bytes = ExcelPackage.CreateBytes(wb =>
+            {
+                var s = wb.Worksheets.Add("Data");
+                foreach (var v in values) s.Row().WriteCell(v);
+            });
+
+            string xml;
+            using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes), System.IO.Compression.ZipArchiveMode.Read))
+            using (var reader = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open()))
+                xml = reader.ReadToEnd();
+
+            var at = 0;
+            foreach (var v in values)
+            {
+                var open = xml.IndexOf("<v>", at, StringComparison.Ordinal) + 3;
+                var close = xml.IndexOf("</v>", open, StringComparison.Ordinal);
+                Assert.Equal(System.Xml.XmlConvert.ToString(v), xml.Substring(open, close - open));
+                at = close;
+            }
+        }
+
+        [Fact]
         public void CachedRoundAndEarlyDates_MatchExcel()
         {
             var bytes = ExcelPackage.CreateBytes(wb =>

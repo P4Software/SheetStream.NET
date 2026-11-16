@@ -47,7 +47,11 @@ namespace SheetStream
         /// unchanged keep the form the template had.
         /// </summary>
         public bool WriteCellReferences { get; set; }
-        /// <summary>Size of the write buffer placed in front of each zip entry, in bytes.</summary>
+        /// <summary>
+        /// Size of the write buffer placed in front of the zip entries, in bytes. A package has one such buffer, used
+        /// by whichever part is being written; a sheet's rows are composed in it directly. Values under 4096 are
+        /// treated as 4096. The default of 64 KB suits nearly everything.
+        /// </summary>
         public int BufferSize { get; set; } = 64 * 1024;
 
         /// <summary>
