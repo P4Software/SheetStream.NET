@@ -147,6 +147,41 @@ public class RawCellWritingTests
         AssertSameAsReference(script, shared: false, references: false, autoFit: false, bufferSize: bufferSize);
     }
 
+    /// <summary>
+    /// <see cref="StringStorage.Auto"/>: columns that are shared, inline, sampled, shared and then let go, and cells that
+    /// must be kept out of inline text, mixed with numbers, skipped columns and styles, over enough rows for every
+    /// column to be judged, must be written exactly as the reference writes them.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AutoMode_MixedAndChangingColumns_AreWrittenExactlyAsXmlWriterWroteThem(bool references)
+    {
+        var phrases = new[] { "Pending approval by the finance team", "Waiting for the warehouse to confirm stock", "Customer asked for a call back" };
+        var random = new Random(4711);
+        var script = new RawCellScript();
+        for (var r = 0; r < 9000; r++)
+        {
+            var row = script.NewRow();
+            // 1: shared, then every text is new (let go at the end of a monitoring window).
+            row.Add(Text(r < 1200 ? phrases[r % 3] : "free text " + r, -1));
+            // 2: unique from the start (inline after the early exit).
+            row.Add(Text("ref " + r + (r % 50 == 0 ? " & <more>" : ""), r % 9 == 0 ? 3 : -1));
+            row.Add(new ScriptCell { Kind = ScriptKind.Int, Integer = r, Style = -1 });
+            // 3: many distinct short values (shared on the count of distinct values).
+            row.Add(Text("N" + random.Next(1500), -1));
+            // 4: a short, small set (inline after the first sample).
+            row.Add(Text(new[] { "New", "Pending", "Shipped" }[r % 3], -1));
+            if (r % 7 == 0) row.Add(new ScriptCell { Kind = ScriptKind.Skip, Integer = 2, Style = -1 });
+            // 5: text that Sanitize changes, in a column that is otherwise inline, and text that is plain.
+            row.Add(Text(r % 11 == 0 ? "control \u0001 and _x0041_ " + r : "plain " + r + " é €", -1));
+            row.Add(new ScriptCell { Kind = ScriptKind.Empty, Style = r % 13 == 0 ? 4 : -1 });
+            row.Add(Text(r % 5 == 0 ? null : " padded " + r + " ", -1));
+        }
+        AssertSameAsReference(script, shared: false, references, autoFit: false, auto: true);
+
+        static ScriptCell Text(string? text, int style) => new ScriptCell { Kind = text == null ? ScriptKind.NullText : ScriptKind.Text, Text = text, Style = style };
+    }
     /// <summary>The row writer's own rows and the buffered cells meet at the row end: a long row, then rows of different shapes.</summary>
     [Fact]
     public void ManyRowsOfOneKind_FillTheBufferAcrossRows()
@@ -249,7 +284,7 @@ public class RawCellWritingTests
 
     // ---- The reference: the cell-writing code as it was before the buffer, on a real XmlWriter --------------------
 
-    private static void AssertSameAsReference(RawCellScript script, bool shared, bool references, bool autoFit, int bufferSize = BufferLength)
+    private static void AssertSameAsReference(RawCellScript script, bool shared, bool references, bool autoFit, int bufferSize = BufferLength, bool auto = false)
     {
         string expected = null!;
         var bytes = ExcelPackage.CreateBytes(wb =>
@@ -258,10 +293,10 @@ public class RawCellWritingTests
             var sheet = wb.Worksheets.Add("S");
             if (autoFit) sheet.AutoFitColumns();
             script.Apply(sheet, styles);
-            expected = Reference(script, styles, wb.Styles, shared, references);
+            expected = Reference(script, styles, wb.Styles, shared, references, auto);
         }, new PackageOptions
         {
-            StringStorage = shared ? StringStorage.Shared : StringStorage.Inline,
+            StringStorage = auto ? StringStorage.Auto : shared ? StringStorage.Shared : StringStorage.Inline,
             WriteCellReferences = references,
             CompressionLevel = CompressionLevel.Fastest,
             BufferSize = bufferSize,
@@ -334,7 +369,7 @@ public class RawCellWritingTests
     /// Everything else (when the address is written, the style rules, the sanitising of text) is the library's own
     /// code, so what this pins is the XML writing, which is all that changed.
     /// </summary>
-    private static string Reference(RawCellScript script, CellStyle[] styles, StyleSheet styleSheet, bool shared, bool references)
+    private static string Reference(RawCellScript script, CellStyle[] styles, StyleSheet styleSheet, bool shared, bool references, bool auto = false)
     {
         var output = new MemoryStream();
         var settings = new XmlWriterSettings
@@ -346,6 +381,8 @@ public class RawCellWritingTests
             OmitXmlDeclaration = false,
         };
         var sharedIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+        // StringStorage.Auto: the reference keeps the same per-column judgement (StringColumnState has its own unit tests) and writes the cells with plain XmlWriter calls.
+        var columnStates = new StringColumnState[CellReference.MaxColumns + 1];
         using (var w = XmlWriter.Create(output, settings))
         {
             w.WriteStartDocument(true);
@@ -449,6 +486,19 @@ public class RawCellWritingTests
                             Value(x => x.WriteValue(cell.Span.TotalDays));
                             break;
                         case ScriptKind.Bool: Begin(style, "b"); Value(x => x.WriteString(cell.Integer != 0 ? "1" : "0")); break;
+                        case ScriptKind.Text when auto:
+                        {
+                            ref var state = ref columnStates[next];
+                            var sanitized = XmlTextUtil.Sanitize(cell.Text!);
+                            if (state.Mode == ColumnMode.Inline && ReferenceEquals(sanitized, cell.Text)) { Inline(cell.Text!, style); break; }
+                            // Sampled or shared columns, and text that had to be changed (kept out of inline cells, see RowWriter.WriteInlineCore).
+                            var known = sharedIndex.TryGetValue(sanitized, out var index);
+                            if (!known) sharedIndex[sanitized] = index = sharedIndex.Count;
+                            if (state.Mode != ColumnMode.Inline) state.Observe(known, cell.Text!.Length);
+                            Begin(style, "s");
+                            Value(x => x.WriteValue(index));
+                            break;
+                        }
                         case ScriptKind.Text when shared:
                         {
                             var sanitized = XmlTextUtil.Sanitize(cell.Text!);

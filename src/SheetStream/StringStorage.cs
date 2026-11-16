@@ -8,9 +8,11 @@ namespace SheetStream
     /// <remarks>
     /// A workbook can store a text cell in one of two ways. <b>Shared</b> keeps each distinct text once in a
     /// workbook-wide list (the shared string table) and the cell holds only its number, which is what Excel itself
-    /// does. <b>Inline</b> writes the text inside the cell. Shared wins when values repeat (status, country,
-    /// category): the file is smaller and Excel opens it faster. Inline wins when values hardly ever repeat (ids,
-    /// e-mail addresses, free text): there is no list to build and keep in memory, and the write is faster.
+    /// does. <b>Inline</b> writes the text inside the cell. Shared wins when long or varied values repeat (customer
+    /// names, descriptions, codes): the file can be much smaller, and Excel opens a sheet full of repeated texts
+    /// faster. Inline wins when values hardly ever repeat (ids, e-mail addresses, free text), and for short values
+    /// from a small set (status, country), which the zip compressor folds away: there is no list to build and keep in
+    /// memory, and the write is faster.
     /// </remarks>
     public enum StringStorage
     {

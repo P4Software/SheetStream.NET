@@ -352,7 +352,14 @@ namespace SheetStream
         }
 
         /// <summary>The inline cell itself; the caller has checked that a row is open.</summary>
-        private RowWriter WriteInlineCore(string value, CellStyle? style)
+        /// <param name="value">The text.</param>
+        /// <param name="style">The cell style, or null.</param>
+        /// <param name="shareIfChanged">
+        /// Set by <see cref="StringStorage.Auto"/> for a column judged inline: text that <see cref="XmlTextUtil.Sanitize"/> has to
+        /// change (control characters, a literal <c>_xHHHH_</c>) goes through the shared table instead, because some readers
+        /// (openpyxl, and pandas through it) decode the <c>_xHHHH_</c> escapes in shared strings but not in inline ones.
+        /// </param>
+        private RowWriter WriteInlineCore(string value, CellStyle? style, bool shareIfChanged = false)
         {
             // The common cell (no style, no address, plain text) is composed in one go; anything else takes the general route.
             if (style == null && _rowStyle == null && !_alwaysWriteReference && NextColumn == _lastWrittenColumn + 1 && NextColumn <= CellReference.MaxColumns
@@ -365,6 +372,11 @@ namespace SheetStream
                 if (_cache) _sheet.RecordText(RowIndex, NextColumn);
                 EndCellRaw(value);
                 return this;
+            }
+
+            if (shareIfChanged && !ReferenceEquals(XmlTextUtil.Sanitize(value), value))
+            {
+                if (_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var sharedIndex)) return WriteSharedIndex(sharedIndex, value, style);
             }
 
             BeginCellRaw(style, TypeInline);
@@ -558,7 +570,7 @@ namespace SheetStream
                 states = GrowColumnStates(column);
             }
             ref var state = ref states[column];
-            if (state.Mode == ColumnMode.Inline) return WriteInlineCore(value, style);
+            if (state.Mode == ColumnMode.Inline) return WriteInlineCore(value, style, shareIfChanged: true);
             if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed))
             {
                 // The table is full (see PackageOptions.MaxSharedStringChars): a new text is written inline. It still

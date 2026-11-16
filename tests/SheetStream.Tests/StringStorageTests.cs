@@ -246,6 +246,34 @@ public class StringStorageTests
         Assert.Empty(new OpenXmlValidator().Validate(doc));
     }
 
+    /// <summary>
+    /// Text that has to be escaped (<c>_xHHHH_</c>) is kept in the shared table by Auto even in an inline column, because
+    /// openpyxl and pandas decode the escapes in shared strings only. Written inline on request it stays inline.
+    /// </summary>
+    [Fact]
+    public void Auto_TextThatNeedsEscaping_GoesThroughTheTable_EvenInAnInlineColumn()
+    {
+        string Text(int i) => i % 10 == 0 ? "control \u0001 and literal _x0041_ " + i : "unique " + i;
+        const int rows = 3000;
+        byte[] Build(StringStorage storage) => ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++) s.Row().WriteCell(Text(i));
+        }, Options(storage));
+
+        var auto = Build(StringStorage.Auto);
+        var inline = Build(StringStorage.Inline);
+        var expected = Enumerable.Range(0, rows).Select(i => new[] { Text(i) }).ToList();
+        AssertReadsBack(auto, expected);
+        AssertReadsBack(inline, expected);
+
+        // After the first sample the column is inline, but the escaped texts are still in the table.
+        var sheet = Part(auto, "xl/worksheets/sheet1.xml");
+        Assert.True(Count(sheet, "t=\"inlineStr\"") > rows / 2);
+        Assert.True(Count(Part(auto, "xl/sharedStrings.xml"), "_x0001_") >= rows / 10 - 1, "Every escaped text is in the table.");
+        Assert.Equal(0, Count(sheet, "_x0001_"));
+        Assert.True(Count(Part(inline, "xl/worksheets/sheet1.xml"), "_x0001_") >= rows / 10);
+    }
     [Fact]
     public void Auto_ACellOfEveryKind_ReadsBackThroughBothStorageModes()
     {
