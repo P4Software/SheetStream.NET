@@ -356,7 +356,9 @@ namespace SheetStream
                 // XmlWriter closes a childless element as " />" (with the space); keep the file byte for byte.
                 AppendFixed(EmptyEnd);
             }
-            NextColumn++;
+            // The cursor stops at the column after XFD, where Skip stops it too: an empty cell that writes nothing has no
+            // reason to carry it further, and counting on past int.MaxValue calls would wrap it.
+            if (NextColumn <= CellReference.MaxColumns) NextColumn++;
             return this;
         }
 

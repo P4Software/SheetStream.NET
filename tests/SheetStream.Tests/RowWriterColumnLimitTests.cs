@@ -147,6 +147,26 @@ public class RowWriterColumnLimitTests
         Assert.Equal("fresh", rows.Last()[0]);
     }
 
+    /// <summary>Empty cells that write nothing must not carry the cursor past the column after XFD, which <c>Skip</c> promises it never passes.</summary>
+    [Fact]
+    public void UnstyledEmptyCells_StopTheCursorAtTheColumnAfterTheLast()
+    {
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            var r = s.Row().Skip(CellReference.MaxColumns - 1).WriteCell("last");
+            Assert.Equal(CellReference.MaxColumns + 1, r.NextColumn);
+            r.WriteEmpty().WriteEmpty().WriteCell((string?)null).WriteCell((object?)null);
+            Assert.Equal(CellReference.MaxColumns + 1, r.NextColumn);
+            r.Skip(0); // Allowed where the cursor is.
+            Assert.Throws<ArgumentOutOfRangeException>(() => r.Skip());
+            s.Row().WriteCell("next");
+        });
+        var rows = ValidateAndRead(bytes);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("last", rows[0][CellReference.MaxColumns - 1]);
+    }
+
     /// <summary>A hyperlink registered for a column that cannot hold it must not be left behind, or the sheet's trailer would carry a reference past XFD.</summary>
     [Fact]
     public void RefusedHyperlink_LeavesNoLinkBehind()
