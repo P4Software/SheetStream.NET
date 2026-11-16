@@ -377,7 +377,9 @@ public class RawCellWritingTests
             Encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             CloseOutput = false,
             Indent = false,
-            NewLineHandling = NewLineHandling.None,
+            // Entitize writes a carriage return in text as &#xD; (a raw one would be read back as LF) and leaves tabs and
+            // line feeds in text alone, which is what the library writes. The cells' attributes carry no such characters.
+            NewLineHandling = NewLineHandling.Entitize,
             OmitXmlDeclaration = false,
         };
         var sharedIndex = new Dictionary<string, int>(StringComparer.Ordinal);

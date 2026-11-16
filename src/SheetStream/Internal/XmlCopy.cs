@@ -127,7 +127,7 @@ namespace SheetStream.Internal
         {
             switch (r.NodeType)
             {
-                case XmlNodeType.Text: w.WriteString(r.Value); break;
+                case XmlNodeType.Text: XmlTextUtil.WriteText(w, r.Value); break; // A CR the parser was given as &#xD; must not become a raw one.
                 case XmlNodeType.CDATA: w.WriteCData(r.Value); break;
                 case XmlNodeType.Whitespace:
                 case XmlNodeType.SignificantWhitespace: w.WriteWhitespace(r.Value); break;

@@ -490,7 +490,7 @@ public class StringStorageTests
         }, new PackageOptions { StringStorage = StringStorage.Shared, CompressionLevel = CompressionLevel.Fastest });
 
         var output = new MemoryStream();
-        using (var w = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = false, NewLineHandling = NewLineHandling.None }))
+        using (var w = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = false, NewLineHandling = NewLineHandling.Entitize })) // Entitize: a CR in text is written as &#xD;, which is what the table writes.
         {
             w.WriteStartDocument(true);
             w.WriteStartElement("sst", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");

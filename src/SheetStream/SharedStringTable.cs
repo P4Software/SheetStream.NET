@@ -224,7 +224,7 @@ namespace SheetStream
 
         /// <summary>
         /// Writes the <c>si</c> items of the table's own strings. Each is composed as characters (the tags, then the text with
-        /// <c>&amp;</c>, <c>&lt;</c> and <c>&gt;</c> escaped, then the closing tags) in a chunk that is handed to the XML writer
+        /// <c>&amp;</c>, <c>&lt;</c> and <c>&gt;</c> escaped and each CR as <c>&amp;#xD;</c>, then the closing tags) in a chunk that is handed to the XML writer
         /// as raw text, so the writer does no per-element work: a table has one entry per distinct text, tens of thousands
         /// when a sheet has columns of unique text. The bytes are the ones <c>WriteStartElement</c>, <c>WriteAttributeString</c>,
         /// <c>WriteString</c> and <c>WriteEndElement</c> wrote (the table's texts have been through <see cref="XmlTextUtil.Sanitize"/>,
@@ -245,7 +245,7 @@ namespace SheetStream
                     // A text longer than a chunk goes through the writer, which escapes it in pieces.
                     if (n > 0) { w.WriteRaw(chunk, 0, n); n = 0; }
                     w.WriteRaw(open);
-                    w.WriteString(s);
+                    XmlTextUtil.WriteText(w, s);
                     w.WriteRaw(ItemClose);
                     continue;
                 }
@@ -261,12 +261,13 @@ namespace SheetStream
                 for (var i = 0; i < s.Length; i++)
                 {
                     var c = s[i];
-                    // '&', '<' and '>' are all at or below '>', so almost every character is rejected by one compare.
+                    // '&', '<', '>' and CR are all at or below '>', so almost every character is rejected by one compare.
                     if (c > '>') continue;
                     string entity;
                     if (c == '&') entity = "&amp;";
                     else if (c == '<') entity = "&lt;";
                     else if (c == '>') entity = "&gt;";
+                    else if (c == '\r') entity = "&#xD;"; // A raw CR would be read back as LF (see XmlTextUtil.WriteText).
                     else continue;
                     s.CopyTo(runStart, chunk, n, i - runStart);
                     n += i - runStart;

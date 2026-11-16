@@ -442,8 +442,8 @@ namespace SheetStream
         /// <summary>
         /// Writes <c>&lt;is&gt;&lt;t&gt;</c>, the text and the closing tags of an inline cell in one pass over the characters, for the
         /// text that needs nothing done to it but encoding: letters, digits, punctuation, accents, any other
-        /// character of the Basic Multilingual Plane, surrogate pairs, tabs and line breaks, and <c>&amp; &lt; &gt;</c>,
-        /// which become entities. This is exactly what <see cref="XmlTextUtil.Sanitize"/> followed by
+        /// character of the Basic Multilingual Plane, surrogate pairs, tabs and line breaks, and <c>&amp; &lt; &gt;</c>
+        /// and the carriage return, which become entities. This is exactly what <see cref="XmlTextUtil.Sanitize"/> followed by
         /// <see cref="AppendText"/> would write for such text, without the three scans and the copy they take.
         /// Anything that needs <see cref="XmlTextUtil.Sanitize"/> to act (a control character, an unpaired surrogate,
         /// U+FFFE or U+FFFF, an underscore that opens an <c>_xHHHH_</c> sequence), a text that is too long, and a
@@ -515,7 +515,13 @@ namespace SheetStream
                         }
                         else buf[n++] = (byte)c;
                     }
-                    else if (c == '\t' || c == '\n' || c == '\r') buf[n++] = (byte)c;
+                    else if (c == '\t' || c == '\n') buf[n++] = (byte)c;
+                    else if (c == '\r')
+                    {
+                        // A raw CR is read back as LF by every XML parser; the character reference keeps it (see XmlTextUtil.WriteText).
+                        buf[n] = (byte)'&'; buf[n + 1] = (byte)'#'; buf[n + 2] = (byte)'x'; buf[n + 3] = (byte)'D'; buf[n + 4] = (byte)';';
+                        n += 5;
+                    }
                     else return Rewind(start); // Any other control character becomes an _xHHHH_ escape.
                 }
                 else if (c < 0x800)
@@ -1226,6 +1232,8 @@ namespace SheetStream
         private static readonly byte[] EntityAmpersand = Bytes("&amp;");
         private static readonly byte[] EntityLess = Bytes("&lt;");
         private static readonly byte[] EntityGreater = Bytes("&gt;");
+        // A raw CR in element text is read back as LF by every XML parser; the character reference keeps it.
+        private static readonly byte[] EntityCarriageReturn = Bytes("&#xD;");
 
         /// <summary>
         /// Appends <c>&lt;c</c>, the optional <c>r</c> and <c>s</c> attributes and <paramref name="typeAttribute"/>
@@ -1380,8 +1388,9 @@ namespace SheetStream
 
         /// <summary>
         /// Appends element text the way <c>XmlWriter.WriteString</c> writes it: <c>&amp;</c>, <c>&lt;</c> and
-        /// <c>&gt;</c> become entities and everything else, including quotes, tabs and line breaks (the writer is set
-        /// to leave newlines alone), is copied unchanged, as UTF-8. The text has been through
+        /// <c>&gt;</c> become entities, a carriage return becomes <c>&amp;#xD;</c> (as an <c>XmlWriter</c> set to
+        /// <c>NewLineHandling.Entitize</c> writes it; a raw CR would be read back as LF), and everything else,
+        /// including quotes, tabs and line feeds, is copied unchanged, as UTF-8. The text has been through
         /// <see cref="XmlTextUtil.Sanitize"/>, so it holds no character XML cannot carry. It is scanned once; runs
         /// without a special character are copied in bulk, and a string longer than the buffer goes out in pieces.
         /// </summary>
@@ -1398,7 +1407,7 @@ namespace SheetStream
                 if (at < 0) return;
                 var c = rest[at];
                 if (_buf.Length - _n < 8) FlushStaged();
-                AppendFixed(c == '&' ? EntityAmpersand : c == '<' ? EntityLess : EntityGreater);
+                AppendFixed(c == '&' ? EntityAmpersand : c == '<' ? EntityLess : c == '>' ? EntityGreater : EntityCarriageReturn);
                 rest = rest.Slice(at + 1);
             }
 #else
@@ -1406,12 +1415,13 @@ namespace SheetStream
             for (var i = 0; i < text.Length; i++)
             {
                 var c = text[i];
-                // '&', '<' and '>' are all at or below '>', so almost every character is rejected by one compare.
+                // '&', '<', '>' and CR are all at or below '>', so almost every character is rejected by one compare.
                 if (c > '>') continue;
                 byte[] entity;
                 if (c == '&') entity = EntityAmpersand;
                 else if (c == '<') entity = EntityLess;
                 else if (c == '>') entity = EntityGreater;
+                else if (c == '\r') entity = EntityCarriageReturn;
                 else continue;
 
                 AppendRun(text, runStart, i - runStart);
@@ -1424,7 +1434,7 @@ namespace SheetStream
         }
 
 #if NET8_0_OR_GREATER
-        private static readonly System.Buffers.SearchValues<char> EntityCharacters = System.Buffers.SearchValues.Create("&<>");
+        private static readonly System.Buffers.SearchValues<char> EntityCharacters = System.Buffers.SearchValues.Create("&<>\r");
 
         /// <summary>
         /// Transcodes <paramref name="run"/> to UTF-8 straight into the staging buffer, in pieces when it does not all

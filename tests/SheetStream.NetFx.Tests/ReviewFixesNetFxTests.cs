@@ -62,6 +62,36 @@ namespace SheetStream.NetFx.Tests
         }
 
         [Fact]
+        public void CarriageReturns_AreWrittenAsCharacterReferences_AndReadBackAsCarriageReturns()
+        {
+            var texts = new[] { "a\r\nb", "a\rb", "\r", " lead\r\ntrail\r\n ", "x & <y>\r\n\"q\"\r_x0041_\t", "é€😀\r\nz" };
+            foreach (var storage in new[] { StringStorage.Auto, StringStorage.Shared, StringStorage.Inline })
+            {
+                var bytes = ExcelPackage.CreateBytes(wb =>
+                {
+                    var s = wb.Worksheets.Add("S");
+                    foreach (var text in texts) s.Row().WriteCell(text).WriteInlineString(text);
+                    s.Row().WriteRichText(new RichText("one\r\ntwo") { Bold = true }, new RichText("\rthree"));
+                }, new PackageOptions { StringStorage = storage });
+
+                using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
+                {
+                    var rows = reader.ReadRows("S").ToList();
+                    for (var i = 0; i < texts.Length; i++)
+                    {
+                        Assert.Equal(texts[i], rows[i][0]);
+                        Assert.Equal(texts[i], rows[i][1]);
+                    }
+                    Assert.Equal("one\r\ntwo\rthree", rows[texts.Length][0]);
+                }
+                using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes), System.IO.Compression.ZipArchiveMode.Read))
+                foreach (var name in new[] { "xl/worksheets/sheet1.xml", "xl/sharedStrings.xml" })
+                using (var part = new StreamReader(zip.GetEntry(name).Open()))
+                    Assert.DoesNotContain("\r", part.ReadToEnd());
+            }
+        }
+
+        [Fact]
         public void AUniqueColumnOnASecondSheet_DoesNotGrowTheSharedTable()
         {
             long Unique(int sheets)
