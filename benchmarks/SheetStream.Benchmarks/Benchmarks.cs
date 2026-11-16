@@ -131,6 +131,99 @@ public abstract class WideShapeBenchmarks : ScenarioBenchmarks
     }
 }
 
+/// <summary>
+/// A string-grid scenario: <c>string[][]</c> data through <see cref="ILibraryWriter.WriteStrings"/>. SpreadCheetahOwn
+/// and StringHeavy differ only in the data, so the benchmark methods are declared once here.
+/// </summary>
+public abstract class StringShapeBenchmarks : ScenarioBenchmarks
+{
+    private string[][] _rows = null!;
+
+    /// <inheritdoc />
+    protected override void BuildData() => _rows = Scenario == Scenarios.SpreadCheetahOwn
+        ? Data.CreateOwnStrings(Scenarios.Rows(Scenario))
+        : Data.CreateStringHeavy(Scenarios.Rows(Scenario));
+
+    [Benchmark(Baseline = true, Description = "SheetStream")]
+    public long SheetStream() => Run(Writers.Get("SheetStream"));
+
+    [Benchmark(Description = "SheetStream (Fastest zip)")]
+    public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
+
+    [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
+    public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
+
+    [Benchmark(Description = "SpreadCheetah (Optimal zip)")]
+    public long SpreadCheetahOptimal() => Run(Writers.Get("SpreadCheetah-Optimal"));
+
+    [Benchmark(Description = "EPPlus 4.5.3.3")]
+    public long EPPlus() => Run(Writers.Get("EPPlus 4.5.3.3"));
+
+    [Benchmark(Description = "ClosedXML")]
+    public long ClosedXml() => Run(Writers.Get("ClosedXML"));
+
+    [Benchmark(Description = "MiniExcel")]
+    public long MiniExcel() => Run(Writers.Get("MiniExcel"));
+
+    [Benchmark(Description = "NPOI XSSF")]
+    public long NpoiXssf() => Run(Writers.Get("NPOI XSSF"));
+
+    [Benchmark(Description = "NPOI SXSSF")]
+    public long NpoiSxssf() => Run(Writers.Get("NPOI SXSSF"));
+
+    /// <summary>Writes the full sheet and returns its size, so the work cannot be optimised away.</summary>
+    private long Run(ILibraryWriter writer)
+    {
+        writer.WriteStrings(Output, _rows);
+        return Output.Length;
+    }
+}
+
+/// <summary>
+/// The styled scenario: <see cref="StyledRow"/> data through <see cref="ILibraryWriter.WriteStyled"/>.
+/// </summary>
+public abstract class StyledShapeBenchmarks : ScenarioBenchmarks
+{
+    private StyledRow[] _rows = null!;
+
+    /// <inheritdoc />
+    protected override void BuildData() => _rows = Data.CreateStyled(Scenarios.Rows(Scenario));
+
+    [Benchmark(Baseline = true, Description = "SheetStream")]
+    public long SheetStream() => Run(Writers.Get("SheetStream"));
+
+    [Benchmark(Description = "SheetStream (Fastest zip)")]
+    public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
+
+    [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
+    public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
+
+    [Benchmark(Description = "SpreadCheetah (Optimal zip)")]
+    public long SpreadCheetahOptimal() => Run(Writers.Get("SpreadCheetah-Optimal"));
+
+    [Benchmark(Description = "EPPlus 4.5.3.3")]
+    public long EPPlus() => Run(Writers.Get("EPPlus 4.5.3.3"));
+
+    [Benchmark(Description = "ClosedXML")]
+    public long ClosedXml() => Run(Writers.Get("ClosedXML"));
+
+    [Benchmark(Description = "MiniExcel")]
+    public long MiniExcel() => Run(Writers.Get("MiniExcel"));
+
+    [Benchmark(Description = "NPOI XSSF")]
+    public long NpoiXssf() => Run(Writers.Get("NPOI XSSF"));
+
+    [Benchmark(Description = "NPOI SXSSF")]
+    public long NpoiSxssf() => Run(Writers.Get("NPOI SXSSF"));
+
+    /// <summary>Writes the full sheet and returns its size, so the work cannot be optimised away.</summary>
+    private long Run(ILibraryWriter writer)
+    {
+        writer.WriteStyled(Output, _rows);
+        return Output.Length;
+    }
+}
+
 /// <summary>Long: 100,000 rows x 10 mixed-type columns plus a bold header row.</summary>
 // One launch, 3 warm-up and 10 measured iterations: enough for stable means on operations that take from
 // tens of milliseconds to several seconds, while keeping the whole suite well under 15 minutes.
@@ -147,6 +240,33 @@ public class WideBenchmarks : WideShapeBenchmarks
 {
     /// <inheritdoc />
     protected override string Scenario => Scenarios.Wide;
+}
+
+/// <summary>
+/// SpreadCheetahOwn: SpreadCheetah's own published benchmark shape, 100,000 rows x 10 columns where every cell is a
+/// distinct string. Run it to see every library on the scenario SpreadCheetah chose for itself.
+/// </summary>
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class SpreadCheetahOwnBenchmarks : StringShapeBenchmarks
+{
+    /// <inheritdoc />
+    protected override string Scenario => Scenarios.SpreadCheetahOwn;
+}
+
+/// <summary>StringHeavy: 100,000 rows x 10 string columns, repeated and unique values, text that needs escaping.</summary>
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class StringHeavyBenchmarks : StringShapeBenchmarks
+{
+    /// <inheritdoc />
+    protected override string Scenario => Scenarios.StringHeavy;
+}
+
+/// <summary>StyledDates: 100,000 rows x 8 columns of dates, date-times, money and percentages, plus a bold header.</summary>
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+public class StyledDatesBenchmarks : StyledShapeBenchmarks
+{
+    /// <inheritdoc />
+    protected override string Scenario => Scenarios.StyledDates;
 }
 
 /// <summary>Million: 1,000,000 rows x the same 10 columns as Long (10M cells).</summary>
