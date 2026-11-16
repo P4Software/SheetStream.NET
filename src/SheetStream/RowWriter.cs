@@ -69,11 +69,17 @@ namespace SheetStream
         // and may leave out its r attribute, exactly when NextColumn is this plus one.
         private int _lastWrittenColumn;
 
-        // PackageOptions.WriteCellReferences and UseSharedStrings, read once per row so each cell pays one bool test
+        // PackageOptions.WriteCellReferences and the string storage mode, read once per row so each cell pays one test
         // and no chain of property reads.
         private bool _alwaysWriteReference;
-        private bool _useSharedStrings;
+        private StringStorage _stringStorage;
         private SharedStringTable? _sharedStrings;
+
+        // StringStorage.Auto only: what is known about each column's text, indexed by column number. It is created
+        // when the first text cell of the sheet is written, grows to the highest column that holds text (never to
+        // more than 16,384 + 1 entries) and is released with the sheet. Its size depends on the number of columns,
+        // never on the number of rows.
+        private StringColumnState[] _columnStates = Array.Empty<StringColumnState>();
 
         // True when the sheet wants each cell's display text (AutoFit, or a table header being captured).
         // Computed once per row so the common path pays a single bool test per cell.
@@ -151,7 +157,7 @@ namespace SheetStream
             _lastWrittenColumn = 0;
             var workbook = _sheet.Workbook;
             _alwaysWriteReference = workbook.Package.Options.WriteCellReferences;
-            _useSharedStrings = workbook.UseSharedStrings;
+            _stringStorage = workbook.StringStorage;
             _sharedStrings = workbook.SharedStrings;
             var style = options?.Style;
             _rowStyle = style != null && !style.IsDefault ? style : null;
@@ -289,6 +295,7 @@ namespace SheetStream
             _n = 0;
             _chars = null;
             _decoder = null;
+            _columnStates = Array.Empty<StringColumnState>();
             _fragment = null;
             _fragmentBytes = null;
         }
@@ -318,13 +325,19 @@ namespace SheetStream
         }
 
         /// <summary>
-        /// Writes a text cell. <c>null</c> leaves the column empty. By default the text goes through the
-        /// shared string table; see <see cref="PackageOptions.UseSharedStrings"/>.
+        /// Writes a text cell. <c>null</c> leaves the column empty. Where the text is stored (in the shared
+        /// string table or inside the cell) follows <see cref="PackageOptions.StringStorage"/>; by default that is
+        /// decided per column from how much its values repeat. The cell reads the same either way.
         /// </summary>
         public RowWriter WriteCell(string? value, CellStyle? style = null)
         {
             if (value == null) return WriteEmpty(style);
-            return _useSharedStrings ? WriteSharedString(value, style) : WriteInlineString(value, style);
+            switch (_stringStorage)
+            {
+                case StringStorage.Auto: return WriteAutoString(value, style);
+                case StringStorage.Shared: return WriteSharedString(value, style);
+                default: return WriteInlineString(value, style);
+            }
         }
 
         /// <summary>
@@ -335,12 +348,245 @@ namespace SheetStream
         {
             if (value == null) return WriteEmpty(style);
             EnsureOpen();
+            return WriteInlineCore(value, style);
+        }
+
+        /// <summary>The inline cell itself; the caller has checked that a row is open.</summary>
+        private RowWriter WriteInlineCore(string value, CellStyle? style)
+        {
+            // The common cell (no style, no address, plain text) is composed in one go; anything else takes the general route.
+            if (style == null && _rowStyle == null && !_alwaysWriteReference && NextColumn == _lastWrittenColumn + 1 && NextColumn <= CellReference.MaxColumns
+                && TryAppendInlineText(value, dense: true))
+            {
+                _lastWrittenColumn = NextColumn;
+                _lastStyleId = 0;
+                EnsureRoom(CellReserve);
+                AppendFixed(InlineClose);
+                if (_cache) _sheet.RecordText(RowIndex, NextColumn);
+                EndCellRaw(value);
+                return this;
+            }
+
             BeginCellRaw(style, TypeInline);
-            var text = XmlTextUtil.Sanitize(value);
-            AppendFixed(XmlTextUtil.NeedsSpacePreserve(text) ? InlineOpenPreserve : InlineOpen);
-            AppendText(text);
+            if (!TryAppendInlineText(value, dense: false))
+            {
+                var text = XmlTextUtil.Sanitize(value);
+                AppendFixed(XmlTextUtil.NeedsSpacePreserve(text) ? InlineOpenPreserve : InlineOpen);
+                AppendText(text);
+            }
             EnsureRoom(CellReserve);
             AppendFixed(InlineClose);
+            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
+            EndCellRaw(value);
+            return this;
+        }
+
+        /// <summary>
+        /// The longest text <see cref="TryAppendInlineText"/> takes. Its worst case is six bytes per character, which has
+        /// to fit in the staging buffer next to the rest of the cell without a flush in the middle: a flush could not be
+        /// taken back when the text turns out to need the general path.
+        /// </summary>
+        private const int FastTextMaxLength = 512;
+
+        /// <summary>
+        /// Writes <c>&lt;is&gt;&lt;t&gt;</c> and the text of an inline cell in one pass over the characters, for the
+        /// text that needs nothing done to it but encoding: letters, digits, punctuation, accents, any other
+        /// character of the Basic Multilingual Plane, surrogate pairs, tabs and line breaks, and <c>&amp; &lt; &gt;</c>,
+        /// which become entities. This is exactly what <see cref="XmlTextUtil.Sanitize"/> followed by
+        /// <see cref="AppendText"/> would write for such text, without the three scans and the copy they take.
+        /// Anything that needs <see cref="XmlTextUtil.Sanitize"/> to act (a control character, an unpaired surrogate,
+        /// U+FFFE or U+FFFF, an underscore that opens an <c>_xHHHH_</c> sequence), a text that is too long, and a
+        /// buffer too small for it leave the staging buffer as it was and return <c>false</c>, and the caller takes the
+        /// general path.
+        /// </summary>
+        private bool TryAppendInlineText(string value, bool dense)
+        {
+            var length = value.Length;
+            if (length > FastTextMaxLength || _buf.Length < length * 6 + CellReserve + 64) return false;
+            // Room for the worst case up front: after this the loop below never flushes, so it can always start over.
+            EnsureRoom(length * 6 + 64);
+            var buf = _buf;
+            var start = _n;
+            var n = start;
+
+            // xml:space="preserve" is decided by the first and last character, which are untouched on this path.
+            var preserve = XmlTextUtil.NeedsSpacePreserve(value);
+            if (dense) _rowEmpty = false; // The cell's start tag goes out below; see BeginCellRaw for why this comes before any flush.
+            var open = dense ? (preserve ? DenseInlineOpenPreserve : DenseInlineOpen) : (preserve ? InlineOpenPreserve : InlineOpen);
+            Buffer.BlockCopy(open, 0, buf, n, open.Length);
+            n += open.Length;
+
+            var i = 0;
+#if NET8_0_OR_GREATER
+            // Most text is plain ASCII: eight characters at a time, then the scalar loop takes whatever is left.
+            if (length >= 8 && System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated)
+            {
+                i = CopyPlainAscii(value, buf, n);
+                n += i;
+            }
+#endif
+            for (; i < length; i++)
+            {
+                var c = value[i];
+                if (c < 0x80)
+                {
+                    if (c > '>')
+                    {
+                        // Letters and most punctuation, the bulk of any text. Only the underscore needs a second look.
+                        if (c == '_' && XmlTextUtil.LooksLikeEscape(value, i)) return Rewind(start);
+                        buf[n++] = (byte)c;
+                    }
+                    else if (c >= ' ')
+                    {
+                        if (c == '&')
+                        {
+                            buf[n] = (byte)'&'; buf[n + 1] = (byte)'a'; buf[n + 2] = (byte)'m'; buf[n + 3] = (byte)'p'; buf[n + 4] = (byte)';';
+                            n += 5;
+                        }
+                        else if (c == '<' || c == '>')
+                        {
+                            buf[n] = (byte)'&'; buf[n + 1] = (byte)(c == '<' ? 'l' : 'g'); buf[n + 2] = (byte)'t'; buf[n + 3] = (byte)';';
+                            n += 4;
+                        }
+                        else buf[n++] = (byte)c;
+                    }
+                    else if (c == '\t' || c == '\n' || c == '\r') buf[n++] = (byte)c;
+                    else return Rewind(start); // Any other control character becomes an _xHHHH_ escape.
+                }
+                else if (c < 0x800)
+                {
+                    buf[n] = (byte)(0xC0 | (c >> 6));
+                    buf[n + 1] = (byte)(0x80 | (c & 0x3F));
+                    n += 2;
+                }
+                else if (c < 0xD800 || (c > 0xDFFF && c < 0xFFFE))
+                {
+                    buf[n] = (byte)(0xE0 | (c >> 12));
+                    buf[n + 1] = (byte)(0x80 | ((c >> 6) & 0x3F));
+                    buf[n + 2] = (byte)(0x80 | (c & 0x3F));
+                    n += 3;
+                }
+                else if (c <= 0xDBFF && i + 1 < length && value[i + 1] >= 0xDC00 && value[i + 1] <= 0xDFFF)
+                {
+                    var scalar = 0x10000 + ((c - 0xD800) << 10) + (value[i + 1] - 0xDC00);
+                    buf[n] = (byte)(0xF0 | (scalar >> 18));
+                    buf[n + 1] = (byte)(0x80 | ((scalar >> 12) & 0x3F));
+                    buf[n + 2] = (byte)(0x80 | ((scalar >> 6) & 0x3F));
+                    buf[n + 3] = (byte)(0x80 | (scalar & 0x3F));
+                    n += 4;
+                    i++;
+                }
+                else return Rewind(start); // An unpaired surrogate, U+FFFE or U+FFFF.
+            }
+            _n = n;
+            return true;
+        }
+
+#if NET8_0_OR_GREATER
+        /// <summary>
+        /// Copies the leading characters of <paramref name="value"/> that are plain ASCII (from the space to DEL, and
+        /// none of <c>&amp; &lt; &gt; _</c>, which are the ones that need a look) to <paramref name="destination"/> as
+        /// bytes, eight characters per step, and returns how many it copied. When the whole text is plain and at least
+        /// eight characters long the last step overlaps the one before it instead of leaving a tail.
+        /// </summary>
+        private static int CopyPlainAscii(string value, byte[] buffer, int destination)
+        {
+            var length = value.Length;
+            ref var source = ref System.Runtime.CompilerServices.Unsafe.As<char, ushort>(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(value.AsSpan()));
+            var done = 0;
+            while (done + 8 <= length)
+            {
+                var block = System.Runtime.Intrinsics.Vector128.LoadUnsafe(ref source, (nuint)done);
+                if (!IsPlainAscii(block)) return done;
+                StoreNarrowed(block, buffer, destination + done);
+                done += 8;
+            }
+            if (done < length)
+            {
+                var from = length - 8;
+                var block = System.Runtime.Intrinsics.Vector128.LoadUnsafe(ref source, (nuint)from);
+                if (IsPlainAscii(block))
+                {
+                    StoreNarrowed(block, buffer, destination + from);
+                    return length;
+                }
+            }
+            return done;
+        }
+
+        /// <summary>True when every one of the eight characters is from the space to DEL and none is <c>&amp;</c>, <c>&lt;</c>, <c>&gt;</c> or <c>_</c>.</summary>
+        private static bool IsPlainAscii(System.Runtime.Intrinsics.Vector128<ushort> block)
+        {
+            // (c - 0x20) as an unsigned number is 0x60 or more exactly when c is below the space or above DEL.
+            var outside = System.Runtime.Intrinsics.Vector128.GreaterThanOrEqual(block - System.Runtime.Intrinsics.Vector128.Create((ushort)0x20), System.Runtime.Intrinsics.Vector128.Create((ushort)0x60));
+            var special = System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'&'))
+                | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'<'))
+                | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'>'))
+                | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'_'));
+            return System.Runtime.Intrinsics.Vector128.ExtractMostSignificantBits(outside | special) == 0;
+        }
+
+        /// <summary>Writes the low byte of each of the eight characters, which are known to be ASCII, as eight bytes. The caller has reserved room.</summary>
+        private static void StoreNarrowed(System.Runtime.Intrinsics.Vector128<ushort> block, byte[] buffer, int position)
+        {
+            var narrowed = System.Runtime.Intrinsics.Vector128.ToScalar(System.Runtime.Intrinsics.Vector128.AsUInt64(System.Runtime.Intrinsics.Vector128.Narrow(block, block)));
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref buffer[position], narrowed);
+        }
+#endif
+        /// <summary>Takes back what <see cref="TryAppendInlineText"/> wrote: nothing was flushed, so the position is all there is to restore.</summary>
+        private bool Rewind(int position)
+        {
+            _n = position;
+            return false;
+        }
+
+        /// <summary>
+        /// <see cref="StringStorage.Auto"/>: a column that has been judged not worth sharing pays one array read and
+        /// is written inline, without hashing the text. Any other column goes through the shared table, and the
+        /// outcome of that lookup (repeat or new) is what lets <see cref="StringColumnState.Observe"/> judge it from a
+        /// window of cells (see <see cref="StringColumnPolicy"/>).
+        /// </summary>
+        private RowWriter WriteAutoString(string value, CellStyle? style)
+        {
+            EnsureOpen();
+            var states = _columnStates;
+            var column = NextColumn;
+            if ((uint)column >= (uint)states.Length)
+            {
+                // Past Excel's last column the cell is refused by BeginCellRaw; nothing to track.
+                if (column > CellReference.MaxColumns) return WriteInlineCore(value, style);
+                states = GrowColumnStates(column);
+            }
+            ref var state = ref states[column];
+            if (state.Mode == ColumnMode.Inline) return WriteInlineCore(value, style);
+            if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed))
+            {
+                // The table is full (see PackageOptions.MaxSharedStringChars): a new text is written inline. It still
+                // counts as a text that did not repeat, so the column is judged and can stop looking things up.
+                state.Observe(hit: false, value.Length);
+                return WriteInlineCore(value, style);
+            }
+            state.Observe(existed, value.Length);
+            return WriteSharedIndex(index, value, style);
+        }
+
+        /// <summary>Makes room in <see cref="_columnStates"/> for <paramref name="column"/>, growing it to the next power of two (at most the 16,384 columns Excel has).</summary>
+        private StringColumnState[] GrowColumnStates(int column)
+        {
+            var size = Math.Max(16, _columnStates.Length);
+            while (size <= column) size *= 2;
+            if (size > CellReference.MaxColumns + 1) size = CellReference.MaxColumns + 1;
+            var grown = new StringColumnState[size];
+            Array.Copy(_columnStates, grown, _columnStates.Length);
+            return _columnStates = grown;
+        }
+
+        private RowWriter WriteSharedIndex(int index, string value, CellStyle? style)
+        {
+            BeginCellRaw(style, TypeSharedString);
+            AppendFixed(ValueOpen);
+            AppendInteger(index);
+            AppendFixed(ValueClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCellRaw(value);
             return this;
@@ -352,14 +598,8 @@ namespace SheetStream
             // A new string that no longer fits the table's memory budget is written inline instead; strings
             // already in the table keep being shared.
             if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index))
-                return WriteInlineString(value, style);
-            BeginCellRaw(style, TypeSharedString);
-            AppendFixed(ValueOpen);
-            AppendInteger(index);
-            AppendFixed(ValueClose);
-            if (_cache) _sheet.RecordText(RowIndex, NextColumn);
-            EndCellRaw(value);
-            return this;
+                return WriteInlineCore(value, style);
+            return WriteSharedIndex(index, value, style);
         }
 
         /// <summary>
@@ -851,6 +1091,9 @@ namespace SheetStream
         private static readonly byte[] InlineOpen = Bytes("><is><t>");
         private static readonly byte[] InlineOpenPreserve = Bytes("><is><t xml:space=\"preserve\">");
         private static readonly byte[] InlineClose = Bytes("</t></is></c>");
+        // The start of an unstyled inline cell that needs no address: the cell tag, its type and the text element in one piece.
+        private static readonly byte[] DenseInlineOpen = Bytes("<c t=\"inlineStr\"><is><t>");
+        private static readonly byte[] DenseInlineOpenPreserve = Bytes("<c t=\"inlineStr\"><is><t xml:space=\"preserve\">");
         private static readonly byte[] IsOpenTag = Bytes("><is>");
         private static readonly byte[] IsCloseTag = Bytes("</is></c>");
         private static readonly byte[] FormulaOpen = Bytes("><f>");
@@ -1025,6 +1268,21 @@ namespace SheetStream
         /// </summary>
         private void AppendText(string text)
         {
+#if NET8_0_OR_GREATER
+            // The three characters that become entities are found with one vectorised search per piece, and the
+            // text between them is transcoded in bulk, so ordinary text costs a few instructions per 16 characters.
+            var rest = text.AsSpan();
+            while (true)
+            {
+                var at = rest.IndexOfAny(EntityCharacters);
+                AppendUtf8(at < 0 ? rest : rest.Slice(0, at));
+                if (at < 0) return;
+                var c = rest[at];
+                if (_buf.Length - _n < 8) FlushStaged();
+                AppendFixed(c == '&' ? EntityAmpersand : c == '<' ? EntityLess : EntityGreater);
+                rest = rest.Slice(at + 1);
+            }
+#else
             var runStart = 0;
             for (var i = 0; i < text.Length; i++)
             {
@@ -1043,7 +1301,37 @@ namespace SheetStream
                 runStart = i + 1;
             }
             AppendRun(text, runStart, text.Length - runStart);
+#endif
         }
+
+#if NET8_0_OR_GREATER
+        private static readonly System.Buffers.SearchValues<char> EntityCharacters = System.Buffers.SearchValues.Create("&<>");
+
+        /// <summary>
+        /// Transcodes <paramref name="run"/> to UTF-8 straight into the staging buffer, in pieces when it does not all
+        /// fit. The vectorised transcoder copies ASCII 16 or more characters at a time and never stops inside a
+        /// surrogate pair, so a flush never lands inside a character. The text has been through
+        /// <see cref="XmlTextUtil.Sanitize"/>, so it is valid UTF-16; should the transcoder disagree anyway, the
+        /// careful loop below writes what is left (replacing what cannot be encoded), as it always did.
+        /// </summary>
+        private void AppendUtf8(ReadOnlySpan<char> run)
+        {
+            while (!run.IsEmpty)
+            {
+                // A character needs at most four bytes, so with 16 free bytes every call makes progress.
+                if (_buf.Length - _n < 16) FlushStaged();
+                var status = System.Text.Unicode.Utf8.FromUtf16(run, _buf.AsSpan(_n), out var read, out var written, replaceInvalidSequences: false, isFinalBlock: true);
+                _n += written;
+                run = run.Slice(read);
+                if (status == System.Buffers.OperationStatus.InvalidData)
+                {
+                    var rest = run.ToString();
+                    AppendRun(rest, 0, rest.Length);
+                    return;
+                }
+            }
+        }
+#endif
 
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
 
@@ -1097,3 +1385,4 @@ namespace SheetStream
         }
     }
 }
+

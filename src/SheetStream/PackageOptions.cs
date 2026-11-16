@@ -14,9 +14,21 @@ namespace SheetStream
         public CompressionLevel CompressionLevel { get; set; } = CompressionLevel.Optimal;
 
         /// <summary>
-        /// When <c>true</c> (default) string cells are de-duplicated through the shared string table, which
-        /// is what Excel itself does and produces the smallest files. When <c>false</c> strings are written
-        /// inline in the sheet, so memory stays flat regardless of how many unique strings the export has.
+        /// How text cells are stored: <see cref="SheetStream.StringStorage.Auto"/> (default) shares the values of
+        /// columns that repeat and writes the values of columns that rarely repeat inside their cells,
+        /// <see cref="SheetStream.StringStorage.Shared"/> always uses the shared string table (what SheetStream did
+        /// before this setting existed) and <see cref="SheetStream.StringStorage.Inline"/> never does. Every choice
+        /// reads back identically in Excel and in <see cref="Reading.ExcelReader"/>; only the file layout, the
+        /// speed and the memory differ. <see cref="UseSharedStrings"/> set to <c>false</c> overrides this setting
+        /// and stores everything inline.
+        /// </summary>
+        public StringStorage StringStorage { get; set; } = StringStorage.Auto;
+
+        /// <summary>
+        /// Set to <c>false</c> to write every text inline in its cell, so memory stays flat however many unique
+        /// strings the export has; it is the same as <see cref="StringStorage"/> set to
+        /// <see cref="SheetStream.StringStorage.Inline"/> and wins over it. The default (<c>true</c>) leaves the
+        /// choice to <see cref="StringStorage"/>.
         /// </summary>
         public bool UseSharedStrings { get; set; } = true;
 
@@ -27,7 +39,9 @@ namespace SheetStream
         /// Repeated values (status codes, names) therefore still de-duplicate, while an export of millions of
         /// unique strings stops growing the table instead of holding them all until the save. The default of
         /// 16,000,000 keeps the table to a few tens of megabytes. Raise it for the smallest possible file when
-        /// memory is no concern; it has no effect when <see cref="UseSharedStrings"/> is <c>false</c>.
+        /// memory is no concern; it has no effect when text is stored inline
+        /// (<see cref="UseSharedStrings"/> <c>false</c> or <see cref="StringStorage"/> set to
+        /// <see cref="SheetStream.StringStorage.Inline"/>).
         /// </summary>
         public long MaxSharedStringChars { get; set; } = 16_000_000;
 

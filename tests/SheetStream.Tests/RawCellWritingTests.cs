@@ -102,6 +102,51 @@ public class RawCellWritingTests
             AssertSameAsReference(RawCellScript.Fuzz(20261115 + seed, 150), shared: seed % 3 != 0, references: seed % 2 == 0, autoFit: seed % 5 == 0);
     }
 
+    /// <summary>
+    /// Inline text is written in one pass, eight characters at a time where it can be, with a separate route for
+    /// anything that needs sanitising. Every length around the block size and the size limit of the one-pass route,
+    /// with every kind of special character at every position (and at none), must still be exactly what the XML
+    /// writer wrote, with and without a style and an address on the cell.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void InlineTextOfEveryLength_WithASpecialCharacterAtEveryPosition_IsWrittenAsXmlWriterWroteIt(bool references, bool styled)
+    {
+        var specials = new[] { "&", "<", ">", "_", "_x0041_", "é", "€", "😀", "\u0001", "\u001F", " ", "\t", "\r\n", "￾", "\ud800", "\udc00", "\"", "\u007F", "ñ&" };
+        var script = new RawCellScript();
+        foreach (var length in new[] { 0, 1, 2, 7, 8, 9, 15, 16, 17, 23, 24, 25, 40, 63, 64, 65 })
+        {
+            script.NewRow().Add(new ScriptCell { Kind = ScriptKind.Text, Text = new string('a', length), Style = styled ? 2 : -1 });
+            foreach (var special in specials)
+                for (var at = 0; at <= length; at++)
+                {
+                    var text = new string('a', at) + special + new string('b', length - at);
+                    script.NewRow().Add(new ScriptCell { Kind = ScriptKind.Text, Text = text, Style = styled ? 2 : -1 });
+                }
+        }
+        AssertSameAsReference(script, shared: false, references, autoFit: false);
+    }
+
+    /// <summary>The one-pass route takes text up to 512 characters; longer text, and text in a buffer too small for it, must give the same bytes.</summary>
+    [Theory]
+    [InlineData(65536)]
+    [InlineData(100)]
+    public void InlineTextAroundTheSizeLimitOfTheOnePassRoute_IsWrittenAsXmlWriterWroteIt(int bufferSize)
+    {
+        var script = new RawCellScript();
+        foreach (var length in new[] { 510, 511, 512, 513, 514, 700, 1200, 5000 })
+            foreach (var tail in new[] { "", "&", "<>", "é", "😀", "_x0041_", "\u0001" })
+            {
+                var text = new string('x', length) + tail;
+                var row = script.NewRow();
+                row.Add(new ScriptCell { Kind = ScriptKind.Text, Text = text, Style = -1 });
+                row.Add(new ScriptCell { Kind = ScriptKind.Text, Text = " " + text + " ", Style = 3 });
+                row.Add(new ScriptCell { Kind = ScriptKind.Int, Integer = length, Style = -1 });
+            }
+        AssertSameAsReference(script, shared: false, references: false, autoFit: false, bufferSize: bufferSize);
+    }
+
     /// <summary>The row writer's own rows and the buffered cells meet at the row end: a long row, then rows of different shapes.</summary>
     [Fact]
     public void ManyRowsOfOneKind_FillTheBufferAcrossRows()
@@ -216,7 +261,7 @@ public class RawCellWritingTests
             expected = Reference(script, styles, wb.Styles, shared, references);
         }, new PackageOptions
         {
-            UseSharedStrings = shared,
+            StringStorage = shared ? StringStorage.Shared : StringStorage.Inline,
             WriteCellReferences = references,
             CompressionLevel = CompressionLevel.Fastest,
             BufferSize = bufferSize,
@@ -234,7 +279,7 @@ public class RawCellWritingTests
         var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
         var options = new PackageOptions
         {
-            UseSharedStrings = shared,
+            StringStorage = shared ? StringStorage.Shared : StringStorage.Inline,
             WriteCellReferences = references,
             CompressionLevel = CompressionLevel.Fastest,
             MaxSharedStringChars = long.MaxValue / 2,

@@ -49,7 +49,7 @@ using (var package = ExcelPackage.Create("FinancialReport.xlsx"))
     {
         sheet.Row(i + 1)
             .WriteCell(i)
-            .WriteCell($"Enterprise SKU-{i}")          // Shared string, de-duplicated
+            .WriteCell($"Enterprise SKU-{i}")          // Text: shared or inline, chosen per column
             .WriteCell(1500.50 * i, currencyStyle);
     }
 

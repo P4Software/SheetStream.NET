@@ -92,7 +92,7 @@ namespace SheetStream.Internal
             => (c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0xFFFE || c == 0xFFFF;
 
         /// <summary>True when the text at <paramref name="i"/> reads <c>_xHHHH_</c> with four hex digits.</summary>
-        private static bool LooksLikeEscape(string s, int i)
+        internal static bool LooksLikeEscape(string s, int i)
         {
             if (i + 6 >= s.Length) return false;
             if (s[i + 1] != 'x' && s[i + 1] != 'X') return false;

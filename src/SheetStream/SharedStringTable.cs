@@ -7,17 +7,19 @@ using SheetStream.Internal;
 namespace SheetStream
 {
     /// <summary>
-    /// The workbook-wide shared string table (SST). Every distinct string is stored once and cells refer
-    /// to it by index, which is both what the specification recommends and what keeps repeated values
-    /// (status codes, category names, customer names) from bloating the file.
+    /// The workbook-wide shared string table (SST). Every distinct string that goes through it is stored once and cells
+    /// refer to it by index, which is both what the specification recommends and what keeps repeated values
+    /// (customer names, product descriptions) from bloating the file.
     /// </summary>
     /// <remarks>
     /// The table lives in memory until the package is saved because its index must be known while the
     /// sheets are being streamed. It stops growing at <see cref="PackageOptions.MaxSharedStringChars"/>;
     /// new strings beyond that are written inline, so an export dominated by unique strings cannot run the
-    /// process out of memory. Set <see cref="PackageOptions.UseSharedStrings"/> to <c>false</c> to write
-    /// every string inline from the start. When filling a template, the template's own strings keep their indexes and new
-    /// strings are appended after them. Not thread-safe.
+    /// process out of memory. With <see cref="PackageOptions.StringStorage"/> at its default (<see cref="StringStorage.Auto"/>)
+    /// only the columns whose text repeats feed the table, besides the first cells of every column, which are looked up to
+    /// judge it; <see cref="StringStorage.Inline"/> (or <see cref="PackageOptions.UseSharedStrings"/> set to <c>false</c>)
+    /// writes every string inline from the start. When filling a template, the template's own strings keep their indexes
+    /// and new strings are appended after them. Not thread-safe.
     /// </remarks>
     public sealed class SharedStringTable
     {
@@ -69,13 +71,22 @@ namespace SheetStream
         /// <see cref="PackageOptions.MaxSharedStringChars"/>; the caller then writes the string inline, which
         /// keeps memory flat however many unique strings the export has.
         /// </returns>
-        internal bool TryGetOrAdd(string value, out int id)
+        internal bool TryGetOrAdd(string value, out int id) => TryGetOrAdd(value, out id, out _);
+
+        /// <summary>
+        /// As <see cref="TryGetOrAdd(string, out int)"/>, and says through <paramref name="existed"/> whether the
+        /// value was already in the table (a repeat) or has just been added, which is what tells a column of
+        /// repeating values from a column of unique ones.
+        /// </summary>
+        internal bool TryGetOrAdd(string value, out int id, out bool existed)
         {
             if (_index.TryGetValue(value, out id))
             {
                 _references++;
+                existed = true;
                 return true;
             }
+            existed = false;
             var cost = value.Length + EntryOverhead;
             if (_used + cost > _budget) return false;
             _used += cost;

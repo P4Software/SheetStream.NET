@@ -148,7 +148,7 @@ public class CellWritingAllocationTests
             foreach (var style in styles) s.Row().WriteCell(1, style);                         // Style ids 1..400.
             for (var i = 0; i < 400; i++) s.Row().WriteCell("string " + i);                    // Shared string indexes 0..399.
             s.Row().WriteCell(double.NaN).WriteCell(double.PositiveInfinity);                  // Error cells, not numbers.
-        });
+        }, new PackageOptions { StringStorage = StringStorage.Shared }); // Text goes through the table, so its indexes are in the sheet.
 
         using var zip = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
         XDocument sheet;
