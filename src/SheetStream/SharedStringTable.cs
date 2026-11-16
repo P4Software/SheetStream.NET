@@ -127,6 +127,64 @@ namespace SheetStream
 #endif
         }
 
+        // ---- What a sheet counts as a repeat (StringStorage.Auto) ---------------------------------------------------------
+        //
+        // The table is shared by every sheet of the package, but the policy that judges a column asks "did this text
+        // repeat?" about the sheet it is writing. A text that an EARLIER sheet put in the table is not a repeat in this
+        // sheet's column the first time the sheet uses it: if it were, a unique column written on a second sheet (the
+        // same ids listed twice) would be judged shared because of the first sheet's entries, and its whole length would
+        // go into the table. So each sheet takes a scope: the table's size when the sheet's first text arrives (its
+        // watermark) and a stamp of its own. An entry at or above the watermark was added by this sheet, so a lookup that
+        // finds it is a repeat, as always. An entry below it is an earlier sheet's (or the template's): its first use in
+        // this sheet is reported as new and marks it with the stamp, and from then on it is a repeat. The judge therefore
+        // sees what it would see if every sheet started with an empty table, while the cells still share the entries.
+        // One sheet of a new package has watermark 0, so nothing changes for it.
+
+        // Per entry below the current watermark: the stamp of the last scope that used it (0 = none). Allocated when a
+        // scope starts with a non-empty table, so a package with one sheet never has it; 4 bytes per entry, which the
+        // entry's EntryOverhead in the budget more than covers.
+        private int[] _usedBy = Array.Empty<int>();
+        private int _scopes;
+
+        /// <summary>
+        /// Starts the scope of a sheet that is about to look texts up (see the notes above) and returns its stamp.
+        /// <paramref name="watermark"/> is the number of entries the table holds now: those are not this sheet's.
+        /// </summary>
+        internal int BeginScope(out int watermark)
+        {
+            watermark = UniqueCount;
+            if (_usedBy.Length < watermark) Array.Resize(ref _usedBy, watermark);
+            return ++_scopes;
+        }
+
+        /// <summary>
+        /// As <see cref="TryGetOrAdd(string, out int, out bool)"/>, but <paramref name="repeated"/> answers for the sheet whose
+        /// scope this is: true when the text is one this sheet already looked up or added, false when it is new to the
+        /// sheet (added now, or an entry of an earlier sheet that this sheet uses for the first time).
+        /// </summary>
+        internal bool TryGetOrAdd(string value, out int id, out bool repeated, int watermark, int stamp)
+        {
+            if (!TryGetOrAdd(value, out id, out var existed))
+            {
+                repeated = false;
+                return false;
+            }
+            if (!existed || id >= watermark)
+            {
+                repeated = existed;
+            }
+            else if (_usedBy[id] == stamp)
+            {
+                repeated = true;
+            }
+            else
+            {
+                _usedBy[id] = stamp;
+                repeated = false;
+            }
+            return true;
+        }
+
         /// <summary>Writes the <c>sharedStrings.xml</c> part.</summary>
         internal void WriteTo(XmlWriter w) => WriteTo(w, null);
 

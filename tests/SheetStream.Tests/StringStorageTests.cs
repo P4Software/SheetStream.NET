@@ -152,6 +152,68 @@ public class StringStorageTests
         AssertReadsBack(bytes, Enumerable.Range(0, rows).Select(i => new[] { "Order SO-" + i.ToString("D8"), "customer" + i + "@example.com" }).ToList());
     }
 
+    // ---- a second sheet is judged by what it does, not by what an earlier sheet put in the table ----------------------
+
+    /// <summary>The same unique texts on two sheets, as in a workbook that lists the same ids twice.</summary>
+    [Theory]
+    [InlineData(20_000)]
+    [InlineData(100_000)]
+    public void Auto_AUniqueColumnOnASecondSheet_IsNotJudgedByTheFirstSheetsEntries(int rows)
+    {
+        long OneSheet()
+        {
+            long unique = 0;
+            ExcelPackage.CreateBytes(wb =>
+            {
+                var s = wb.Worksheets.Add("S");
+                for (var i = 0; i < rows; i++) s.Row().WriteCell("Order SO-" + i.ToString("D8"));
+                unique = wb.SharedStrings.UniqueCount;
+            }, Options(StringStorage.Auto));
+            return unique;
+        }
+
+        long twoSheets = 0;
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            foreach (var name in new[] { "S", "T" })
+            {
+                var s = wb.Worksheets.Add(name);
+                for (var i = 0; i < rows; i++) s.Row().WriteCell("Order SO-" + i.ToString("D8"));
+            }
+            twoSheets = wb.SharedStrings.UniqueCount;
+        }, Options(StringStorage.Auto));
+
+        var one = OneSheet();
+        // Before the fix the second sheet read the first sheet's entries as repeats and shared its whole column.
+        Assert.Equal(one, twoSheets);
+        Assert.True(Count(Part(bytes, "xl/worksheets/sheet2.xml"), "t=\"inlineStr\"") > rows - 8 * StringColumnPolicy.ProbeCells);
+    }
+
+    /// <summary>A column that really repeats must still be shared on a second sheet, with its own values and with the first sheet's.</summary>
+    [Fact]
+    public void Auto_ARepeatingColumnOnASecondSheet_IsStillShared()
+    {
+        var phrases = Enumerable.Range(0, 300).Select(i => "Waiting for the warehouse to confirm stock, batch " + i).ToArray();
+        var other = Enumerable.Range(0, 300).Select(i => "Customer asked for a call back about order " + i).ToArray();
+        const int rows = 20_000;
+        long unique = 0;
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++) s.Row().WriteCell("Order SO-" + i.ToString("D8")).WriteCell(phrases[Pick(i, 300)]);
+            var t = wb.Worksheets.Add("T");
+            // Column A: fresh repeating text. Column B: the repeating text the first sheet already put in the table.
+            for (var i = 0; i < rows; i++) t.Row().WriteCell(other[Pick(i, 300)]).WriteCell(phrases[Pick(i + 1, 300)]);
+            unique = wb.SharedStrings.UniqueCount;
+        }, Options(StringStorage.Auto));
+
+        var sheet2 = Part(bytes, "xl/worksheets/sheet2.xml");
+        Assert.True(Count(sheet2, "t=\"s\"") >= 2 * rows - 2 * StringColumnPolicy.ProbeCells, "Both repeating columns of the second sheet go through the table.");
+        // The 300 + 300 repeating texts and the first sheet's sampled ids (the early exit, then the two second looks); nothing more.
+        var sampledIds = StringColumnPolicy.EarlyExitCells + 2 * StringColumnPolicy.LookCells;
+        Assert.True(unique <= 600 + sampledIds + 16, $"The table holds {unique} texts.");
+    }
+
     [Fact]
     public void Auto_AColumnThatRepeatsLongText_IsShared()
     {

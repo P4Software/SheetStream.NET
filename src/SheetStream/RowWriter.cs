@@ -81,6 +81,11 @@ namespace SheetStream
         // never on the number of rows.
         private StringColumnState[] _columnStates = Array.Empty<StringColumnState>();
 
+        // StringStorage.Auto only: this sheet's scope in the shared string table, taken when the first text cell is written.
+        // What it means is explained at SharedStringTable.BeginScope.
+        private int _scopeWatermark;
+        private int _scopeStamp;
+
         // True when the sheet wants each cell's display text (AutoFit, or a table header being captured).
         // Computed once per row so the common path pays a single bool test per cell.
         private bool _observe;
@@ -651,7 +656,7 @@ namespace SheetStream
                 }
                 return WriteInlineCore(value, style, shareIfChanged: true);
             }
-            if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed))
+            if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed, _scopeWatermark, _scopeStamp))
             {
                 // The table is full (see PackageOptions.MaxSharedStringChars): a new text is written inline. It still
                 // counts as a text that did not repeat, so the column is judged and can stop looking things up.
@@ -665,6 +670,9 @@ namespace SheetStream
         /// <summary>Makes room in <see cref="_columnStates"/> for <paramref name="column"/>, growing it to the next power of two (at most the 16,384 columns Excel has).</summary>
         private StringColumnState[] GrowColumnStates(int column)
         {
+            // The first text cell of the sheet: its entries start here. Texts that earlier sheets put in the table are not
+            // evidence that THIS column repeats (see SharedStringTable.BeginScope).
+            if (_columnStates.Length == 0) _scopeStamp = _sharedStrings!.BeginScope(out _scopeWatermark);
             var size = Math.Max(16, _columnStates.Length);
             while (size <= column) size *= 2;
             if (size > CellReference.MaxColumns + 1) size = CellReference.MaxColumns + 1;
