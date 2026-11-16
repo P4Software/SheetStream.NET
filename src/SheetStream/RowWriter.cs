@@ -307,14 +307,38 @@ namespace SheetStream
             _fragmentBytes = null;
         }
 
-        /// <summary>Leaves <paramref name="count"/> columns empty.</summary>
+        /// <summary>
+        /// Leaves <paramref name="count"/> columns empty. The cursor can move to the column after the last one Excel
+        /// has (XFD), where the row is complete, and no further.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// <paramref name="count"/> is negative, or would take the next cell past Excel's last column. The row is left as it was.
+        /// </exception>
         public RowWriter Skip(int count = 1)
         {
-            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));
+            if (count < 0) throw new ArgumentOutOfRangeException(nameof(count), count, "The number of columns to skip cannot be negative.");
             EnsureOpen();
+            // Compared as a difference, never as NextColumn + count: with a count near int.MaxValue the sum wraps to a
+            // negative column, which no later check would catch before bytes of a cell were already written.
+            if (count > CellReference.MaxColumns + 1 - NextColumn)
+                throw new ArgumentOutOfRangeException(nameof(count), count, $"Skipping {count} columns from column {NextColumn} goes past Excel's last column (16,384, XFD).");
             NextColumn += count;
             return this;
         }
+
+        /// <summary>
+        /// Refuses a cell when the cursor is not on a column Excel has (1 to 16,384). Called before anything of the cell
+        /// is staged, so a refused call leaves the buffer, the shared string table and the writer exactly as they were,
+        /// and a caller that catches the exception and goes on writes a valid sheet. The single unsigned comparison also
+        /// rejects a column below 1.
+        /// </summary>
+        private void EnsureColumn()
+        {
+            if ((uint)(NextColumn - 1) >= (uint)CellReference.MaxColumns) ThrowColumnLimit();
+        }
+
+        private static void ThrowColumnLimit()
+            => throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
 
         /// <summary>Writes a cell that has a style but no value (useful for coloured filler cells).</summary>
         public RowWriter WriteEmpty(CellStyle? style = null)
@@ -355,6 +379,7 @@ namespace SheetStream
         {
             if (value == null) return WriteEmpty(style);
             EnsureOpen();
+            EnsureColumn();
             return WriteInlineCore(value, style);
         }
 
@@ -608,14 +633,11 @@ namespace SheetStream
         private RowWriter WriteAutoString(string value, CellStyle? style)
         {
             EnsureOpen();
+            // Before the state array is indexed or grown: a column outside 1 to 16,384 would index out of range.
+            EnsureColumn();
             var states = _columnStates;
             var column = NextColumn;
-            if ((uint)column >= (uint)states.Length)
-            {
-                // Past Excel's last column the cell is refused by BeginCellRaw; nothing to track.
-                if (column > CellReference.MaxColumns) return WriteInlineCore(value, style);
-                states = GrowColumnStates(column);
-            }
+            if ((uint)column >= (uint)states.Length) states = GrowColumnStates(column);
             ref var state = ref states[column];
             // A column judged inline, or waiting for its next look (which this call counts), pays this one test and no lookup.
             if (state.WritesInline())
@@ -665,6 +687,7 @@ namespace SheetStream
         private RowWriter WriteSharedString(string value, CellStyle? style)
         {
             EnsureOpen();
+            EnsureColumn();
             // A new string that no longer fits the table's memory budget is written inline instead; strings
             // already in the table keep being shared.
             if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index))
@@ -763,6 +786,7 @@ namespace SheetStream
         {
             if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("URL cannot be empty.", nameof(url));
             EnsureOpen();
+            EnsureColumn(); // A link registered for a column the cell cannot be written to would be left behind and break the save.
             _sheet.RegisterHyperlink(RowIndex, NextColumn, url, null, tooltip);
             return WriteCell(text ?? url, style ?? _sheet.Workbook.Styles.Hyperlink);
         }
@@ -772,6 +796,7 @@ namespace SheetStream
         {
             if (string.IsNullOrWhiteSpace(location)) throw new ArgumentException("Location cannot be empty.", nameof(location));
             EnsureOpen();
+            EnsureColumn();
             _sheet.RegisterHyperlink(RowIndex, NextColumn, null, location.TrimStart('#'), tooltip);
             return WriteCell(text ?? location, style ?? _sheet.Workbook.Styles.Hyperlink);
         }
@@ -1054,6 +1079,7 @@ namespace SheetStream
         {
             if (string.IsNullOrWhiteSpace(formula)) throw new ArgumentException("Formula cannot be empty.", nameof(formula));
             EnsureOpen();
+            EnsureColumn(); // Before the workbook is marked as holding formulas: a refused formula leaves nothing behind.
             _sheet.Workbook.HasFormulas = true;
             var text = formula.Trim();
             return text[0] == '=' ? text.Substring(1) : text;
@@ -1089,8 +1115,7 @@ namespace SheetStream
             // may carry namespaces whose declarations only that writer knows.
             if (_w == null) throw new InvalidOperationException("Raw cells belong to edited workbooks, whose rows are written through an XML writer.");
 
-            if (NextColumn > CellReference.MaxColumns)
-                throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
+            EnsureColumn();
             FlushStaged();
             _w.WriteStartElement("c");
             // The rules for the address and the style are those of BeginCellRaw; keep the two in step.
@@ -1193,8 +1218,7 @@ namespace SheetStream
         /// </summary>
         private void BeginCellRaw(CellStyle? style, byte[]? typeAttribute)
         {
-            if (NextColumn > CellReference.MaxColumns)
-                throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
+            EnsureColumn();
 
             // One check per cell guarantees room for everything fixed in it (see CellReserve).
             // The row is no longer empty from here on, also if the flush below fails: the row's '>' may already be
