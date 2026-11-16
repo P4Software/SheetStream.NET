@@ -50,6 +50,9 @@ namespace SheetStream
         private char[]? _chars;
         private Decoder? _decoder;
 
+        // A UTF-8 character is at most four bytes, so a flush that ended inside one leaves at most three behind.
+        private const int MaxCarriedOverBytes = 3;
+
         // Room every composed cell needs on top of its text. The longest fixed part is an inline string with an
         // address, a style and xml:space (about 80 bytes) and a number is at most 40, so 192 is generous.
         // Text is the only variable part and is written in pieces that flush as needed.
@@ -376,8 +379,16 @@ namespace SheetStream
             // Rich text is written inline: shared strings would need the same run markup and rarely repeat.
             BeginCellRaw(style, TypeInline);
             AppendFixed(IsOpenTag);
-            AppendBytes(rendered.GetBuffer(), (int)rendered.Length);
-            rendered.SetLength(0);
+            try
+            {
+                AppendBytes(rendered.GetBuffer(), (int)rendered.Length);
+            }
+            finally
+            {
+                // The rendering stream is reused by the next rich-text cell, so it is emptied even when the copy
+                // fails: stale runs would otherwise be written into whatever cell comes next.
+                rendered.SetLength(0);
+            }
             EnsureRoom(CellReserve);
             AppendFixed(IsCloseTag);
             string? text = null;
@@ -889,10 +900,27 @@ namespace SheetStream
 
             // XML target: back to text for WriteRaw. An empty flush must not reach WriteRaw: it would close the open
             // start tag, and a row with no cells is written as a self-closing element.
-            var chars = _chars ??= new char[_buf.Length];
-            var decoder = _decoder ??= new UTF8Encoding(false).GetDecoder();
-            var length = decoder.GetChars(_buf, 0, count, chars, 0, flush: false);
-            if (length > 0) _w!.WriteRaw(chars, 0, length);
+            try
+            {
+                // The decoder keeps up to three bytes of an unfinished character from the previous flush, and when
+                // the next flush completes it a full buffer of single-byte text decodes to one char per byte plus
+                // the extra half of a surrogate pair: more chars than there are bytes in the buffer. So the char
+                // buffer is sized with the decoder's own worst case for the buffer plus the carried-over bytes
+                // (the same call exists on netstandard2.0), not with the byte count.
+                var chars = _chars ??= new char[Utf8.GetMaxCharCount(_buf.Length + MaxCarriedOverBytes)];
+                var decoder = _decoder ??= Utf8.GetDecoder();
+                var length = decoder.GetChars(_buf, 0, count, chars, 0, flush: false);
+                if (length > 0) _w!.WriteRaw(chars, 0, length);
+            }
+            catch
+            {
+                // The staged bytes are gone (_n was reset above) and they were part of a cell, so the sheet now has
+                // a hole in it. The XML writer cannot tell, and a caller that catches the error and carries on
+                // would save a malformed sheet without a word. The direct target has the same guarantee through its
+                // part stream; here the package itself refuses to be saved.
+                _sheet.Workbook.Package.MarkFailed();
+                throw;
+            }
         }
 
         /// <summary>Makes sure <paramref name="count"/> bytes fit, flushing the staged bytes if they do not.</summary>
