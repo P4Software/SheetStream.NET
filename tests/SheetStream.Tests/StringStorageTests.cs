@@ -190,6 +190,40 @@ public class StringStorageTests
     }
 
     /// <summary>
+    /// The strings of a template are in the file anyway: a column that uses them is judged as it always was (a use is a repeat), unlike
+    /// the entries an earlier sheet of the same package added. 20,000 rows cycling through 300 phrases that the template lists
+    /// must stay shared (judged the other way the file is 38% larger), and a unique column next to it stays inline after its sample.
+    /// The cell counts are the ones the writer gave before sheets took scopes.
+    /// </summary>
+    [Fact]
+    public void Auto_AColumnThatUsesTheTemplatesOwnStrings_IsSharedAsBefore()
+    {
+        var phrases = Enumerable.Range(0, 300).Select(i => "Waiting for the warehouse to confirm stock, batch " + i).ToArray();
+        var template = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            foreach (var phrase in phrases) s.Row().WriteCell(phrase).WriteCell("x");
+        }, Options(StringStorage.Shared));
+
+        var output = new MemoryStream();
+        using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true, Options(StringStorage.Auto)))
+        {
+            var s = package.Workbook.Worksheets.Open("S");
+            for (var i = 0; i < 20_000; i++) s.Row(301 + i).WriteCell(phrases[i % 300]).WriteCell("id" + i);
+            package.Save();
+        }
+        var bytes = output.ToArray();
+        var sheet = Part(bytes, "xl/worksheets/sheet1.xml");
+        // The template's own 600 cells, 20,000 phrase cells, and the 1,152 sampled ids.
+        Assert.Equal(600 + 20_000 + 1_152, Count(sheet, "t=\"s\""));
+        Assert.Equal(20_000 - 1_152, Count(sheet, "inlineStr"));
+        using var reader = ExcelReader.Open(new MemoryStream(bytes), false);
+        var rows = reader.ReadRows(0).ToList();
+        Assert.Equal(phrases[19_999 % 300], rows.Last()[0]);
+        Assert.Equal("id19999", rows.Last()[1]);
+    }
+
+    /// <summary>
     /// Every sheet takes a scope, which needs an array as long as the table is then. Sized exactly it is reallocated for every sheet
     /// (quadratic in the number of sheets: 1,000 small sheets cost three times the memory they should); it must grow geometrically.
     /// </summary>

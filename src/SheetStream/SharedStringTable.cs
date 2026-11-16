@@ -135,10 +135,18 @@ namespace SheetStream
         // same ids listed twice) would be judged shared because of the first sheet's entries, and its whole length would
         // go into the table. So each sheet takes a scope: the table's size when the sheet's first text arrives (its
         // watermark) and a stamp of its own. An entry at or above the watermark was added by this sheet, so a lookup that
-        // finds it is a repeat, as always. An entry below it is an earlier sheet's (or the template's): its first use in
-        // this sheet is reported as new and marks it with the stamp, and from then on it is a repeat. The judge therefore
-        // sees what it would see if every sheet started with an empty table, while the cells still share the entries.
-        // One sheet of a new package has watermark 0, so nothing changes for it.
+        // finds it is a repeat, as always. An entry below it is an earlier sheet's: its first use in this sheet is reported
+        // as new and marks it with the stamp, and from then on it is a repeat. The judge therefore sees what it would see
+        // if every sheet started with an empty table, while the cells still share the entries.
+        //
+        // The entries of a TEMPLATE (or of an edited workbook) are the exception: a use of one is always a repeat. They are
+        // in the file anyway, so a column that uses them costs the table nothing, and a column that draws on the template's
+        // own vocabulary (labels, statuses, product names the template lists) is the repeating column Auto looks for. Measured
+        // on 20,000 rows of 300 phrases cycling through a template that lists them, treating them as new made the file 38%
+        // larger (130 KB to 180 KB), because Auto then wrote the column inline, which the compressor handles badly when each
+        // text recurs only after 300 others.
+        // One sheet of a new package has watermark 0, and one sheet filled into a template sees only the template's entries
+        // below it, so nothing changes for either.
 
         // Per entry below the current watermark: the stamp of the last scope that used it (0 = none). Allocated when a
         // scope starts with a non-empty table, so a package with one sheet never has it. It grows geometrically, never
@@ -170,7 +178,7 @@ namespace SheetStream
         /// <summary>
         /// As <see cref="TryGetOrAdd(string, out int, out bool)"/>, but <paramref name="repeated"/> answers for the sheet whose
         /// scope this is: true when the text is one this sheet already looked up or added, false when it is new to the
-        /// sheet (added now, or an entry of an earlier sheet that this sheet uses for the first time).
+        /// sheet (added now, or an entry of an earlier sheet that this sheet uses for the first time; an entry of a template is never new).
         /// </summary>
         internal bool TryGetOrAdd(string value, out int id, out bool repeated, int watermark, int stamp)
         {
@@ -179,7 +187,7 @@ namespace SheetStream
                 repeated = false;
                 return false;
             }
-            if (!existed || id >= watermark)
+            if (!existed || id >= watermark || id < _templateCount)
             {
                 repeated = existed;
             }
