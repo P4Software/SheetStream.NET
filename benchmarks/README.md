@@ -20,32 +20,39 @@ NPOI is measured twice on the write side: once with **XSSF**, the in-memory user
 All commands run from `benchmarks/SheetStream.Benchmarks`, and everything is Release.
 
 ```powershell
-# The two original write scenarios (about 10 minutes on the machine below)
-dotnet run -c Release -- --filter '*Long*' '*.WideBenchmarks.*'
+# One scenario at a time. Each filter names exactly one benchmark class.
+dotnet run -c Release -- --filter '*.LongBenchmarks.*'               # 100k rows x 10 mixed columns
+dotnet run -c Release -- --filter '*.WideBenchmarks.*'               # 1,000 x 1,000 doubles
+dotnet run -c Release -- --filter '*.SpreadCheetahOwnBenchmarks.*'   # 100k x 10 distinct strings: SpreadCheetah's own scenario
+dotnet run -c Release -- --filter '*.StringHeavyBenchmarks.*'        # 100k x 10 strings, repeated and unique, with escaping
+dotnet run -c Release -- --filter '*.StyledDatesBenchmarks.*'        # 100k x 8 dates, date-times, money and percentages
+dotnet run -c Release -- --filter '*.MillionBenchmarks.*'            # 1,000,000 rows x 10 columns (needs 16 GB+ RAM, see below)
+dotnet run -c Release -- --filter '*.VeryWideBenchmarks.*'           # 1,000 rows x 10,000 columns
+dotnet run -c Release -- --filter '*.ReadBenchmarks.*'               # read the 100k x 10 file with every reader (about 7 minutes)
 
-# One scenario at a time
-dotnet run -c Release -- --filter '*Long*'              # 100k rows x 10 columns
-dotnet run -c Release -- --filter '*.WideBenchmarks.*'  # 1,000 x 1,000 ('*Wide*' alone would also match VeryWide)
-dotnet run -c Release -- --filter '*Million*'           # 1,000,000 rows x 10 columns (needs 16 GB+ RAM, see below)
-dotnet run -c Release -- --filter '*VeryWide*'          # 1,000 rows x 10,000 columns
-dotnet run -c Release -- --filter '*Read*'              # read the 100k x 10 file with every reader (about 7 minutes)
+# Several at once (the original two write scenarios take about 10 minutes on the machine below)
+dotnet run -c Release -- --filter '*.LongBenchmarks.*' '*.WideBenchmarks.*'
 
 # Everything, including the 10M-cell scenarios (well over an hour)
 dotnet run -c Release -- --filter '*'
 
 # Peak working set, output size and full-size verification, each library in a fresh process.
-# With no scenario it runs all five (Long, Wide, Million, VeryWide, Read); name one or more to run just those.
+# With no scenario it runs all of them (see Scenarios.All); name one or more to run just those.
 dotnet run -c Release -- --peak                         # all scenarios
 dotnet run -c Release -- --peak Long Wide               # about 3 minutes
+dotnet run -c Release -- --peak SpreadCheetahOwn StringHeavy StyledDates
 dotnet run -c Release -- --peak Read                    # about 3.5 minutes
 dotnet run -c Release -- --peak Million VeryWide        # tens of minutes; the in-memory libraries need 16 GB+ RAM
 
-# Correctness guard only: shows which rows, cells and formats every writer actually wrote,
-# and the checksum every reader arrived at
+# Correctness guard only: shows which rows, cells and formats every writer actually wrote
+# (values are compared cell by cell for the string and styled scenarios), the data profile of the
+# string scenarios, and the checksum every reader arrived at
 dotnet run -c Release -- --verify
 ```
 
 In Git Bash, quote the filter (`'*'`). Otherwise the shell expands `*` to file names.
+
+**Filters match the full name of a benchmark, and the matching ignores letter case.** `'*Read*'` therefore also selects every `SpreadCheetah` benchmark in the suite (S-p-**read**-Cheetah), and `'*Wide*'` also selects VeryWide. Use the `'*.<Class>.*'` form above, which selects exactly one class; `--list flat --filter '<pattern>'` shows what a filter would run, without running anything.
 
 BenchmarkDotNet's `-j Dry` switch adds a Dry job next to the one declared on each class rather than replacing it, so a "quick" `--filter '*Read*' -j Dry` still runs the full job as well.
 
@@ -66,6 +73,22 @@ Every library gets the same input. The input is built once, before timing, from 
 * **Wide**: 1,000 rows x 1,000 columns of doubles, with no header and no formatting.
 * **Million**: 1,000,000 rows x the same 10 columns as Long (10M cells). Same data generator, same `WriteLong` code; only the row count changes.
 * **VeryWide**: 1,000 rows x 10,000 columns of doubles (10M cells, the same count as Million). Same `WriteWide` code as Wide; only the column count changes. Million and VeryWide together show whether a library cares about the shape of a sheet or only about the number of cells.
+* **SpreadCheetahOwn**: SpreadCheetah's own published benchmark shape, so every library is also measured on the scenario SpreadCheetah chose for itself. 100,000 rows x 10 columns, every cell a string, no header, no styles. Every value is distinct (`Value <row>-<column>`), so nothing can be de-duplicated and no value repeats in a row or a column. Per its README, SpreadCheetah's benchmark builds each string from its row and column position and writes to an in-memory stream; the text here is ours, the shape is theirs.
+* **StringHeavy**: 100,000 rows x 10 string columns, no header, no styles, with a realistic mix. `--verify` prints this table (distinct values, longest value, cells that need XML escaping) for the data it generates:
+
+  | Column | Content | Distinct values |
+  |---:|---|---:|
+  | 1 | order id (`SO-00000001`) | 100,000 |
+  | 2 | status | 5 |
+  | 3 | country | 32 |
+  | 4 | category | 12 |
+  | 5 | customer name (first + last, includes accented letters, an apostrophe and `Smith & Sons`) | 1,920 |
+  | 6 | e-mail | 100,000 |
+  | 7 | city | 50 |
+  | 8 | priority | 3 |
+  | 9 | SKU (hexadecimal, unique) | 100,000 |
+  | 10 | free-text note, at most 60 characters, 41,666 of them containing `&`, `<`, `>` or `"` | 100,000 |
+* **StyledDates**: 100,000 rows x 8 columns plus a bold header row. Three dates (two `yyyy-mm-dd`, one `yyyy-mm-dd hh:mm:ss` with whole seconds), three money columns (`#,##0.00`) and two percentage columns (`0.00%`). Every data cell carries a style, so each row uses four distinct styles (date, date-time, money, percentage), and the header makes five.
 * **Read**: every reader reads the Long file (100,000 rows x 10 columns) that SheetStream wrote once, outside the timing, into a byte array. Each reader walks every data row and returns a checksum (the sum of the `Id` column plus the number of non-empty cells), so the work cannot be optimised away and the result can be checked against the generator.
 
 ## Methodology
@@ -80,6 +103,9 @@ Every library gets the same input. The input is built once, before timing, from 
     * Long passes the typed `LongRow[]` with `[ExcelColumn(Format = ...)]` on the formatted columns.
     * Wide passes one `Dictionary<string, object>` per row, MiniExcel's documented shape for dynamic columns. This boxes every double.
     * Everything else is left at MiniExcel's defaults.
+  * **SpreadCheetah** (all scenarios): one cell array created once and reused for every row (the reuse pattern SpreadCheetah's own benchmark and the code its source generator produces both use; `AddRowAsync` writes the row out before it returns). The cell type is the cheapest one that fits: `DataCell` where no cell has a style (Wide, SpreadCheetahOwn, StringHeavy), `StyledCell` where every cell does (StyledDates), `Cell` where only some do (Long). Styles are added once. It is measured at its own default zip level (Fastest) and at Optimal, next to SheetStream at both levels.
+  * **SheetStream** (string scenarios): default options, so strings go through the shared string table (SheetStream's default; past 16,000,000 characters new strings are written inline instead of growing the table). Nothing is tuned for the benchmark.
+  * **MiniExcel** (string scenarios): one reused `Dictionary<string, object>` per sheet, overwritten for every row. MiniExcel's streaming writer consumes a row before asking for the next, so this is safe and is the cheapest way to feed it; the guard proves every row still arrives intact. StyledDates uses the typed `StyledRow[]` with `[ExcelColumn(Format = ...)]`, like Long.
   * **NPOI:** `CreateRow` / `CreateCell` / `SetCellValue`, with the three `ICellStyle`s created once and `Write(stream, leaveOpen: true)`. SXSSF uses its default 100-row window. It flushes older rows to a temporary file on disk, so its time includes that disk I/O.
 * **Each reader is written the way its docs recommend.** The input is the same byte array for all of them, handed over as a fresh read-only `MemoryStream` per invocation (created in `[IterationSetup]`, outside the timing), so nobody pays for disk I/O and a reader that disposes its stream does no harm. Every reader skips the header row and counts data rows only.
   * **SheetStream ReadRows:** `ExcelReader.Open(stream, leaveOpen: true)` and `ReadRows("Data")`, the untyped streaming path; numbers arrive as `double`, shared strings resolved, the date column as `DateTime`.
@@ -92,7 +118,7 @@ Every library gets the same input. The input is built once, before timing, from 
   * **NPOI XSSF:** `new XSSFWorkbook(stream)`, then `GetRow` / `GetCell` over `LastRowNum`.
   * **NPOI SAX:** `OPCPackage.Open(stream)`, `XSSFReader`, `ReadOnlySharedStringsTable` and an `ISheetContentsHandler`, driven through `XSSFEventBasedExcelExtractor.ProcessSheet`, which is the only parser entry point NPOI exposes for its port of POI's event model. The handler delivers every cell as a *formatted string*, so `Id` is parsed back from text; that cost is inherent to the API. The package is closed with `Revert()` because `OPCPackage.Open(Stream)` opens read-write and `Close()` would try to save.
 * **BenchmarkDotNet job:** `[MemoryDiagnoser]` with `SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)` for Long, Wide and Read, and a lighter `SimpleJob(launchCount: 1, warmupCount: 1, iterationCount: 3)` for Million and VeryWide, where the in-memory libraries take 20 to 60 seconds per write. One invocation per iteration throughout. `[IterationSetup]` empties the buffer (or opens the input stream), outside the measurement. Each benchmark runs in its own process, as BenchmarkDotNet does by default, on the default runtime settings (workstation GC, tiered compilation).
-* **Correctness guard:** every write benchmark's `GlobalSetup` writes a small case (50 rows for the Long-shaped scenarios, 40 x 40 for the Wide-shaped ones) with every library. It reads each output back with the Open XML SDK's SAX reader and throws if the row count or the number of cells in the last row is wrong. The read benchmark's `GlobalSetup` writes a 50-row file and throws if any reader's checksum differs from the generator's figure (`Checksum.Expected`, computed from the data definition, not from any reader). The `--peak` children repeat both checks on the full-size data after their measurement.
+* **Correctness guard:** every write benchmark's `GlobalSetup` writes a small case (50 rows for the Long-shaped scenarios, 40 x 40 for the Wide-shaped ones, 60 rows for the three new scenarios) with every library. It reads each output back with the Open XML SDK's SAX reader and throws if the row count or the number of cells in the last row is wrong. For SpreadCheetahOwn, StringHeavy and StyledDates it also reads every cell back and throws unless each text equals the generator's text (shared and inline strings are resolved first), each number equals the generator's number to within 1e-7 (dates are compared as their serial numbers), and, for StyledDates, each data cell carries the number format of its column. The header's bold font is reported, not enforced, because MiniExcel cannot make a header bold. The value check was itself tested by corrupting one cell in one writer and confirming the guard names that cell. The read benchmark's `GlobalSetup` writes a 50-row file and throws if any reader's checksum differs from the generator's figure (`Checksum.Expected`, computed from the data definition, not from any reader). The `--peak` children repeat both checks on the full-size data after their measurement.
 * **Peak working set (`--peak`):** the executable starts itself again with `--peak-child <library> <scenario>`. Each child does the following:
   1. Builds the same input (for Read: writes the 100k-row file with SheetStream into memory).
   2. Writes (or reads) once, cold, including JIT.
@@ -100,6 +126,39 @@ Every library gets the same input. The input is built once, before timing, from 
   4. Only then verifies the full-size output (or compares the checksum).
 
   Each case runs in 3 fresh processes and the median is reported. A **Baseline** child builds the input and calls no library. It shows the floor every library sits on: the .NET runtime, the benchmark executable and the input data (for Read, the input file as well). The Baseline child never calls a writer or reader, so the libraries' assemblies are not loaded or JIT-compiled in it. Each library's "above baseline" figure therefore includes loading and compiling its own code. The output buffer's pages count only once they are written, so each writer's figure includes roughly its output size.
+
+## Reproduce these numbers
+
+On a clean Windows machine (a new virtual machine is ideal) with only the .NET 10 SDK installed, copy or clone this repository, open the `benchmarks` folder and double-click `run-on-fresh-vm.cmd`, or run:
+
+```powershell
+.\run-on-fresh-vm.ps1 -DryRun                      # print the plan and the hardware, change nothing
+.\run-on-fresh-vm.ps1                              # SpreadCheetahOwn, StringHeavy, StyledDates, Long and Wide, then --peak
+.\run-on-fresh-vm.ps1 -Scenarios SpreadCheetahOwn  # one scenario (comma-separated list, or All)
+```
+
+The script does the following, in order, and stops with a plain-language message if a step fails:
+
+1. Prints the CPU, cores, memory, operating system, .NET SDK, code version and the exact package versions.
+2. Builds the benchmark project in Release.
+3. Runs `--verify`. **If any library fails the correctness check the script stops and takes no timings.**
+4. Runs each chosen scenario through BenchmarkDotNet.
+5. Runs `--peak` for the same scenarios.
+6. Copies the BenchmarkDotNet reports, the logs and a `hardware.txt` into `benchmarks\results\<date>-<time>-<machine>` (a folder that Git ignores, so a run is never committed by accident).
+
+A run of the default scenarios takes roughly an hour. Leave the machine alone while it runs, and use a plugged-in, high-performance power setup. The tables below the "Results" heading are copied unchanged from the `*-report-github.md` files and the `peak.txt` of such a run; each table says which machine and date it came from.
+
+### Fairness rules
+
+These are the rules every scenario follows. If a result here ever breaks one, the result is wrong, not the rule.
+
+1. **Same data.** Every library writes the same in-memory input, generated by deterministic code in `Data.cs` and built once outside the timed region. `--verify` prints the data profile of the string scenarios so anyone can check what "unique" and "repeated" mean.
+2. **Same zip level, paired.** SheetStream and SpreadCheetah each appear at both zip levels (default Optimal and Fastest for SheetStream; SpreadCheetah's default Fastest and Optimal), so every row has a row from the other library at the same level to be read against. A claim that SheetStream is faster must name the zip level it compares at.
+3. **Correctness first.** Before any timing, every library must write exactly the data it was given: row count, cell count, and for the string and styled scenarios every cell's value and number format. A library that fails is fixed or removed; it is never timed. The same checks run again at full size in every `--peak` child.
+4. **Each library the way its documentation recommends.** SpreadCheetah with a reused cell array and the cheapest cell type for the scenario (`DataCell`, `StyledCell` or `Cell`), so it is never handicapped by an avoidable allocation. SheetStream at its default options. Anything a library cannot express is listed in this file, not hidden (for example, MiniExcel cannot make a header bold).
+5. **Same measuring.** Output goes to the same reused memory buffer for every library, so disk speed and buffer growth never enter the comparison; every benchmark runs in its own process with the same job settings; every scenario that SpreadCheetah chose for itself is included next to the ones we chose.
+6. **Whole picture reported.** Time, bytes allocated, peak memory and output size are all reported, including the ones where SheetStream is not first. "Reading the results honestly" below is written from the measured tables, not before them.
+7. **One machine per table.** Numbers from different machines are never mixed in one table; each table names its machine (from `hardware.txt`), date and code version.
 
 ## Machine
 
