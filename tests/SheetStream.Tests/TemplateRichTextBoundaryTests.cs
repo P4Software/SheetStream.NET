@@ -43,8 +43,11 @@ public class TemplateRichTextBoundaryTests
             $"The text read back differs from the text written (length {actual.Length} against {expected.Length}).");
     }
 
-    /// <summary>Text with the wide character at <paramref name="offset"/> and enough ASCII after it to span two flushes.</summary>
-    private static string TextWithWideCharacterAt(int offset, string wide) => new string('a', offset) + wide + new string('b', 20_000);
+    /// <summary>
+    /// Text with the wide character at <paramref name="offset"/> and a full buffer of ASCII after it. The whole text stays under
+    /// the 32,767 characters Excel allows in a cell (and the library accepts): the offsets are about 16,350, so 16,000 follow.
+    /// </summary>
+    private static string TextWithWideCharacterAt(int offset, string wide) => new string('a', offset) + wide + new string('b', 16_000);
 
     /// <summary>Offsets around the first flush: the cell's 27 bytes of markup plus the text fill the 16 KB buffer near 16,350.</summary>
     private static IEnumerable<int> Offsets() => Enumerable.Range(16_330, 71);

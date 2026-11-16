@@ -337,23 +337,23 @@ internal sealed class RawCellScript
                 if (special == ' ') chars[0] = ' ';
                 var kind = special == '&' || special == '>' ? ScriptKind.Text : ScriptKind.Inline;
                 row.Add(new ScriptCell { Kind = ScriptKind.Int, Integer = length, Style = -1 });
-                row.Add(new ScriptCell { Kind = kind, Text = new string(chars), Style = length % 7 == 0 ? 2 : -1 });
+                AddLongText(row, kind, new string(chars), length % 7 == 0 ? 2 : -1);
             }
         }
         // Strings that are nothing but entities, well past the buffer, and ones several buffers long.
         foreach (var c in new[] { '&', '<', '>' })
         {
             var row = script.NewRow();
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string(c, bufferLength + 17), Style = -1 });
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string(c, bufferLength * 3 + 1), Style = -1 });
-            row.Add(new ScriptCell { Kind = ScriptKind.Text, Text = new string(c, bufferLength * 2), Style = -1 });
+            AddLongText(row, ScriptKind.Inline, new string(c, bufferLength + 17), -1);
+            AddLongText(row, ScriptKind.Inline, new string(c, bufferLength * 3 + 1), -1);
+            AddLongText(row, ScriptKind.Text, new string(c, bufferLength * 2), -1);
         }
         {
             var row = script.NewRow();
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string('z', bufferLength * 5 + 3), Style = 1 });
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string('z', bufferLength), Style = 1 });
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string('z', bufferLength - 1), Style = 1 });
-            row.Add(new ScriptCell { Kind = ScriptKind.Inline, Text = new string('z', bufferLength + 1), Style = 1 });
+            AddLongText(row, ScriptKind.Inline, new string('z', bufferLength * 5 + 3), 1);
+            AddLongText(row, ScriptKind.Inline, new string('z', bufferLength), 1);
+            AddLongText(row, ScriptKind.Inline, new string('z', bufferLength - 1), 1);
+            AddLongText(row, ScriptKind.Inline, new string('z', bufferLength + 1), 1);
         }
         // Many short cells in one row, so the buffer fills between cells and not inside one.
         {
@@ -440,6 +440,20 @@ internal sealed class RawCellScript
         return r.Next(2) == 0 ? date.Date : date;
     }
 
+    /// <summary>
+    /// The longest piece of text one cell of a script holds: Excel opens no cell of more than 32,767 characters and the
+    /// library refuses them (see <c>CellText</c>), so a longer text is written as several consecutive cells that together
+    /// are as long. Their boundaries move with the length, so the buffer still fills at every offset inside a cell.
+    /// </summary>
+    private const int MaxPiece = 30_000;
+
+    /// <summary>Adds <paramref name="text"/> as one cell, or as consecutive cells of at most <see cref="MaxPiece"/> characters when it is longer.</summary>
+    private static void AddLongText(List<ScriptCell> row, ScriptKind kind, string text, int style)
+    {
+        for (var at = 0; at < text.Length || at == 0; at += MaxPiece)
+            row.Add(new ScriptCell { Kind = kind, Text = text.Substring(at, Math.Min(MaxPiece, text.Length - at)), Style = style });
+    }
+
     private static string RandomText(Random r)
     {
         // Mostly short, sometimes a few hundred characters, rarely longer than the row writer's buffer.
@@ -447,6 +461,9 @@ internal sealed class RawCellScript
         var tokens = pick < 70 ? r.Next(0, 8) : pick < 96 ? r.Next(8, 80) : pick < 99 ? r.Next(200, 3000) : r.Next(8000, 24000);
         var sb = new StringBuilder();
         for (var i = 0; i < tokens; i++) sb.Append(FuzzTokens[r.Next(FuzzTokens.Length)]);
+        // The longest texts would pass Excel's limit of 32,767 characters per cell, which the library refuses. A rich-text cell
+        // joins two of these, hence half the limit.
+        if (sb.Length > 16_000) sb.Length = 16_000;
         return sb.ToString();
     }
 }

@@ -166,7 +166,7 @@ namespace SheetStream.NetFx.Tests
         [Fact]
         public void ReaderLimits_RejectAnOversizedCell()
         {
-            var bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Data").Row().WriteInlineString(new string('A', 50000)));
+            var bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Data").Row().WriteInlineString(new string('A', 30000))); // Under the 32,767 characters a cell may hold.
             var ex = Assert.Throws<InvalidDataException>(() =>
             {
                 using (var reader = ExcelReader.Open(new MemoryStream(bytes), false, new ReaderOptions { MaxCellTextLength = 1000 }))
@@ -175,7 +175,7 @@ namespace SheetStream.NetFx.Tests
             Assert.Contains("MaxCellTextLength", ex.Message);
 
             using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
-                Assert.Equal(50000, ((string)reader.ReadRows(0).First()[0]!).Length);
+                Assert.Equal(30000, ((string)reader.ReadRows(0).First()[0]!).Length);
         }
 
         [Fact]
@@ -447,7 +447,7 @@ namespace SheetStream.NetFx.Tests
             // The staging buffer is decoded back to text in 16 KB blocks; a block that ends inside the emoji's four
             // bytes used to make the next decode one char too long for its buffer (offset 16354 is the unlucky one).
             var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
-            var text = new string('a', offset) + "\U0001F600" + new string('b', 20000);
+            var text = new string('a', offset) + "\U0001F600" + new string('b', 16000); // The whole text stays under the 32,767 characters a cell may hold.
             using (var output = new MemoryStream())
             {
                 using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true))

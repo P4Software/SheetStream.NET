@@ -222,7 +222,8 @@ public class CellWritingAllocationTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    private static readonly string LongText = new string('x', 20_000) + " & " + new string('y', 20_000); // Longer than the staging buffer.
+    // Longer than the 16 KB staging buffer of a sheet filled into a template, and under the 32,767 characters a cell may hold.
+    private static readonly string LongText = new string('x', 16_000) + " & " + new string('y', 16_000);
 
     private static void WriteSheet(int rows, bool extended = false)
     {

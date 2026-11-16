@@ -368,6 +368,8 @@ namespace SheetStream
         public RowWriter WriteCell(string? value, CellStyle? style = null)
         {
             if (value == null) return WriteEmpty(style);
+            // One compare per text cell, before anything of the cell exists (see CellText).
+            if (value.Length > CellText.MaxLength) CellText.EnsureFits(value.Length, nameof(value));
             switch (_stringStorage)
             {
                 case StringStorage.Auto: return WriteAutoString(value, style);
@@ -383,6 +385,7 @@ namespace SheetStream
         public RowWriter WriteInlineString(string? value, CellStyle? style = null)
         {
             if (value == null) return WriteEmpty(style);
+            if (value.Length > CellText.MaxLength) CellText.EnsureFits(value.Length, nameof(value));
             EnsureOpen();
             EnsureColumn();
             return WriteInlineCore(value, style);
@@ -718,6 +721,8 @@ namespace SheetStream
             // Checked before anything is written, so a bad call leaves the row as it was.
             foreach (var run in runs)
                 if (run == null) throw new ArgumentException("Runs cannot be null.", nameof(runs));
+            // Excel counts the runs together, as one text.
+            CellText.EnsureFits(CellText.Length(runs), nameof(runs));
             EnsureOpen();
 
             // The runs are rendered first. A run can fail (a font name XML cannot carry), and by then nothing of the
@@ -793,6 +798,8 @@ namespace SheetStream
         public RowWriter WriteHyperlink(string text, string url, CellStyle? style = null, string? tooltip = null)
         {
             if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("URL cannot be empty.", nameof(url));
+            // The link is registered before the cell is written, so the text is checked first: a refused cell must not leave a link behind.
+            CellText.EnsureFits((text ?? url).Length, nameof(text));
             EnsureOpen();
             EnsureColumn(); // A link registered for a column the cell cannot be written to would be left behind and break the save.
             _sheet.RegisterHyperlink(RowIndex, NextColumn, url, null, tooltip);
@@ -803,6 +810,7 @@ namespace SheetStream
         public RowWriter WriteInternalLink(string text, string location, CellStyle? style = null, string? tooltip = null)
         {
             if (string.IsNullOrWhiteSpace(location)) throw new ArgumentException("Location cannot be empty.", nameof(location));
+            CellText.EnsureFits((text ?? location).Length, nameof(text));
             EnsureOpen();
             EnsureColumn();
             _sheet.RegisterHyperlink(RowIndex, NextColumn, null, location.TrimStart('#'), tooltip);
@@ -1046,6 +1054,7 @@ namespace SheetStream
         public RowWriter WriteFormula(string formula, string cachedValue, CellStyle? style = null)
         {
             if (cachedValue == null) throw new ArgumentNullException(nameof(cachedValue));
+            CellText.EnsureFits(cachedValue.Length, nameof(cachedValue));
             var text = PrepareFormula(formula);
             BeginCellRaw(style, TypeStr);
             AppendFormula(text);

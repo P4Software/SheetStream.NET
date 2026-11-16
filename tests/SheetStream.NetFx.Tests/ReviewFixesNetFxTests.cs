@@ -39,6 +39,29 @@ namespace SheetStream.NetFx.Tests
         }
 
         [Fact]
+        public void TextOfMoreThan32767Characters_IsRefused_AndTheWriterStaysUsable()
+        {
+            var longest = new string('w', 32767);
+            var bytes = ExcelPackage.CreateBytes(wb =>
+            {
+                var s = wb.Worksheets.Add("S");
+                var r = s.Row().WriteCell(longest);
+                var e = Assert.Throws<ArgumentException>(() => r.WriteCell(new string('w', 32768)));
+                Assert.Contains("32,767", e.Message);
+                Assert.Throws<ArgumentException>(() => r.WriteInlineString(new string('w', 32768)));
+                Assert.Throws<ArgumentException>(() => r.WriteRichText(new RichText(new string('w', 32768))));
+                Assert.Equal(2, r.NextColumn);
+                r.WriteCell("after");
+            });
+            using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
+            {
+                var row = reader.ReadRows("S").Single();
+                Assert.Equal(longest, row[0]);
+                Assert.Equal("after", row[1]);
+            }
+        }
+
+        [Fact]
         public void AUniqueColumnOnASecondSheet_DoesNotGrowTheSharedTable()
         {
             long Unique(int sheets)
