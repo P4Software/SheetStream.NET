@@ -79,7 +79,12 @@ namespace SheetStream.Internal
             }
         }
 
-        private void ThrowIfFaulted()
+        /// <summary>
+        /// Throws an <see cref="IOException"/> that carries the original error once a write to the underlying stream has
+        /// failed. The row writer calls it when a row starts or ends, so a caller that swallowed the first failure
+        /// meets the same kind of error on every later row and on <c>Save</c>, whatever state the writer was left in.
+        /// </summary>
+        internal void ThrowIfFaulted()
         {
             if (_fault != null)
                 throw new IOException("An earlier write to the workbook failed, so the part cannot be completed. " + _fault.Message, _fault);

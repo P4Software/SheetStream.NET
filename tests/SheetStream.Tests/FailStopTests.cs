@@ -35,6 +35,63 @@ public class FailStopTests
         }
     }
 
+    /// <summary>A write-only stream that works until it has taken a given number of bytes and fails on every write after that.</summary>
+    private sealed class FailsForGoodStream : Stream
+    {
+        private readonly long _allowed;
+        private long _written;
+
+        public FailsForGoodStream(long allowedBytes) => _allowed = allowedBytes;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (_written + count > _allowed) throw new IOException("The disk is full.");
+            _written += count;
+        }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="rows"/> rows the way a caller that swallows errors does, and returns every exception
+    /// the row calls threw, in order.
+    /// </summary>
+    private static List<Exception> WriteRowsSwallowingErrors(ExcelPackage package, bool autoFit, int rows)
+    {
+        var sheet = package.Workbook.Worksheets.Add("S");
+        if (autoFit) sheet.AutoFitColumns();
+        var thrown = new List<Exception>();
+        for (var i = 0; i < rows; i++)
+        {
+            try { sheet.Row().WriteCell(i).WriteCell("row " + (i * 7919L)).WriteCell(i * 0.37); }
+            catch (Exception ex) { thrown.Add(ex); }
+        }
+        return thrown;
+    }
+
+    /// <summary>
+    /// The failure the caller meets is the failure of the output: an <see cref="IOException"/>, the first time as the
+    /// stream threw it and every time after as the library's report that the part cannot be completed. Never an
+    /// index or null-reference error from the writer's own bookkeeping, which is what a half-reset buffer used to produce.
+    /// </summary>
+    private static void AssertOnlyIOExceptions(List<Exception> thrown)
+    {
+        Assert.NotEmpty(thrown);
+        // A summary instead of Assert.All: a broken writer throws on every one of tens of thousands of rows, and a
+        // failure message that lists each of them is too big for the test runner to report.
+        var others = thrown.Where(ex => ex.GetType() != typeof(IOException)).ToList();
+        Assert.True(others.Count == 0,
+            $"{others.Count} of {thrown.Count} exceptions were not IOException. First: {others.FirstOrDefault()?.GetType().Name}: {others.FirstOrDefault()?.Message}");
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -42,25 +99,48 @@ public class FailStopTests
     {
         var output = new FlakyStream(failOnWrite: 3);
         var package = new ExcelPackage(output, leaveOpen: true, new PackageOptions { CompressionLevel = CompressionLevel.Fastest });
-        var sheet = package.Workbook.Worksheets.Add("S");
-        if (autoFit) sheet.AutoFitColumns();
 
         // A caller that catches the failure and carries on, which is what a retry loop or a lenient export does.
-        var failures = 0;
-        for (var i = 0; i < 400_000; i++)
-        {
-            try { sheet.Row().WriteCell(i).WriteCell("row " + (i * 7919L)).WriteCell(i * 0.37); }
-            catch (Exception) { failures++; }
-        }
+        var thrown = WriteRowsSwallowingErrors(package, autoFit, 100_000);
 
         if (autoFit)
         {
             // The rows only go to the zip entry at the end, so that is where the failure is met.
-            Assert.ThrowsAny<Exception>(() => package.Save());
+            Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
             return;
         }
-        Assert.True(failures > 0, "The write failure never reached the caller.");
-        Assert.ThrowsAny<Exception>(() => package.Save());
+        Assert.True(thrown.Count > 0, "The write failure never reached the caller.");
+        AssertOnlyIOExceptions(thrown);
+        Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+    }
+
+    /// <summary>
+    /// An output that dies for good part-way through. The first failed row call reports the stream's own error; every
+    /// row after it, 20,000 of them each in its own try block, must report the same kind of failure, and so must Save.
+    /// </summary>
+    [Theory]
+    [InlineData(false, 70_000)]
+    [InlineData(false, 70_001)]
+    [InlineData(false, 123_457)]
+    [InlineData(true, 70_000)]
+    public void AnOutputThatFailsForGood_ReportsAnIOExceptionOnEveryLaterRowAndOnSave(bool autoFit, long allowedBytes)
+    {
+        var package = new ExcelPackage(new FailsForGoodStream(allowedBytes), leaveOpen: true, new PackageOptions { CompressionLevel = CompressionLevel.NoCompression });
+
+        var thrown = WriteRowsSwallowingErrors(package, autoFit, 20_000);
+
+        // With AutoFit the rows go to a temp file and the output is met when the sheet is sealed, at Save.
+        if (!autoFit)
+        {
+            AssertOnlyIOExceptions(thrown);
+            Assert.True(thrown.Count > 1, "Only the first row call reported the failure.");
+        }
+        else
+        {
+            Assert.Empty(thrown);
+        }
+        Assert.IsType<IOException>(Assert.ThrowsAny<Exception>(() => package.Save()));
+        Assert.False(package.IsSaved);
     }
 
     /// <summary>

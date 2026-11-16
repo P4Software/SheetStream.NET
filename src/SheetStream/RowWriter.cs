@@ -142,6 +142,10 @@ namespace SheetStream
         /// </summary>
         internal void Begin(int rowIndex, RowOptions? options, IReadOnlyList<RawAttribute>? rawAttributes = null)
         {
+            // A failed write to the output is final (see PartStream). Said first, before any state changes, so a
+            // caller that swallowed the failure keeps being told what went wrong instead of meeting whatever the
+            // half-flushed buffer happens to hold.
+            _stream?.ThrowIfFaulted();
             RowIndex = rowIndex;
             NextColumn = 1;
             _lastWrittenColumn = 0;
@@ -247,6 +251,9 @@ namespace SheetStream
             if (!IsOpen) return;
             if (_stream != null)
             {
+                // After a failed flush the staged bytes are gone and the buffer holds nothing to take a byte back
+                // from, so a row left open by the failure must not be closed by hand; the original error is reported.
+                _stream.ThrowIfFaulted();
                 if (_rowEmpty)
                 {
                     // Nothing was written after the start tag's closing '>', so it is the last byte: take it back
@@ -865,8 +872,10 @@ namespace SheetStream
                 throw new InvalidOperationException("Row already has 16384 cells, which is Excel's column limit.");
 
             // One check per cell guarantees room for everything fixed in it (see CellReserve).
-            if (_buf.Length - _n < CellReserve) FlushStaged();
+            // The row is no longer empty from here on, also if the flush below fails: the row's '>' may already be
+            // on its way out, and End must never try to take it back.
             _rowEmpty = false;
+            if (_buf.Length - _n < CellReserve) FlushStaged();
             AppendFixed(CellOpen);
             // The r attribute is optional (ECMA-376 18.3.1.4): a cell without one sits in the column after the
             // previous cell of its row, or in column A when it is the first. So it is written only when this
