@@ -41,6 +41,10 @@ namespace SheetStream
         /// </summary>
         private const int EntryOverhead = 32;
 
+        private const string ItemOpen = "<si><t>";
+        private const string ItemOpenPreserve = "<si><t xml:space=\"preserve\">";
+        private const string ItemClose = "</t></si>";
+
         internal SharedStringTable(long budget)
         {
             _budget = budget;
@@ -80,6 +84,31 @@ namespace SheetStream
         /// </summary>
         internal bool TryGetOrAdd(string value, out int id, out bool existed)
         {
+#if NET8_0_OR_GREATER
+            // One hash of the text and one probe for both the lookup and the insert, where TryGetValue followed by the indexer
+            // hashes and probes twice; most cells that reach the table are new texts (a column is sampled before it is judged).
+            ref var slot = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(_index, value, out var found);
+            if (found)
+            {
+                id = slot;
+                _references++;
+                existed = true;
+                return true;
+            }
+            existed = false;
+            var newCost = value.Length + EntryOverhead;
+            if (_used + newCost > _budget)
+            {
+                _index.Remove(value); // Leaves no trace of the placeholder entry the call above made.
+                id = 0;
+                return false;
+            }
+            _used += newCost;
+            _references++;
+            id = slot = _templateCount + _strings.Count;
+            _strings.Add(value);
+            return true;
+#else
             if (_index.TryGetValue(value, out id))
             {
                 _references++;
@@ -95,6 +124,7 @@ namespace SheetStream
             _strings.Add(value);
             _index[value] = id;
             return true;
+#endif
         }
 
         /// <summary>Writes the <c>sharedStrings.xml</c> part.</summary>
@@ -126,18 +156,72 @@ namespace SheetStream
                 }
             }
 
-            foreach (var s in _strings)
-            {
-                w.WriteStartElement("si");
-                w.WriteStartElement("t");
-                // Without xml:space="preserve" Excel trims leading/trailing whitespace on load.
-                if (XmlTextUtil.NeedsSpacePreserve(s)) w.WriteAttributeString("xml", "space", null, "preserve");
-                w.WriteString(s);
-                w.WriteEndElement();
-                w.WriteEndElement();
-            }
+            WriteItems(w);
             w.WriteEndElement();
             w.WriteEndDocument();
+        }
+
+        /// <summary>The characters composed before they are handed to the XML writer in one call (and the longest text composed in them).</summary>
+        private const int ChunkChars = 8192;
+
+        /// <summary>
+        /// Writes the <c>si</c> items of the table's own strings. Each is composed as characters (the tags, then the text with
+        /// <c>&amp;</c>, <c>&lt;</c> and <c>&gt;</c> escaped, then the closing tags) in a chunk that is handed to the XML writer
+        /// as raw text, so the writer does no per-element work: a table has one entry per distinct text, tens of thousands
+        /// when a sheet has columns of unique text. The bytes are the ones <c>WriteStartElement</c>, <c>WriteAttributeString</c>,
+        /// <c>WriteString</c> and <c>WriteEndElement</c> wrote (the table's texts have been through <see cref="XmlTextUtil.Sanitize"/>,
+        /// so they hold nothing the writer would refuse, and it is set to leave line breaks as they are). Without
+        /// <c>xml:space="preserve"</c> Excel trims leading and trailing white space on load.
+        /// </summary>
+        private void WriteItems(XmlWriter w)
+        {
+            if (_strings.Count == 0) return;
+            var chunk = new char[ChunkChars];
+            var n = 0;
+            foreach (var s in _strings)
+            {
+                var open = XmlTextUtil.NeedsSpacePreserve(s) ? ItemOpenPreserve : ItemOpen;
+                // Worst case: every character becomes a five-character entity.
+                if (s.Length > (ChunkChars - ItemOpenPreserve.Length - ItemClose.Length) / 5)
+                {
+                    // A text longer than a chunk goes through the writer, which escapes it in pieces.
+                    if (n > 0) { w.WriteRaw(chunk, 0, n); n = 0; }
+                    w.WriteRaw(open);
+                    w.WriteString(s);
+                    w.WriteRaw(ItemClose);
+                    continue;
+                }
+                if (ChunkChars - n < open.Length + s.Length * 5 + ItemClose.Length)
+                {
+                    w.WriteRaw(chunk, 0, n);
+                    n = 0;
+                }
+
+                open.CopyTo(0, chunk, n, open.Length);
+                n += open.Length;
+                var runStart = 0;
+                for (var i = 0; i < s.Length; i++)
+                {
+                    var c = s[i];
+                    // '&', '<' and '>' are all at or below '>', so almost every character is rejected by one compare.
+                    if (c > '>') continue;
+                    string entity;
+                    if (c == '&') entity = "&amp;";
+                    else if (c == '<') entity = "&lt;";
+                    else if (c == '>') entity = "&gt;";
+                    else continue;
+                    s.CopyTo(runStart, chunk, n, i - runStart);
+                    n += i - runStart;
+                    entity.CopyTo(0, chunk, n, entity.Length);
+                    n += entity.Length;
+                    runStart = i + 1;
+                }
+                s.CopyTo(runStart, chunk, n, s.Length - runStart);
+                n += s.Length - runStart;
+                ItemClose.CopyTo(0, chunk, n, ItemClose.Length);
+                n += ItemClose.Length;
+            }
+            if (n > 0) w.WriteRaw(chunk, 0, n);
         }
     }
 }

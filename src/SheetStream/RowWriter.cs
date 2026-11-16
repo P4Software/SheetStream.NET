@@ -85,6 +85,10 @@ namespace SheetStream
         // Computed once per row so the common path pays a single bool test per cell.
         private bool _observe;
 
+        // True when a cell of this row needs nothing but its own bytes: no row style, no address on every cell, no display text
+        // wanted, no cached result to record. The common text cell tests this one flag instead of four.
+        private bool _plainRow;
+
         // True when the sheet caches formula results and therefore wants every value recorded. Read once per
         // row, so with the feature off (the default) each cell pays one false branch and nothing else.
         private bool _cache;
@@ -139,7 +143,9 @@ namespace SheetStream
         /// <summary>Re-reads whether the open row is observed, after a table was added on it.</summary>
         internal void RefreshObservation()
         {
-            if (IsOpen) _observe = _sheet.ShouldObserveRow(RowIndex);
+            if (!IsOpen) return;
+            _observe = _sheet.ShouldObserveRow(RowIndex);
+            _plainRow = _rowStyle == null && !_alwaysWriteReference && !_observe && !_cache;
         }
 
         /// <summary>
@@ -164,6 +170,7 @@ namespace SheetStream
             _rowDateStyle = _rowDateTimeStyle = _rowDurationStyle = null;
             _observe = _sheet.ShouldObserveRow(rowIndex);
             _cache = _sheet.IsCachingFormulaResults;
+            _plainRow = _rowStyle == null && !_alwaysWriteReference && !_observe && !_cache;
             _rowDigitsLength = Utf8Numbers.Format(rowIndex, _rowDigits, 0);
 
             // Checked before the row is marked open, so a bad height leaves nothing half written.
@@ -365,10 +372,9 @@ namespace SheetStream
             if (style == null && _rowStyle == null && !_alwaysWriteReference && NextColumn == _lastWrittenColumn + 1 && NextColumn <= CellReference.MaxColumns
                 && TryAppendInlineText(value, dense: true))
             {
+                // The cell's closing tags are already in the buffer (see TryAppendInlineText).
                 _lastWrittenColumn = NextColumn;
                 _lastStyleId = 0;
-                EnsureRoom(CellReserve);
-                AppendFixed(InlineClose);
                 if (_cache) _sheet.RecordText(RowIndex, NextColumn);
                 EndCellRaw(value);
                 return this;
@@ -385,9 +391,9 @@ namespace SheetStream
                 var text = XmlTextUtil.Sanitize(value);
                 AppendFixed(XmlTextUtil.NeedsSpacePreserve(text) ? InlineOpenPreserve : InlineOpen);
                 AppendText(text);
+                EnsureRoom(CellReserve);
+                AppendFixed(InlineClose);
             }
-            EnsureRoom(CellReserve);
-            AppendFixed(InlineClose);
             if (_cache) _sheet.RecordText(RowIndex, NextColumn);
             EndCellRaw(value);
             return this;
@@ -401,7 +407,7 @@ namespace SheetStream
         private const int FastTextMaxLength = 512;
 
         /// <summary>
-        /// Writes <c>&lt;is&gt;&lt;t&gt;</c> and the text of an inline cell in one pass over the characters, for the
+        /// Writes <c>&lt;is&gt;&lt;t&gt;</c>, the text and the closing tags of an inline cell in one pass over the characters, for the
         /// text that needs nothing done to it but encoding: letters, digits, punctuation, accents, any other
         /// character of the Basic Multilingual Plane, surrogate pairs, tabs and line breaks, and <c>&amp; &lt; &gt;</c>,
         /// which become entities. This is exactly what <see cref="XmlTextUtil.Sanitize"/> followed by
@@ -424,9 +430,23 @@ namespace SheetStream
             // xml:space="preserve" is decided by the first and last character, which are untouched on this path.
             var preserve = XmlTextUtil.NeedsSpacePreserve(value);
             if (dense) _rowEmpty = false; // The cell's start tag goes out below; see BeginCellRaw for why this comes before any flush.
-            var open = dense ? (preserve ? DenseInlineOpenPreserve : DenseInlineOpen) : (preserve ? InlineOpenPreserve : InlineOpen);
-            Buffer.BlockCopy(open, 0, buf, n, open.Length);
-            n += open.Length;
+#if NET8_0_OR_GREATER
+            if (dense && !preserve)
+            {
+                // The common cell: its 24 opening bytes in three stores, where a block copy of a short array costs more than the bytes.
+                ref var head = ref buf[n];
+                System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref head, DenseOpenWord0);
+                System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref System.Runtime.CompilerServices.Unsafe.Add(ref head, 8), DenseOpenWord1);
+                System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref System.Runtime.CompilerServices.Unsafe.Add(ref head, 16), DenseOpenWord2);
+                n += DenseInlineOpen.Length;
+            }
+            else
+#endif
+            {
+                var open = dense ? (preserve ? DenseInlineOpenPreserve : DenseInlineOpen) : (preserve ? InlineOpenPreserve : InlineOpen);
+                Buffer.BlockCopy(open, 0, buf, n, open.Length);
+                n += open.Length;
+            }
 
             var i = 0;
 #if NET8_0_OR_GREATER
@@ -490,7 +510,17 @@ namespace SheetStream
                 }
                 else return Rewind(start); // An unpaired surrogate, U+FFFE or U+FFFF.
             }
-            _n = n;
+
+            // The closing tags, which the room reserved above covers (6 bytes per character, 64 over the longest opening and these 13).
+#if NET8_0_OR_GREATER
+            // Two overlapping 8-byte stores write the 13 bytes (the second starts at the fifth byte of the tag).
+            ref var tail = ref buf[n];
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref tail, InlineCloseWord0);
+            System.Runtime.CompilerServices.Unsafe.WriteUnaligned(ref System.Runtime.CompilerServices.Unsafe.Add(ref tail, 5), InlineCloseWord1);
+#else
+            Buffer.BlockCopy(InlineClose, 0, buf, n, InlineClose.Length);
+#endif
+            _n = n + InlineClose.Length;
             return true;
         }
 
@@ -498,7 +528,7 @@ namespace SheetStream
         /// <summary>
         /// Copies the leading characters of <paramref name="value"/> that are plain ASCII (from the space to DEL, and
         /// none of <c>&amp; &lt; &gt; _</c>, which are the ones that need a look) to <paramref name="destination"/> as
-        /// bytes, eight characters per step, and returns how many it copied. When the whole text is plain and at least
+        /// bytes, sixteen characters per step (then eight), and returns how many it copied. When the whole text is plain and at least
         /// eight characters long the last step overlaps the one before it instead of leaving a tail.
         /// </summary>
         private static int CopyPlainAscii(string value, byte[] buffer, int destination)
@@ -506,6 +536,15 @@ namespace SheetStream
             var length = value.Length;
             ref var source = ref System.Runtime.CompilerServices.Unsafe.As<char, ushort>(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(value.AsSpan()));
             var done = 0;
+            // Sixteen characters per step while there are that many: two blocks are checked together and narrowed into one 16-byte store.
+            while (done + 16 <= length)
+            {
+                var first = System.Runtime.Intrinsics.Vector128.LoadUnsafe(ref source, (nuint)done);
+                var second = System.Runtime.Intrinsics.Vector128.LoadUnsafe(ref source, (nuint)(done + 8));
+                if (!IsPlainAscii(first, second)) break;
+                System.Runtime.Intrinsics.Vector128.StoreUnsafe(System.Runtime.Intrinsics.Vector128.Narrow(first, second), ref buffer[destination + done]);
+                done += 16;
+            }
             while (done + 8 <= length)
             {
                 var block = System.Runtime.Intrinsics.Vector128.LoadUnsafe(ref source, (nuint)done);
@@ -528,14 +567,22 @@ namespace SheetStream
 
         /// <summary>True when every one of the eight characters is from the space to DEL and none is <c>&amp;</c>, <c>&lt;</c>, <c>&gt;</c> or <c>_</c>.</summary>
         private static bool IsPlainAscii(System.Runtime.Intrinsics.Vector128<ushort> block)
+            => System.Runtime.Intrinsics.Vector128.ExtractMostSignificantBits(NeedsLook(block)) == 0;
+
+        /// <summary>The same for sixteen characters at once.</summary>
+        private static bool IsPlainAscii(System.Runtime.Intrinsics.Vector128<ushort> first, System.Runtime.Intrinsics.Vector128<ushort> second)
+            => System.Runtime.Intrinsics.Vector128.ExtractMostSignificantBits(NeedsLook(first) | NeedsLook(second)) == 0;
+
+        /// <summary>All ones in the lanes whose character is not plain: below the space, above DEL, or one of <c>&amp; &lt; &gt; _</c>.</summary>
+        private static System.Runtime.Intrinsics.Vector128<ushort> NeedsLook(System.Runtime.Intrinsics.Vector128<ushort> block)
         {
             // (c - 0x20) as an unsigned number is 0x60 or more exactly when c is below the space or above DEL.
             var outside = System.Runtime.Intrinsics.Vector128.GreaterThanOrEqual(block - System.Runtime.Intrinsics.Vector128.Create((ushort)0x20), System.Runtime.Intrinsics.Vector128.Create((ushort)0x60));
+            // '<' is 0x3C and '>' is 0x3E: they differ in one bit, and no other character becomes 0x3E when that bit is set, so one comparison finds both.
             var special = System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'&'))
-                | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'<'))
-                | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'>'))
+                | System.Runtime.Intrinsics.Vector128.Equals(block | System.Runtime.Intrinsics.Vector128.Create((ushort)2), System.Runtime.Intrinsics.Vector128.Create((ushort)'>'))
                 | System.Runtime.Intrinsics.Vector128.Equals(block, System.Runtime.Intrinsics.Vector128.Create((ushort)'_'));
-            return System.Runtime.Intrinsics.Vector128.ExtractMostSignificantBits(outside | special) == 0;
+            return outside | special;
         }
 
         /// <summary>Writes the low byte of each of the eight characters, which are known to be ASCII, as eight bytes. The caller has reserved room.</summary>
@@ -571,7 +618,17 @@ namespace SheetStream
             }
             ref var state = ref states[column];
             // A column judged inline, or waiting for its next look (which this call counts), pays this one test and no lookup.
-            if (state.WritesInline()) return WriteInlineCore(value, style, shareIfChanged: true);
+            if (state.WritesInline())
+            {
+                // The common cell, composed here without another call: a plain row, no style, the next column, and text that needs nothing but encoding.
+                if (style == null && _plainRow && column == _lastWrittenColumn + 1 && TryAppendInlineText(value, dense: true))
+                {
+                    _lastWrittenColumn = column;
+                    NextColumn = column + 1;
+                    return this;
+                }
+                return WriteInlineCore(value, style, shareIfChanged: true);
+            }
             if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed))
             {
                 // The table is full (see PackageOptions.MaxSharedStringChars): a new text is written inline. It still
@@ -1107,6 +1164,14 @@ namespace SheetStream
         // The start of an unstyled inline cell that needs no address: the cell tag, its type and the text element in one piece.
         private static readonly byte[] DenseInlineOpen = Bytes("<c t=\"inlineStr\"><is><t>");
         private static readonly byte[] DenseInlineOpenPreserve = Bytes("<c t=\"inlineStr\"><is><t xml:space=\"preserve\">");
+#if NET8_0_OR_GREATER
+        // The same constants as 8-byte words in the machine's byte order, so that they are written with a few stores (see TryAppendInlineText).
+        private static readonly ulong DenseOpenWord0 = BitConverter.ToUInt64(DenseInlineOpen, 0);
+        private static readonly ulong DenseOpenWord1 = BitConverter.ToUInt64(DenseInlineOpen, 8);
+        private static readonly ulong DenseOpenWord2 = BitConverter.ToUInt64(DenseInlineOpen, 16);
+        private static readonly ulong InlineCloseWord0 = BitConverter.ToUInt64(InlineClose, 0);
+        private static readonly ulong InlineCloseWord1 = BitConverter.ToUInt64(InlineClose, InlineClose.Length - 8);
+#endif
         private static readonly byte[] IsOpenTag = Bytes("><is>");
         private static readonly byte[] IsCloseTag = Bytes("</is></c>");
         private static readonly byte[] FormulaOpen = Bytes("><f>");

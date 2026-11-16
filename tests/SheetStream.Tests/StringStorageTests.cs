@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Xml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using SheetStream.Internal;
@@ -399,6 +400,54 @@ public class StringStorageTests
         Assert.Equal("row 2999", rows[2999][0]);
         Assert.Equal("Waiting for the warehouse to confirm stock", rows[2999][1]);
         Assert.Equal("edited 2990", rows[2990][2]);
+    }
+
+    // ---- the shared strings part ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The shared strings part is composed in chunks and handed to the XML writer as raw text. It must be what one XmlWriter call per
+    /// element, attribute and piece of text writes, for every kind of text: entities, white space at either end, line breaks,
+    /// characters beyond ASCII, an empty text, and texts around the size of a chunk.
+    /// </summary>
+    [Fact]
+    public void TheSharedStringsPart_IsWrittenExactlyAsXmlWriterWritesIt()
+    {
+        var texts = new List<string> { "", " ", "plain", " lead", "trail ", "\tTabbed\t", "A & B", "<tag>", "a>b<c&d", "\"quoted\" 'single'", "line\r\nbreak\nand\rmore", "é€😀 ñ", "x&", "&x", "<", ">", "&" };
+        foreach (var length in new[] { 1600, 1640, 1641, 1642, 1700, 8000, 8100, 20000 })
+        {
+            texts.Add(new string('a', length));
+            texts.Add(new string('&', length / 6) + "tail");
+            texts.Add("é" + new string('b', length) + "<");
+        }
+        for (var i = 0; i < 3000; i++) texts.Add("entry " + i + (i % 7 == 0 ? " & <" + i + ">" : "") + (i % 11 == 0 ? " " : ""));
+
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            foreach (var text in texts) s.Row().WriteCell(text);
+        }, new PackageOptions { StringStorage = StringStorage.Shared, CompressionLevel = CompressionLevel.Fastest });
+
+        var output = new MemoryStream();
+        using (var w = XmlWriter.Create(output, new XmlWriterSettings { Encoding = new UTF8Encoding(false), CloseOutput = false, NewLineHandling = NewLineHandling.None }))
+        {
+            w.WriteStartDocument(true);
+            w.WriteStartElement("sst", "http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+            var distinct = texts.Distinct(StringComparer.Ordinal).ToList();
+            w.WriteAttributeString("count", texts.Count.ToString());
+            w.WriteAttributeString("uniqueCount", distinct.Count.ToString());
+            foreach (var text in distinct)
+            {
+                w.WriteStartElement("si");
+                w.WriteStartElement("t");
+                if (XmlTextUtil.NeedsSpacePreserve(text)) w.WriteAttributeString("xml", "space", null, "preserve");
+                w.WriteString(text);
+                w.WriteEndElement();
+                w.WriteEndElement();
+            }
+            w.WriteEndElement();
+            w.WriteEndDocument();
+        }
+        Assert.Equal(new UTF8Encoding(false).GetString(output.ToArray()), Part(bytes, "xl/sharedStrings.xml"));
     }
 
     // ---- the second look: columns that repeat among many thousands of values ----------------------------------------
