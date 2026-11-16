@@ -28,7 +28,13 @@ public class ReaderFuzzTests
     private static bool IsExpected(Exception ex) =>
         ex is InvalidDataException || ex is XmlException || ex is FormatException || ex is OverflowException;
 
-    private static byte[] Seed() => ExcelPackage.CreateBytes(wb =>
+    /// <summary>
+    /// The seed workbook. By default its cells are written without their address (consecutive cells need none), so a
+    /// mutation of the sheet part never meets an <c>r</c> attribute to damage. <paramref name="references"/> writes every
+    /// cell with its address, as Excel does and as <see cref="PackageOptions.WriteCellReferences"/> asks, so the fuzzer
+    /// still mutates cell references: bad columns, rows past the sheet, references out of order.
+    /// </summary>
+    private static byte[] Seed(bool references = false) => ExcelPackage.CreateBytes(wb =>
     {
         var bold = wb.Styles.Create(o => { o.Font.Bold = true; o.NumberFormat = "yyyy-mm-dd"; });
         var s = wb.Worksheets.Add("Data");
@@ -36,7 +42,7 @@ public class ReaderFuzzTests
         for (var i = 0; i < 20; i++)
             s.Row().WriteCell("Item " + i).WriteCell(i * 1.5).WriteCell(new DateTime(2026, 1, 1).AddDays(i), bold).WriteCell(i % 2 == 0)
                 .WriteRichText(new RichText("a") { Bold = true }, "b").WriteFormula("B2*2", 3.0).WriteCell(TimeSpan.FromMinutes(i * 7));
-    });
+    }, new PackageOptions { WriteCellReferences = references });
 
     /// <summary>Rebuilds the package with one XML part mutated by <paramref name="mutate"/>.</summary>
     private static byte[] MutatePart(byte[] package, string part, Func<string, string> mutate)
@@ -93,14 +99,21 @@ public class ReaderFuzzTests
     [InlineData("xl/styles.xml")]
     [InlineData("xl/workbook.xml")]
     [InlineData("xl/_rels/workbook.xml.rels")]
-    public async Task MutatedXml_FailsCleanlyOrReads(string part)
+    public Task MutatedXml_FailsCleanlyOrReads(string part) => MutatePartUntilItFailsCleanly(Seed(), part, references: false);
+
+    /// <summary>The same fuzzing of the sheet and the shared strings over a workbook whose cells all carry an <c>r</c> address.</summary>
+    [Theory]
+    [InlineData("xl/worksheets/sheet1.xml")]
+    [InlineData("xl/sharedStrings.xml")]
+    public Task MutatedXml_OfAWorkbookWithCellReferences_FailsCleanlyOrReads(string part) => MutatePartUntilItFailsCleanly(Seed(references: true), part, references: true);
+
+    private static async Task MutatePartUntilItFailsCleanly(byte[] seed, string part, bool references)
     {
-        var seed = Seed();
         // Deterministic per part, so failures reproduce. string.GetHashCode() is randomised per process on
         // .NET Core, so a stable FNV-1a hash is used instead; the first run with a random seed found the s="-1" bug.
         var seedHash = 2166136261u;
         foreach (var ch in part) seedHash = (seedHash ^ ch) * 16777619u;
-        var rng = new Random(unchecked((int)seedHash) ^ 12345 ^ SeedOffset());
+        var rng = new Random(unchecked((int)seedHash) ^ 12345 ^ SeedOffset() ^ (references ? 0x5EED : 0));
         // Fragments that stress the parser: huge or negative numbers, bad references, broken structure.
         string[] junk = { "<", ">", "\"", "999999999999", "-1", "ZZZZZ1", "XFE1", "&amp;", "<row>", "</c>", "t=\"s\"", "s=\"99999\"", "r=\"A0\"", "\u0000", "1E400", "NaN", "1E300", "<a><a><a>" };
 

@@ -33,10 +33,10 @@ namespace SheetStream.Internal
         }
 
         // The fast path below produces the shortest text that reads back as the same number, which is what
-        // double.ToString("R") gives on .NET Core 3.0 and later. .NET Framework and .NET Core 1 and 2 do not: they try
-        // 15 digits, then 17, and their parser is not always exact, so for some values they write 17 digits where a
-        // shorter text exists. A file must not change with the runtime that wrote it, so there the runtime's own
-        // formatter does all the work, as it always did. The net8.0 build only ever runs on a runtime that is right.
+        // double.ToString("R") gives on .NET Core 3.0 and later. .NET Framework does not: it tries 15 digits, then 17,
+        // and its parser is not always exact, so for some values it writes 17 digits where a shorter text exists. A file
+        // must not change with the runtime that wrote it, so there the runtime's own formatter does all the work, as it
+        // always did. The net8.0 build only ever runs on a runtime that is right.
 #if NET8_0_OR_GREATER
         private const bool RuntimeFormatsShortest = true;
 #else
@@ -44,8 +44,11 @@ namespace SheetStream.Internal
 
         private static bool DetectShortestFormatting()
         {
-            // ".NET Core 3.1.x", ".NET 5.0.x", ".NET 8.0.x" are right; ".NET Framework 4.8.x", ".NET Core 2.1.x" and
-            // anything unknown (Mono, for one) keep the old behaviour.
+            // What the description of each runtime makes this return: ".NET Core 3.1.x" and the other ".NET Core 3" to
+            // ".NET Core 9" descriptions (true), ".NET 5.0.x" and later (true), ".NET Framework 4.8.x" (false) and anything
+            // unknown, Mono for one (false). .NET Core 1 and 2 are not told apart: they describe themselves as
+            // ".NET Core 4.6.x", which reads as true here. They are outside what this library supports (.NET Framework
+            // 4.8 and .NET 8 and later), so nothing is done about it.
             var description = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
             if (description.StartsWith(".NET Core ", StringComparison.Ordinal))
                 return description.Length > 10 && description[10] >= '3' && description[10] <= '9';

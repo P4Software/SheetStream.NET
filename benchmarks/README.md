@@ -176,6 +176,8 @@ This is a developer workstation, not an isolated benchmark box. The error column
 
 Measured on 2026-10-13. The tables are copied unchanged from `BenchmarkDotNet.Artifacts/results/*-report-github.md` and from the `--peak` output.
 
+The SpreadCheetahOwn, StringHeavy and StyledDates scenarios, and the figures quoted for them in the CHANGELOG, were measured on 2026-11-16 on a quiet virtual machine, not on the workstation described above. The machine's specification is not recorded in this file yet; the result tables for those scenarios will be added here, together with it, after the final run.
+
 ### Long: 100,000 rows x 10 columns (BenchmarkDotNet)
 
 ```

@@ -21,7 +21,8 @@ namespace SheetStream
         /// <see cref="SheetStream.StringStorage.Shared"/> always uses the shared string table (what SheetStream did
         /// before this setting existed) and <see cref="SheetStream.StringStorage.Inline"/> never does. Every choice
         /// reads back identically in Excel and in <see cref="Reading.ExcelReader"/>; only the file layout, the
-        /// speed and the memory differ. <see cref="UseSharedStrings"/> set to <c>false</c> overrides this setting
+        /// speed and the memory differ (some third-party readers show <c>_xHHHH_</c> escapes of inline text, see
+        /// <see cref="SheetStream.StringStorage"/>). <see cref="UseSharedStrings"/> set to <c>false</c> overrides this setting
         /// and stores everything inline.
         /// </summary>
         public StringStorage StringStorage { get; set; } = StringStorage.Auto;
@@ -52,11 +53,15 @@ namespace SheetStream
         /// a sheet. The default is <c>false</c>: a cell that sits in the column right after the previous cell
         /// of its row is written without its address, which the Open XML specification allows (a cell without
         /// one belongs in the next column, and the first cell of a row in column A). That makes the file
-        /// smaller and the write faster, and Excel, <see cref="Reading.ExcelReader"/>, EPPlus, ClosedXML,
-        /// MiniExcel, ExcelDataReader and NPOI's normal XSSF reader all read such files correctly. Some tools
-        /// do not: NPOI's XSSF event (SAX) reader, the Excel ADO / OleDb provider, Microsoft Spreadsheet
-        /// Compare, and your own Open XML SDK code that reads <c>Cell.CellReference</c> (it is <c>null</c> for
-        /// a cell without an address). If a tool you or your users rely on needs the address, set this to
+        /// smaller and the write faster. We read a sheet with gaps, written with the default, through Excel,
+        /// <see cref="Reading.ExcelReader"/>, EPPlus 4.5.3.3, ClosedXML 0.105.1, ExcelDataReader 3.9.0 and NPOI 2.7.6's
+        /// XSSF reader (checked 2026-11-16): each puts every value in the right cell. Three readers we checked do not:
+        /// MiniExcel 1.46.0 ignores the addresses of a sheet whose first cell has none, so a value after a gap lands in
+        /// the wrong column (a sheet with no gaps reads correctly); NPOI 2.7.6's event (SAX) reader hands over a
+        /// <c>null</c> address for such a cell; and the Excel ADO / OleDb provider (ACE 12.0 and 16.0) fails with
+        /// "System resource exceeded". Your own Open XML SDK code that reads <c>Cell.CellReference</c> gets <c>null</c> for
+        /// a cell without an address, as the attribute is absent. We have not checked Microsoft Spreadsheet Compare, which
+        /// has been reported to need the address. If a tool you or your users rely on needs the address, set this to
         /// <c>true</c>. The cost is a larger file and a somewhat slower write, in proportion to the number of
         /// cells. It applies to every cell SheetStream writes, whichever way: <c>Row()</c>, <c>Cells[,]</c>,
         /// AutoFit, <c>Worksheets.Edit</c> and the rows filled into a template. Rows of a template that are copied

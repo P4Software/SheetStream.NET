@@ -1,9 +1,11 @@
 namespace SheetStream
 {
     /// <summary>
-    /// How text cells are stored in the file. All three choices produce workbooks that Excel and every other
-    /// reader (including <see cref="Reading.ExcelReader"/>) read identically: the cell shows the same text. They
-    /// differ only in where the text sits inside the .xlsx and therefore in speed, memory and file size.
+    /// How text cells are stored in the file. All three choices produce workbooks that Excel and
+    /// <see cref="Reading.ExcelReader"/> read identically: the cell shows the same text. They differ only in where the
+    /// text sits inside the .xlsx and therefore in speed, memory and file size. Some third-party readers do not treat the
+    /// two layouts alike: openpyxl (and pandas through it) shows the <c>_xHHHH_</c> escapes the file uses for a control
+    /// character, and for a literal <c>_xHHHH_</c> in inline text, as characters of the text.
     /// </summary>
     /// <remarks>
     /// A workbook can store a text cell in one of two ways. <b>Shared</b> keeps each distinct text once in a

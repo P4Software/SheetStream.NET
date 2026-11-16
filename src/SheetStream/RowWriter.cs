@@ -396,8 +396,9 @@ namespace SheetStream
         /// <param name="style">The cell style, or null.</param>
         /// <param name="shareIfChanged">
         /// Set by <see cref="StringStorage.Auto"/> for a column judged inline: text that <see cref="XmlTextUtil.Sanitize"/> has to
-        /// change (control characters, a literal <c>_xHHHH_</c>) goes through the shared table instead, because some readers
-        /// (openpyxl, and pandas through it) decode the <c>_xHHHH_</c> escapes in shared strings but not in inline ones.
+        /// change (control characters, a literal <c>_xHHHH_</c>) goes through the shared table instead, because openpyxl (and
+        /// pandas through it) shows the <c>_x005F_</c> escape of a literal <c>_xHHHH_</c> as it is in an inline cell but decodes it in a shared
+        /// string (checked with openpyxl 3.1.5; it shows the escape of a control character as text in both).
         /// </param>
         private RowWriter WriteInlineCore(string value, CellStyle? style, bool shareIfChanged = false)
         {
