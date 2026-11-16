@@ -570,7 +570,8 @@ namespace SheetStream
                 states = GrowColumnStates(column);
             }
             ref var state = ref states[column];
-            if (state.Mode == ColumnMode.Inline) return WriteInlineCore(value, style, shareIfChanged: true);
+            // A column judged inline, or waiting for its next look (which this call counts), pays this one test and no lookup.
+            if (state.WritesInline()) return WriteInlineCore(value, style, shareIfChanged: true);
             if (!_sharedStrings!.TryGetOrAdd(XmlTextUtil.Sanitize(value), out var index, out var existed))
             {
                 // The table is full (see PackageOptions.MaxSharedStringChars): a new text is written inline. It still

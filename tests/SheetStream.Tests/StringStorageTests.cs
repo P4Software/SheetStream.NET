@@ -28,7 +28,8 @@ public class StringStorageTests
         if (_picks.Length <= i)
         {
             var random = new Random(20261116); // A fixed seed: never string.GetHashCode, which differs from one process to the next.
-            _picks = Enumerable.Range(0, Math.Max(i + 1, 100_000)).Select(_ => random.Next()).ToArray();
+            // Grown in one step to a size no test here outgrows; a table that grew one entry at a time would be rebuilt for every cell.
+            _picks = Enumerable.Range(0, Math.Max(i + 1, 300_000)).Select(_ => random.Next()).ToArray();
         }
         return _picks[i] % count;
     }
@@ -239,7 +240,7 @@ public class StringStorageTests
 
         var sheet = Part(bytes, "xl/worksheets/sheet1.xml");
         Assert.True(Count(sheet, "t=\"s\"") > 0 && Count(sheet, "t=\"inlineStr\"") > 0, "Both kinds of cell are in the file.");
-        Assert.True(uniqueInTable < rows, "The table did not take every text.");
+        Assert.True(uniqueInTable < expected.SelectMany(r => r).Distinct().Count(), "The table did not take every text.");
         AssertReadsBack(bytes, expected);
 
         using var doc = SpreadsheetDocument.Open(new MemoryStream(bytes), false);
@@ -400,6 +401,188 @@ public class StringStorageTests
         Assert.Equal("edited 2990", rows[2990][2]);
     }
 
+    // ---- the second look: columns that repeat among many thousands of values ----------------------------------------
+
+    /// <summary>A fixed pool of <paramref name="count"/> random lower-case tokens of <paramref name="length"/> characters, each starting with its number so that all are different.</summary>
+    private static string[] TokenPool(int count, int length, int seed)
+    {
+        var random = new Random(seed); // A fixed seed: never string.GetHashCode, which differs from one process to the next.
+        var pool = new string[count];
+        var chars = new char[length];
+        for (var i = 0; i < count; i++)
+        {
+            for (var k = 0; k < length; k++) chars[k] = (char)('a' + random.Next(26));
+            var number = i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            number.CopyTo(0, chars, 0, number.Length);
+            pool[i] = new string(chars);
+        }
+        return pool;
+    }
+
+    /// <summary>
+    /// The case the first sample cannot see: a column draws from 20,000 different values, so none repeats in the first
+    /// cells and every repeat is too far back for the zip compressor (its window is 32 KB, about a hundred rows). It must
+    /// still end up shared, early enough that the file is within about 10% of what <see cref="StringStorage.Shared"/> makes.
+    /// </summary>
+    [Theory]
+    [InlineData(25)]
+    [InlineData(80)]
+    public void Auto_AColumnThatRepeatsAmongTwentyThousandValues_IsSharedAfterASecondLook(int length)
+    {
+        const int rows = 100_000;
+        var poolA = TokenPool(20_000, length, 101);
+        var poolB = TokenPool(20_000, length, 202);
+        string[] Row(int i) => new[] { poolA[Pick(i, 20_000)], poolB[Pick(rows + i, 20_000)] };
+
+        byte[] Build(StringStorage storage) => ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++)
+            {
+                var values = Row(i);
+                s.Row().WriteCell(values[0]).WriteCell(values[1]);
+            }
+        }, Options(storage));
+
+        var auto = Build(StringStorage.Auto);
+        var shared = Build(StringStorage.Shared);
+        Assert.True(auto.Length <= shared.Length * 1.10, $"Auto made {auto.Length:N0} bytes, Shared {shared.Length:N0}.");
+
+        // Both columns were looked at again and shared a few hundred cells in: only the cells before that are inline.
+        var sheet = Part(auto, "xl/worksheets/sheet1.xml");
+        Assert.True(Count(sheet, "t=\"inlineStr\"") < 2 * (StringColumnPolicy.FirstLookAt + 2 * StringColumnPolicy.LookCells), $"{Count(sheet, "t=\"inlineStr\"")} inline cells.");
+        AssertReadsBack(auto, Enumerable.Range(0, rows).Select(i => (string?[])Row(i)).ToList());
+    }
+
+    /// <summary>A column of text that never repeats stays inline after both looks, and what the looks put in the table is a few hundred texts, not the column.</summary>
+    [Fact]
+    public void Auto_AColumnOfUniqueText_StaysInlineAfterTheSecondLooks()
+    {
+        const int rows = 60_000;
+        long uniqueInTable = 0;
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++) s.Row().WriteCell("Order SO-" + i.ToString("D8")).WriteCell("customer" + i + "@example.com");
+            uniqueInTable = wb.SharedStrings.UniqueCount;
+        }, Options(StringStorage.Auto));
+
+        // Per column: the first cells up to the early exit, and one window of each of the two looks.
+        Assert.True(uniqueInTable <= 2 * (StringColumnPolicy.EarlyExitCells + 2 * StringColumnPolicy.LookCells), $"The table holds {uniqueInTable} texts.");
+        var sheet = Part(bytes, "xl/worksheets/sheet1.xml");
+        Assert.True(Count(sheet, "t=\"inlineStr\"") >= 2 * rows - uniqueInTable);
+        AssertReadsBack(bytes, Enumerable.Range(0, rows).Select(i => new[] { "Order SO-" + i.ToString("D8"), "customer" + i + "@example.com" }).ToList());
+    }
+
+    /// <summary>
+    /// Values from a small set, however long the column, fit the compressor's window: a repeat is never far back, so nothing is
+    /// gained from the table. A column of such values that starts as unique text and settles later stays inline.
+    /// </summary>
+    [Fact]
+    public void Auto_AColumnOfAFewShortValues_ThatBeginsUnique_StaysInlineAfterTheLooks()
+    {
+        const int rows = 40_000;
+        string Code(int i) => i < 200 ? "id" + i : "C" + Pick(i, 40).ToString("D2");
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++) s.Row().WriteCell(Code(i)).WriteCell("ref" + i);
+        }, Options(StringStorage.Auto));
+
+        var sheet = Part(bytes, "xl/worksheets/sheet1.xml");
+        Assert.True(Count(sheet, "t=\"inlineStr\"") > 2 * rows - 2 * (StringColumnPolicy.EarlyExitCells + 2 * StringColumnPolicy.LookCells + StringColumnPolicy.ProbeCells));
+        AssertReadsBack(bytes, Enumerable.Range(0, rows).Select(i => new[] { Code(i), "ref" + i }).ToList());
+    }
+
+    /// <summary>A column that is unique for a while and then draws from many thousands of values is shared by the last look, in the middle of the sheet; every cell still reads back.</summary>
+    [Fact]
+    public void Auto_AColumnThatBeginsUniqueAndThenRepeatsAmongManyValues_ReadsBackExactlyAcrossTheChange()
+    {
+        const int rows = 60_000;
+        var pool = TokenPool(12_000, 30, 303);
+        string Text(int i) => i < 2000 ? "unique " + i : pool[Pick(i, 12_000)];
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 0; i < rows; i++) s.Row().WriteCell(Text(i)).WriteCell(i).WriteCell("after " + i);
+        }, Options(StringStorage.Auto));
+
+        var sheet = Part(bytes, "xl/worksheets/sheet1.xml");
+        Assert.True(Count(sheet, "t=\"s\"") > rows / 2, "The last look shares the column from the middle of its first third on.");
+        Assert.True(Count(sheet, "t=\"inlineStr\"") > rows, "The column of ids is inline.");
+        var read = Read(bytes);
+        Assert.Equal(rows, read.Count);
+        for (var i = 0; i < rows; i += 7)
+        {
+            Assert.Equal(Text(i), read[i][0] as string);
+            Assert.Equal("after " + i, read[i][2] as string);
+        }
+    }
+
+    /// <summary>The same column through the two other ways of writing a sheet that reorder or buffer the cells: AutoFit (rows are spilled to a file first) and random access (<c>Cells[]</c>).</summary>
+    [Fact]
+    public void Auto_ASecondLook_ReadsBackExactly_WithAutoFitAndWithRandomAccessCells()
+    {
+        const int rows = 30_000;
+        var pool = TokenPool(20_000, 40, 404);
+        string Text(int i) => pool[Pick(i, 20_000)];
+
+        var autoFit = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            s.AutoFitColumns();
+            for (var i = 0; i < rows; i++) s.Row().WriteCell(Text(i)).WriteCell("row " + i);
+        }, Options(StringStorage.Auto));
+        Assert.True(Count(Part(autoFit, "xl/worksheets/sheet1.xml"), "t=\"s\"") > rows, "The column is shared.");
+        AssertReadsBack(autoFit, Enumerable.Range(0, rows).Select(i => new[] { Text(i), "row " + i }).ToList());
+
+        var random = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            for (var i = 1; i <= rows; i++)
+            {
+                s.Cells[i, 2].Value = "row " + (i - 1);
+                s.Cells[i, 1].Value = Text(i - 1);
+            }
+        }, Options(StringStorage.Auto));
+        Assert.True(Count(Part(random, "xl/worksheets/sheet1.xml"), "t=\"s\"") > rows, "The column is shared.");
+        AssertReadsBack(random, Enumerable.Range(0, rows).Select(i => new[] { Text(i), "row " + i }).ToList());
+    }
+
+    /// <summary>
+    /// What the decision does with the kinds of column, without a workbook: whether a column becomes shared and how soon. The
+    /// data is a fixed random draw from the given number of values of the given length, after a start of unique texts (so that the first judgement
+    /// is "unique" and the looks decide).
+    /// </summary>
+    [Theory]
+    [InlineData(0, 25, false)]       // unique text
+    [InlineData(20_000, 25, true)]   // many values, far apart: a vocabulary of 500 KB
+    [InlineData(20_000, 80, true)]
+    [InlineData(100_000, 25, true)]  // more values still: caught by the last look
+    [InlineData(1_500, 30, true)]    // a vocabulary of 45 KB
+    [InlineData(1_000, 13, false)]   // 1,000 customer names: 13 KB, which the compressor remembers, and finds the words of again and again
+    [InlineData(40, 7, false)]       // a few short values
+    [InlineData(40, 30, false)]      // a few long values: 1 KB
+    public void TheSecondLook_SharesWhatRepeatsBeyondTheCompressorWindow(int distinct, int length, bool sharedByTheLooks)
+    {
+        var random = new Random(77);
+        var pool = distinct == 0 ? null : TokenPool(distinct, length, 5);
+        string Text(int i) => pool == null || i < 128 ? "u" + i + new string('x', length) : pool[random.Next(distinct)];
+
+        var table = new HashSet<string>();
+        var state = new StringColumnState();
+        var sharedAt = -1;
+        for (var i = 0; i < 100_000; i++)
+        {
+            if (state.WritesInline()) continue;
+            var text = Text(i);
+            state.Observe(!table.Add(text), text.Length);
+            if (sharedAt < 0 && state.Mode == ColumnMode.Shared) sharedAt = i;
+        }
+        Assert.Equal(sharedByTheLooks, sharedAt >= 0);
+        if (distinct == 20_000) Assert.True(sharedAt <= StringColumnPolicy.FirstLookAt + StringColumnPolicy.LookCells + 8, $"Shared only at cell {sharedAt}.");
+        if (!sharedByTheLooks) Assert.Equal(ColumnMode.Inline, state.Mode);
+    }
     // ---- bounded memory ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -434,12 +617,22 @@ public class StringStorageTests
         for (var i = 0; i < 3 * StringColumnPolicy.MonitorCells; i++) repeating.Observe(hit: i % 3 != 0, length: 30);
         Assert.Equal(ColumnMode.Shared, repeating.Mode);
 
-        // A unique column is judged inline for good.
+        // A unique column is judged unique at once, written inline without a lookup, and looked at again twice before it is inline for good.
         var unique = new StringColumnState();
         for (var i = 0; i < StringColumnPolicy.EarlyExitCells - 1; i++) unique.Observe(hit: false, length: 12);
         Assert.Equal(ColumnMode.Sampling, unique.Mode);
         unique.Observe(hit: false, length: 12);
+        Assert.Equal(ColumnMode.Waiting, unique.Mode);
+        var inlineCells = 0;
+        while (unique.WritesInline()) inlineCells++;
+        Assert.Equal(ColumnMode.Looking, unique.Mode);
+        Assert.Equal(StringColumnPolicy.FirstLookAt - StringColumnPolicy.EarlyExitCells - 1, inlineCells);
+        for (var i = 0; i < StringColumnPolicy.LookCells; i++) unique.Observe(hit: false, length: 12);
+        Assert.Equal(ColumnMode.Waiting, unique.Mode);
+        while (unique.WritesInline()) { }
+        for (var i = 0; i < StringColumnPolicy.LookCells; i++) unique.Observe(hit: false, length: 12);
         Assert.Equal(ColumnMode.Inline, unique.Mode);
+        Assert.True(unique.WritesInline());
 
         // A shared column whose repeats dry up is let go at the end of its monitoring window.
         var drying = new StringColumnState();
@@ -456,10 +649,10 @@ public class StringStorageTests
         for (var i = 0; i < StringColumnPolicy.ProbeCells; i++) many.Observe(hit: i % 2 == 1, length: 6); // Half of the 512 cells are new: 256 distinct texts.
         Assert.Equal(ColumnMode.Shared, many.Mode);
 
-        // A handful of accidental repeats in a column of unique text is not enough.
+        // A handful of accidental repeats in a column of unique text is not enough to share it at the first judgement; it gets its second looks.
         var accidental = new StringColumnState();
         for (var i = 0; i < StringColumnPolicy.ProbeCells; i++) accidental.Observe(hit: i % 40 == 0, length: 20);
-        Assert.Equal(ColumnMode.Inline, accidental.Mode);
+        Assert.Equal(ColumnMode.Waiting, accidental.Mode);
     }
     [Fact]
     public void TheConstants_AreTheOnesTheDocumentationNames()
@@ -470,5 +663,11 @@ public class StringStorageTests
         Assert.Equal(5, StringColumnPolicy.EnterPercent);
         Assert.Equal(16, StringColumnPolicy.MinRepeatedLength);
         Assert.Equal(200, StringColumnPolicy.MinDistinct);
+        Assert.Equal(512, StringColumnPolicy.FirstLookAt);
+        Assert.Equal(8192, StringColumnPolicy.LastLookAt);
+        Assert.Equal(512, StringColumnPolicy.LookCells);
+        Assert.Equal(3, StringColumnPolicy.MinLookHits);
+        Assert.Equal(24 * 1024, StringColumnPolicy.WindowBytes);
+        Assert.Equal(100, StringColumnPolicy.MaxCellsPerRepeat);
     }
 }

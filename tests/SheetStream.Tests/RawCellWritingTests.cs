@@ -489,12 +489,13 @@ public class RawCellWritingTests
                         case ScriptKind.Text when auto:
                         {
                             ref var state = ref columnStates[next];
+                            var inlineColumn = state.WritesInline(); // Also counts a cell of a column that is waiting for its next look.
                             var sanitized = XmlTextUtil.Sanitize(cell.Text!);
-                            if (state.Mode == ColumnMode.Inline && ReferenceEquals(sanitized, cell.Text)) { Inline(cell.Text!, style); break; }
-                            // Sampled or shared columns, and text that had to be changed (kept out of inline cells, see RowWriter.WriteInlineCore).
+                            if (inlineColumn && ReferenceEquals(sanitized, cell.Text)) { Inline(cell.Text!, style); break; }
+                            // Sampled, looking or shared columns, and text that had to be changed (kept out of inline cells, see RowWriter.WriteInlineCore).
                             var known = sharedIndex.TryGetValue(sanitized, out var index);
                             if (!known) sharedIndex[sanitized] = index = sharedIndex.Count;
-                            if (state.Mode != ColumnMode.Inline) state.Observe(known, cell.Text!.Length);
+                            if (!inlineColumn) state.Observe(known, cell.Text!.Length);
                             Begin(style, "s");
                             Value(x => x.WriteValue(index));
                             break;

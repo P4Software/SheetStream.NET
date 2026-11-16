@@ -20,8 +20,11 @@ namespace SheetStream
         /// The default. SheetStream decides column by column while it writes: a column whose values repeat and are
         /// worth sharing keeps using the shared string table; every other column (ids, e-mail addresses, free text,
         /// short values from a small set) is written inline, with no lookup. The decision is made from the first 128 to
-        /// 512 cells of the column. A shared column that stops repeating is written inline from then on. Memory stays
-        /// bounded: the table is only fed by the cells that were sampled and by the columns that repeat, and never
+        /// 512 cells of the column. A column that looks unique then gets two more looks, of 512 cells each, at its 512th and
+        /// 8,192nd cell, because it may repeat among thousands of values that are too far apart to show in its first cells (and
+        /// too far apart for the zip compressor to fold away): if the looks estimate that its different values do not fit the
+        /// compressor's 32 KB window, it is shared from there on. A shared column that stops repeating is written inline from then
+        /// on. Memory stays bounded: the table is only fed by the cells that were sampled and by the columns that repeat, and never
         /// grows beyond <see cref="PackageOptions.MaxSharedStringChars"/>. A sheet of fewer than 128 rows is stored exactly
         /// as <see cref="Shared"/> does.
         /// </summary>

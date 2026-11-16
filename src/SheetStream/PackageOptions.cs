@@ -15,7 +15,8 @@ namespace SheetStream
 
         /// <summary>
         /// How text cells are stored: <see cref="SheetStream.StringStorage.Auto"/> (default) shares the values of
-        /// columns that repeat and are long or varied, and writes every other column (unique text, and short values
+        /// columns that repeat and are long or varied (including columns that repeat among many thousands of values, which it
+        /// finds with two more looks later in the sheet), and writes every other column (unique text, and short values
         /// from a small set) inside its cells,
         /// <see cref="SheetStream.StringStorage.Shared"/> always uses the shared string table (what SheetStream did
         /// before this setting existed) and <see cref="SheetStream.StringStorage.Inline"/> never does. Every choice
