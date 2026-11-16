@@ -27,12 +27,19 @@ namespace SheetStream.Internal
     /// Whoever writes to <see cref="Buffer"/> directly must set <see cref="Count"/> and call <see cref="Drain"/>
     /// when the buffer is full, and must have flushed the <c>XmlWriter</c> over this stream first so that nothing it
     /// wrote earlier is still waiting in the XML writer's own buffer.
+    /// <para>
+    /// <b>A failure is final.</b> An <c>XmlWriter</c> that meets an I/O error is dead afterwards: every later call
+    /// throws, so a caller that catches the error and carries on can never save a sheet with a hole in it. The row
+    /// writer bypasses the XML writer, so this stream takes over that promise: once a write to the zip entry has
+    /// failed, every later write, drain and close throws too.
+    /// </para>
     /// </remarks>
     internal sealed class PartStream : Stream
     {
         private readonly Stream _inner;
         private readonly bool _leaveOpen;
         private bool _closed;
+        private Exception? _fault;
 
         /// <summary>Wraps <paramref name="inner"/> (usually a zip entry stream) with the given buffer.</summary>
         public PartStream(Stream inner, byte[] buffer, bool leaveOpen = false)
@@ -51,15 +58,37 @@ namespace SheetStream.Internal
         /// <summary>Hands everything pending to the underlying stream and empties the buffer.</summary>
         public void Drain()
         {
+            ThrowIfFaulted();
             var count = Count;
             if (count == 0) return;
             Count = 0;
-            _inner.Write(Buffer, 0, count);
+            WriteInner(Buffer, 0, count);
+        }
+
+        /// <summary>Writes to the underlying stream and remembers a failure for good.</summary>
+        private void WriteInner(byte[] buffer, int offset, int count)
+        {
+            try
+            {
+                _inner.Write(buffer, offset, count);
+            }
+            catch (Exception ex)
+            {
+                _fault = ex;
+                throw;
+            }
+        }
+
+        private void ThrowIfFaulted()
+        {
+            if (_fault != null)
+                throw new IOException("An earlier write to the workbook failed, so the part cannot be completed. " + _fault.Message, _fault);
         }
 
         /// <inheritdoc />
         public override void Write(byte[] buffer, int offset, int count)
         {
+            ThrowIfFaulted();
             var room = Buffer.Length - Count;
             if (count <= room)
             {
@@ -72,7 +101,7 @@ namespace SheetStream.Internal
             if (count >= Buffer.Length)
             {
                 // A block as big as the buffer needs no copy.
-                _inner.Write(buffer, offset, count);
+                WriteInner(buffer, offset, count);
                 return;
             }
             System.Buffer.BlockCopy(buffer, offset, Buffer, 0, count);
@@ -92,6 +121,8 @@ namespace SheetStream.Internal
             _closed = true;
             if (disposing)
             {
+                // The entry is closed whatever happened, but a failed part must not look like a finished one:
+                // Drain throws when an earlier write failed, and so ends the save.
                 try { Drain(); }
                 finally { if (!_leaveOpen) _inner.Dispose(); }
             }

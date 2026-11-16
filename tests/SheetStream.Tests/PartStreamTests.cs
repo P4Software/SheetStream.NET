@@ -103,6 +103,42 @@ public class PartStreamTests
         Assert.Equal(new[] { 5, 4096 }, sink.Writes);
     }
 
+    /// <summary>A stream that fails its first write and would accept every one after it.</summary>
+    private sealed class FailsOnce : MemoryStream
+    {
+        private bool _failed;
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                throw new IOException("The disk is full.");
+            }
+            base.Write(buffer, offset, count);
+        }
+    }
+
+    /// <summary>
+    /// An XmlWriter that meets an I/O error is dead afterwards, so a caller that catches the error and carries on can
+    /// never save a sheet with a hole in it. The row writer bypasses the XML writer, so this stream keeps that promise.
+    /// </summary>
+    [Fact]
+    public void AFailedWrite_FailsEveryLaterWriteDrainAndClose()
+    {
+        var sink = new FailsOnce();
+        var stream = new PartStream(sink, new byte[4096], leaveOpen: true);
+        stream.Count = 10;
+        Assert.Throws<IOException>(() => stream.Drain());
+
+        // The inner stream would take the bytes now; the part must not be completed anyway.
+        Assert.Throws<IOException>(() => stream.Write(new byte[10], 0, 10));
+        stream.Count = 10;
+        Assert.Throws<IOException>(() => stream.Drain());
+        Assert.Throws<IOException>(() => stream.Dispose());
+        Assert.Equal(0, sink.Length);
+    }
+
     [Fact]
     public void LeaveOpen_KeepsTheUnderlyingStreamOpen()
     {

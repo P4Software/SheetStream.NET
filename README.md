@@ -4,7 +4,7 @@
 
 SheetStream.NET is a zero-dependency, MIT-licensed .NET library that creates, fills, edits and reads Excel (`.xlsx`) files. It is not related to the Node.js package of the same name.
 
-P4 Software built it when EPPlus moved to a commercial licence. Rows are written straight into the zip archive through an `XmlWriter`, so memory stays flat however many rows you export. It targets `netstandard2.0` and `net8.0`, which covers .NET Framework 4.7.2 and later, and .NET 8 and later. The namespace and assembly are `SheetStream`.
+P4 Software built it when EPPlus moved to a commercial licence. Rows are written straight into the zip archive as they are produced, so memory stays flat however many rows you export. It targets `netstandard2.0` and `net8.0`, which covers .NET Framework 4.7.2 and later, and .NET 8 and later. The namespace and assembly are `SheetStream`.
 
 ## Install
 

@@ -369,10 +369,15 @@ namespace SheetStream
                 if (run == null) throw new ArgumentException("Runs cannot be null.", nameof(runs));
             EnsureOpen();
 
+            // The runs are rendered first. A run can fail (a font name XML cannot carry), and by then nothing of the
+            // cell may be in the row: a half-written cell would make the whole sheet unreadable.
+            var rendered = RenderRuns(runs);
+
             // Rich text is written inline: shared strings would need the same run markup and rarely repeat.
             BeginCellRaw(style, TypeInline);
             AppendFixed(IsOpenTag);
-            AppendRuns(runs);
+            AppendBytes(rendered.GetBuffer(), (int)rendered.Length);
+            rendered.SetLength(0);
             EnsureRoom(CellReserve);
             AppendFixed(IsCloseTag);
             string? text = null;
@@ -389,10 +394,11 @@ namespace SheetStream
 
         /// <summary>
         /// Renders the runs with a real XmlWriter (they are the only markup here with enough structure to be worth
-        /// it, and rich text is not a bulk case) and copies the finished bytes into the staging buffer. The runs use
-        /// plain element names, so the output is the same as if they had been written in place.
+        /// it, and rich text is not a bulk case) and returns the finished UTF-8 bytes. The runs use plain element
+        /// names, so the output is the same as if they had been written in place. The returned stream is reused: the
+        /// caller copies the bytes out and empties it.
         /// </summary>
-        private void AppendRuns(RichText[] runs)
+        private MemoryStream RenderRuns(RichText[] runs)
         {
             if (_fragment == null)
             {
@@ -406,6 +412,7 @@ namespace SheetStream
                     NewLineHandling = NewLineHandling.None,
                 });
             }
+            var bytes = _fragmentBytes!;
             try
             {
                 foreach (var run in runs) run.WriteTo(_fragment);
@@ -418,11 +425,8 @@ namespace SheetStream
                 _fragmentBytes = null;
                 throw;
             }
-            var bytes = _fragmentBytes!;
-            AppendBytes(bytes.GetBuffer(), (int)bytes.Length);
-            bytes.SetLength(0);
+            return bytes;
         }
-
         /// <summary>
         /// Writes a text cell that links to a web page, file or e-mail address (<c>mailto:</c>). The built-in
         /// Hyperlink style is used unless another style is given.
