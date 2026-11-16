@@ -46,6 +46,9 @@ public static class Writers
     {
         new SheetStreamWriter(CompressionLevel.Optimal),
         new SheetStreamWriter(CompressionLevel.Fastest),
+        // What SheetStream did before text could be stored inline: every text through the shared string table. Kept so the before/after is in one run.
+        new SheetStreamWriter(CompressionLevel.Optimal, storage: SS.StringStorage.Shared),
+        new SheetStreamWriter(CompressionLevel.Fastest, storage: SS.StringStorage.Shared),
         new SpreadCheetahWriter(SC.SpreadCheetahCompressionLevel.Fastest),
         new SpreadCheetahWriter(SC.SpreadCheetahCompressionLevel.Optimal),
         new EPPlusWriter(),
@@ -70,6 +73,7 @@ public sealed class SheetStreamWriter : ILibraryWriter
 {
     private readonly CompressionLevel _level;
     private readonly bool _writeCellReferences;
+    private readonly SS.StringStorage _storage;
 
     /// <summary>Creates a writer using the given zip compression level.</summary>
     /// <param name="level">Zip compression level.</param>
@@ -79,16 +83,18 @@ public sealed class SheetStreamWriter : ILibraryWriter
     /// readers under test (NPOI's SAX reader) need the address of every cell, and a reader table should compare
     /// readers on a file they can all read, not penalise one for a writer-side default.
     /// </param>
-    public SheetStreamWriter(CompressionLevel level, bool writeCellReferences = false)
+    /// <param name="storage">How text cells are stored. The default, <see cref="SS.StringStorage.Auto"/>, is SheetStream's default setting.</param>
+    public SheetStreamWriter(CompressionLevel level, bool writeCellReferences = false, SS.StringStorage storage = SS.StringStorage.Auto)
     {
         _level = level;
         _writeCellReferences = writeCellReferences;
+        _storage = storage;
     }
 
     /// <inheritdoc />
-    public string Name => _level == CompressionLevel.Optimal ? "SheetStream" : "SheetStream-Fastest";
+    public string Name => (_storage == SS.StringStorage.Shared ? "SheetStream-Shared" : "SheetStream") + (_level == CompressionLevel.Optimal ? "" : "-Fastest");
 
-    private SS.PackageOptions Options => new SS.PackageOptions { CompressionLevel = _level, WriteCellReferences = _writeCellReferences };
+    private SS.PackageOptions Options => new SS.PackageOptions { CompressionLevel = _level, WriteCellReferences = _writeCellReferences, StringStorage = _storage };
 
     /// <inheritdoc />
     public void WriteLong(Stream output, LongRow[] rows)
@@ -138,7 +144,7 @@ public sealed class SheetStreamWriter : ILibraryWriter
     /// <inheritdoc />
     public void WriteStrings(Stream output, string[][] rows)
     {
-        // Default options on purpose: strings go through the shared string table, which is SheetStream's default.
+        // Default options on purpose (StringStorage.Auto): SheetStream decides per column whether text is shared or inline.
         using var package = new SS.ExcelPackage(output, leaveOpen: true, Options);
         var sheet = package.Workbook.Worksheets.Add("Data");
         for (int r = 0; r < rows.Length; r++)

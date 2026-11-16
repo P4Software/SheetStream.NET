@@ -56,6 +56,12 @@ public abstract class LongShapeBenchmarks : ScenarioBenchmarks
     [Benchmark(Description = "SheetStream (Fastest zip)")]
     public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
 
+    [Benchmark(Description = "SheetStream (shared strings, as before)")]
+    public long SheetStreamShared() => Run(Writers.Get("SheetStream-Shared"));
+
+    [Benchmark(Description = "SheetStream (shared strings, Fastest zip)")]
+    public long SheetStreamSharedFastest() => Run(Writers.Get("SheetStream-Shared-Fastest"));
+
     [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
     public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
 
@@ -149,6 +155,12 @@ public abstract class StringShapeBenchmarks : ScenarioBenchmarks
 
     [Benchmark(Description = "SheetStream (Fastest zip)")]
     public long SheetStreamFastest() => Run(Writers.Get("SheetStream-Fastest"));
+
+    [Benchmark(Description = "SheetStream (shared strings, as before)")]
+    public long SheetStreamShared() => Run(Writers.Get("SheetStream-Shared"));
+
+    [Benchmark(Description = "SheetStream (shared strings, Fastest zip)")]
+    public long SheetStreamSharedFastest() => Run(Writers.Get("SheetStream-Shared-Fastest"));
 
     [Benchmark(Description = "SpreadCheetah (default, Fastest zip)")]
     public long SpreadCheetah() => Run(Writers.Get("SpreadCheetah"));
