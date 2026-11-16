@@ -153,6 +153,62 @@ public class CellTextLengthTests
         Assert.Equal(Max, ((string)rows[1][0]!).Length);
     }
 
+    private sealed class LongWhenWritten : IFormattable
+    {
+        public override string ToString() => new string('w', Max + 1);
+        public string ToString(string? format, IFormatProvider? provider) => new string('w', Max + 1);
+    }
+
+    private sealed class LongToString
+    {
+        public override string ToString() => new string('w', Max + 1);
+    }
+
+    /// <summary>
+    /// An object that becomes text only when it is written (a StringBuilder, a type with its own ToString) used to pass the setter and fail
+    /// when the sheet was sealed, which left the whole package unable to save. It is now converted by the same rules the writer uses, and
+    /// refused at the assignment.
+    /// </summary>
+    [Fact]
+    public void CellsIndexer_RefusesAnObjectThatBecomesTooLongText_AtTheAssignment()
+    {
+        var bytes = ExcelPackage.CreateBytes(wb =>
+        {
+            var s = wb.Worksheets.Add("S");
+            s.Cells[1, 1].Value = "keep";
+            Assert.Throws<ArgumentException>(() => s.Cells[1, 1].Value = new System.Text.StringBuilder().Append('w', Max + 1));
+            Assert.Throws<ArgumentException>(() => s.Cells[1, 1].Value = new LongWhenWritten());
+            Assert.Throws<ArgumentException>(() => s.Cells[2, 1].Value = new LongToString());
+            Assert.Equal("keep", s.Cells[1, 1].Value);
+            Assert.Single(s.Cells.Existing);
+
+            // What fits is kept, and read back as the text the writer wrote.
+            s.Cells[3, 1].Value = new System.Text.StringBuilder().Append('w', Max);
+            s.Cells[4, 1].Value = new LongToString().ToString().Substring(1);
+            s.Cells[5, 1].Value = Guid.Empty;
+            s.Cells[6, 1].Value = DayOfWeek.Friday;
+        }); // Saving works: nothing too long was left in the buffer.
+        var rows = ValidateAndRead(bytes);
+        Assert.Equal("keep", rows[0][0]);
+        // Row 2 holds nothing, so the reader reports rows 1, 3, 4, 5 and 6.
+        Assert.Equal(5, rows.Count);
+        Assert.Equal(Max, ((string)rows[1][0]!).Length);
+        Assert.Equal(Max, ((string)rows[2][0]!).Length);
+        Assert.Equal(Guid.Empty.ToString(), rows[3][0]);
+        Assert.Equal("Friday", rows[4][0]);
+
+        // The same in edit mode.
+        var edited = new MemoryStream();
+        using (var package = ExcelPackage.Edit(new MemoryStream(bytes), edited, leaveOpen: true))
+        {
+            var s = package.Workbook.Worksheets.Edit("S");
+            Assert.Throws<ArgumentException>(() => s.Cells["A1"].Value = new System.Text.StringBuilder().Append('w', Max + 1));
+            Assert.Equal("keep", s.Cells["A1"].Value);
+            package.Save();
+        }
+        Assert.Equal("keep", ValidateAndRead(edited.ToArray())[0][0]);
+    }
+
     [Fact]
     public void TemplateAndEditPaths_FollowTheSameRule()
     {

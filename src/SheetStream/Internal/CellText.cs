@@ -1,5 +1,7 @@
 using System;
 using System.Globalization;
+using SheetStream.Reading;
+using SheetStream.Styles;
 
 namespace SheetStream.Internal
 {
@@ -25,14 +27,31 @@ namespace SheetStream.Internal
             if (length > MaxLength) ThrowTooLong(length, parameterName);
         }
 
-        /// <summary>Checks the text of a cell value that is a string or rich text; any other kind of value has no such limit.</summary>
+        /// <summary>
+        /// Checks the text a cell value will become. A string or rich text is measured as it is. A number, a boolean, a date, a
+        /// <see cref="TimeSpan"/>, a character, a <see cref="Guid"/>, an enumeration, an error value or a style turns into
+        /// something short (or is not text), so those cost one type test each and nothing is allocated. Any other object
+        /// (a <see cref="System.Text.StringBuilder"/>, a type with its own <c>ToString</c>) is written as text by
+        /// <see cref="RowWriter.WriteCell(object?, CellStyle?)"/>, so it is converted here by the same rule (invariant
+        /// culture for <see cref="IFormattable"/>, <c>ToString()</c> otherwise) and its length checked: refused when it is
+        /// assigned, not when the sheet is sealed, where the failure would make the whole package unsavable.
+        /// </summary>
         public static void EnsureFits(object? value, string parameterName)
         {
             switch (value)
             {
-                case string text: EnsureFits(text.Length, parameterName); break;
-                case RichText run: EnsureFits(run.Text.Length, parameterName); break;
-                case RichText[] runs: EnsureFits(Length(runs), parameterName); break;
+                case null:
+                case DBNull _:
+                case double _: case float _: case decimal _: case int _: case long _: case short _: case byte _: case sbyte _:
+                case ushort _: case uint _: case ulong _: case bool _: case char _:
+                case DateTime _: case DateTimeOffset _: case TimeSpan _: case Guid _: case Enum _:
+                case ExcelErrorValue _: case CellStyle _:
+                    return;
+                case string text: EnsureFits(text.Length, parameterName); return;
+                case RichText run: EnsureFits(run.Text.Length, parameterName); return;
+                case RichText[] runs: EnsureFits(Length(runs), parameterName); return;
+                case IFormattable formattable: EnsureFits(formattable.ToString(null, CultureInfo.InvariantCulture)?.Length ?? 0, parameterName); return;
+                default: EnsureFits(value.ToString()?.Length ?? 0, parameterName); return;
             }
         }
 
