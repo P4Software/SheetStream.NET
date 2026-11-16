@@ -662,6 +662,20 @@ namespace SheetStream
         /// <summary>Shared by the explicit cached-value overload and the evaluator path; <paramref name="text"/> is already prepared.</summary>
         private RowWriter WriteFormulaWithNumber(string text, double cachedValue, CellStyle? style)
         {
+            // NaN and the infinities are not results Excel can store, and the text a double formats to for them
+            // differs between .NET and .NET Standard. No value is better than a wrong one: the formula stays and
+            // Excel calculates it on open, the same as for a formula written without a result.
+            if (double.IsNaN(cachedValue) || double.IsInfinity(cachedValue))
+            {
+                BeginCellRaw(style, null);
+                AppendFormula(text);
+                AppendFixed(CellClose);
+                // A later SUM over this cell cannot know its value, so it must not get one either.
+                if (_cache) _sheet.RecordUnknown(RowIndex, NextColumn);
+                EndCellRaw(null);
+                return this;
+            }
+
             BeginCellRaw(style, null);
             AppendFormula(text);
             EnsureRoom(CellReserve);

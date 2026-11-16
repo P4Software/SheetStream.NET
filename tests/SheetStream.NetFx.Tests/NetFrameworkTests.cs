@@ -439,6 +439,25 @@ namespace SheetStream.NetFx.Tests
         }
 
         [Fact]
+        public void FormulaWithNaNOrInfinityAsResult_StoresNoResult_AsOnModernDotNet()
+        {
+            // The two builds used to write different text here (Infinity against INF). Now neither writes a result.
+            var bytes = ExcelPackage.CreateBytes(wb =>
+            {
+                var row = wb.Worksheets.Add("S").Row();
+                row.WriteFormula("1/0", double.NaN).WriteFormula("1/0", double.PositiveInfinity).WriteFormula("1/0", double.NegativeInfinity).WriteCell(2);
+            });
+            using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
+            {
+                var row = reader.ReadRows("S").Single();
+                Assert.Null(row[0]);
+                Assert.Null(row[1]);
+                Assert.Null(row[2]);
+                Assert.Equal(2d, row[3]);
+            }
+        }
+
+        [Fact]
         public void NumbersReadAsText_AreTheShortestFormThatReadsBack()
         {
             // .NET Framework's own round-trip format prints 17 digits where 16 would do. A reader has to hand
