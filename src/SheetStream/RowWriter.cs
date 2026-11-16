@@ -731,22 +731,23 @@ namespace SheetStream
             // Excel counts the runs together, as one text.
             CellText.EnsureFits(CellText.Length(runs), nameof(runs));
             EnsureOpen();
+            // Before the runs are rendered into the buffer the next rich-text cell reuses: a cell refused here must leave nothing in it.
+            EnsureColumn();
 
             // The runs are rendered first. A run can fail (a font name XML cannot carry), and by then nothing of the
             // cell may be in the row: a half-written cell would make the whole sheet unreadable.
             var rendered = RenderRuns(runs);
-
-            // Rich text is written inline: shared strings would need the same run markup and rarely repeat.
-            BeginCellRaw(style, TypeInline);
-            AppendFixed(IsOpenTag);
             try
             {
+                // Rich text is written inline: shared strings would need the same run markup and rarely repeat.
+                BeginCellRaw(style, TypeInline);
+                AppendFixed(IsOpenTag);
                 AppendBytes(rendered.GetBuffer(), (int)rendered.Length);
             }
             finally
             {
-                // The rendering stream is reused by the next rich-text cell, so it is emptied even when the copy
-                // fails: stale runs would otherwise be written into whatever cell comes next.
+                // The rendering stream is reused by the next rich-text cell, so it is emptied however this call ends (a
+                // refused column, a failed flush, a failed copy): stale runs would otherwise be written into whatever cell comes next.
                 rendered.SetLength(0);
             }
             EnsureRoom(CellReserve);

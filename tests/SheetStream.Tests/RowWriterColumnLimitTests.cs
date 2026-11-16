@@ -107,6 +107,46 @@ public class RowWriterColumnLimitTests
         Assert.Equal(new object?[] { "after" }, rows[2]);
     }
 
+    /// <summary>
+    /// The runs of a rich-text cell are rendered into a buffer that the next rich-text cell reuses. A refused cell (here: no column left)
+    /// must not leave its runs in it, or they come out in front of the next cell's text.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RefusedRichText_LeavesNoRunsForTheNextRichTextCell(bool template)
+    {
+        byte[] Write(Func<Worksheet> sheet, Action<Worksheet> end)
+        {
+            var s = sheet();
+            var r = s.Row(1).Skip(CellReference.MaxColumns - 1);
+            r.WriteCell("last"); // Column XFD: the next cell has no column left.
+            Assert.Throws<InvalidOperationException>(() => r.WriteRichText(new RichText("STALE") { Bold = true }));
+            Assert.Throws<ArgumentException>(() => s.Row(2).WriteRichText(new RichText(new string('x', 32768))));
+            s.Row(3).WriteRichText(new RichText("fresh"));
+            end(s);
+            return Array.Empty<byte>();
+        }
+
+        byte[] bytes;
+        if (!template)
+            bytes = ExcelPackage.CreateBytes(wb => Write(() => wb.Worksheets.Add("S"), _ => { }));
+        else
+        {
+            var source = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
+            var output = new MemoryStream();
+            using (var package = ExcelPackage.OpenTemplate(new MemoryStream(source), output, leaveOpen: true))
+            {
+                Write(() => package.Workbook.Worksheets.Open("S"), _ => { });
+                package.Save();
+            }
+            bytes = output.ToArray();
+        }
+
+        var rows = ValidateAndRead(bytes);
+        Assert.Equal("fresh", rows.Last()[0]);
+    }
+
     /// <summary>A hyperlink registered for a column that cannot hold it must not be left behind, or the sheet's trailer would carry a reference past XFD.</summary>
     [Fact]
     public void RefusedHyperlink_LeavesNoLinkBehind()
