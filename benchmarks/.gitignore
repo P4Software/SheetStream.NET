@@ -1,2 +1,6 @@
 # BenchmarkDotNet writes its raw reports here; the README carries the copied tables.
 BenchmarkDotNet.Artifacts/
+
+# Older reports that run-on-fresh-vm.ps1 moves aside, and the time-stamped result folders it creates.
+BenchmarkDotNet.Artifacts.before-*/
+results/

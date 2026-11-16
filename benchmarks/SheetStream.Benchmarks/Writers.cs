@@ -11,7 +11,7 @@ using SS = SheetStream;
 namespace SheetStream.Benchmarks;
 
 /// <summary>
-/// One library's implementation of both scenarios. The benchmarks, the correctness guard and the peak-memory
+/// One library's implementation of every scenario shape (long, wide, strings, styled). The benchmarks, the correctness guard and the peak-memory
 /// mode all call these same methods, so what is verified is exactly what is timed.
 /// </summary>
 public interface ILibraryWriter
@@ -24,6 +24,18 @@ public interface ILibraryWriter
 
     /// <summary>Writes every value of <paramref name="grid"/>, no header row.</summary>
     void WriteWide(Stream output, double[,] grid);
+
+    /// <summary>
+    /// Writes <paramref name="rows"/> (one string array per row, all the same length) as plain text cells: no
+    /// header row, no styles. Used by the SpreadCheetahOwn and StringHeavy scenarios.
+    /// </summary>
+    void WriteStrings(Stream output, string[][] rows);
+
+    /// <summary>
+    /// Writes a bold header row (<see cref="Data.StyledHeaders"/>) plus one row per item of <paramref name="rows"/>,
+    /// with the date, date-time, money and percentage formats of the StyledDates scenario on every data cell.
+    /// </summary>
+    void WriteStyled(Stream output, StyledRow[] rows);
 }
 
 /// <summary>Registry of every library under test, in the order they appear in reports.</summary>
@@ -122,6 +134,52 @@ public sealed class SheetStreamWriter : ILibraryWriter
         }
         package.Save();
     }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows)
+    {
+        // Default options on purpose: strings go through the shared string table, which is SheetStream's default.
+        using var package = new SS.ExcelPackage(output, leaveOpen: true, Options);
+        var sheet = package.Workbook.Worksheets.Add("Data");
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var row = sheet.Row(r + 1);
+            var values = rows[r];
+            for (int c = 0; c < values.Length; c++) row.WriteCell(values[c]);
+        }
+        package.Save();
+    }
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows)
+    {
+        using var package = new SS.ExcelPackage(output, leaveOpen: true, Options);
+        var workbook = package.Workbook;
+        var sheet = workbook.Worksheets.Add("Data");
+        var bold = workbook.Styles.Create(o => o.Font.Bold = true);
+        var date = workbook.Styles.Create(o => o.NumberFormat = Data.StyledDateFormat);
+        var dateTime = workbook.Styles.Create(o => o.NumberFormat = Data.DateTimeFormat);
+        var money = workbook.Styles.Create(o => o.NumberFormat = Data.MoneyFormat);
+        var percent = workbook.Styles.Create(o => o.NumberFormat = Data.PercentFormat);
+
+        var header = sheet.Row(1);
+        foreach (var h in Data.StyledHeaders) header.WriteCell(h, bold);
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            sheet.Row(i + 2)
+                .WriteCell(r.OrderDate, date)
+                .WriteCell(r.Created, dateTime)
+                .WriteCell(r.ShipDate, date)
+                .WriteCell(r.Net, money)
+                .WriteCell(r.Tax, money)
+                .WriteCell(r.Total, money)
+                .WriteCell(r.Margin, percent)
+                .WriteCell(r.Discount, percent);
+        }
+        package.Save();
+    }
 }
 
 /// <summary>
@@ -204,6 +262,64 @@ public sealed class SpreadCheetahWriter : ILibraryWriter
         }
         await spreadsheet.FinishAsync();
     }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows) => WriteStringsAsync(output, rows).GetAwaiter().GetResult();
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows) => WriteStyledAsync(output, rows).GetAwaiter().GetResult();
+
+    private async Task WriteStringsAsync(Stream output, string[][] rows)
+    {
+        await using var spreadsheet = await SC.Spreadsheet.CreateNewAsync(output, Options);
+        await spreadsheet.StartWorksheetAsync("Data");
+
+        // The way SpreadCheetah recommends (and the way its own benchmark does it): one cell array reused for every
+        // row, and DataCell, its unstyled and cheapest cell type, because no cell here carries a style.
+        var cells = new SC.DataCell[rows.Length == 0 ? 0 : rows[0].Length];
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var values = rows[r];
+            for (int c = 0; c < cells.Length; c++) cells[c] = new SC.DataCell(values[c]);
+            await spreadsheet.AddRowAsync(cells);
+        }
+        await spreadsheet.FinishAsync();
+    }
+
+    private async Task WriteStyledAsync(Stream output, StyledRow[] rows)
+    {
+        await using var spreadsheet = await SC.Spreadsheet.CreateNewAsync(output, Options);
+        await spreadsheet.StartWorksheetAsync("Data");
+
+        var boldStyle = new SC.Styling.Style();
+        boldStyle.Font.Bold = true;
+        var bold = spreadsheet.AddStyle(boldStyle);
+        var date = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.StyledDateFormat) });
+        var dateTime = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.DateTimeFormat) });
+        var money = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.MoneyFormat) });
+        var percent = spreadsheet.AddStyle(new SC.Styling.Style { Format = SC.Styling.NumberFormat.Custom(Data.PercentFormat) });
+
+        // StyledCell is SpreadCheetah's cell type for cells that always carry a style (every cell of this sheet
+        // does), so it is the cheapest choice here; one array is reused for the header and for every row.
+        var cells = new SC.StyledCell[Data.StyledHeaders.Length];
+        for (int c = 0; c < cells.Length; c++) cells[c] = new SC.StyledCell(Data.StyledHeaders[c], bold);
+        await spreadsheet.AddRowAsync(cells);
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            cells[0] = new SC.StyledCell(r.OrderDate, date);
+            cells[1] = new SC.StyledCell(r.Created, dateTime);
+            cells[2] = new SC.StyledCell(r.ShipDate, date);
+            cells[3] = new SC.StyledCell(r.Net, money);
+            cells[4] = new SC.StyledCell(r.Tax, money);
+            cells[5] = new SC.StyledCell(r.Total, money);
+            cells[6] = new SC.StyledCell(r.Margin, percent);
+            cells[7] = new SC.StyledCell(r.Discount, percent);
+            await spreadsheet.AddRowAsync(cells);
+        }
+        await spreadsheet.FinishAsync();
+    }
 }
 
 /// <summary>
@@ -262,6 +378,54 @@ public sealed class EPPlusWriter : ILibraryWriter
                 ws.SetValue(r + 1, c + 1, grid[r, c]);
         package.SaveAs(output);
     }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows)
+    {
+        using var package = new EP.ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("Data");
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var values = rows[r];
+            for (int c = 0; c < values.Length; c++) ws.SetValue(r + 1, c + 1, values[c]);
+        }
+        package.SaveAs(output);
+    }
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows)
+    {
+        using var package = new EP.ExcelPackage();
+        var ws = package.Workbook.Worksheets.Add("Data");
+        for (int c = 0; c < Data.StyledHeaders.Length; c++) ws.SetValue(1, c + 1, Data.StyledHeaders[c]);
+        ws.Cells[1, 1, 1, Data.StyledHeaders.Length].Style.Font.Bold = true;
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            int row = i + 2;
+            ws.SetValue(row, 1, r.OrderDate);
+            ws.SetValue(row, 2, r.Created);
+            ws.SetValue(row, 3, r.ShipDate);
+            ws.SetValue(row, 4, r.Net);
+            ws.SetValue(row, 5, r.Tax);
+            ws.SetValue(row, 6, r.Total);
+            ws.SetValue(row, 7, r.Margin);
+            ws.SetValue(row, 8, r.Discount);
+        }
+
+        // Formats once per column range, as the Long scenario does (the EPPlus samples' way).
+        int last = rows.Length + 1;
+        if (rows.Length > 0)
+        {
+            ws.Cells[2, 1, last, 1].Style.Numberformat.Format = Data.StyledDateFormat;
+            ws.Cells[2, 2, last, 2].Style.Numberformat.Format = Data.DateTimeFormat;
+            ws.Cells[2, 3, last, 3].Style.Numberformat.Format = Data.StyledDateFormat;
+            ws.Cells[2, 4, last, 6].Style.Numberformat.Format = Data.MoneyFormat;
+            ws.Cells[2, 7, last, 8].Style.Numberformat.Format = Data.PercentFormat;
+        }
+        package.SaveAs(output);
+    }
 }
 
 /// <summary>
@@ -318,6 +482,54 @@ public sealed class ClosedXmlWriter : ILibraryWriter
                 ws.Cell(r + 1, c + 1).Value = grid[r, c];
         wb.SaveAs(output);
     }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Data");
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var values = rows[r];
+            for (int c = 0; c < values.Length; c++) ws.Cell(r + 1, c + 1).Value = values[c];
+        }
+        wb.SaveAs(output);
+    }
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Data");
+        for (int c = 0; c < Data.StyledHeaders.Length; c++) ws.Cell(1, c + 1).Value = Data.StyledHeaders[c];
+        ws.Range(1, 1, 1, Data.StyledHeaders.Length).Style.Font.Bold = true;
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            int row = i + 2;
+            ws.Cell(row, 1).Value = r.OrderDate;
+            ws.Cell(row, 2).Value = r.Created;
+            ws.Cell(row, 3).Value = r.ShipDate;
+            ws.Cell(row, 4).Value = r.Net;
+            ws.Cell(row, 5).Value = r.Tax;
+            ws.Cell(row, 6).Value = r.Total;
+            ws.Cell(row, 7).Value = r.Margin;
+            ws.Cell(row, 8).Value = r.Discount;
+        }
+
+        // Formats once per column range, as the Long scenario does.
+        int last = rows.Length + 1;
+        if (rows.Length > 0)
+        {
+            ws.Range(2, 1, last, 1).Style.NumberFormat.Format = Data.StyledDateFormat;
+            ws.Range(2, 2, last, 2).Style.NumberFormat.Format = Data.DateTimeFormat;
+            ws.Range(2, 3, last, 3).Style.NumberFormat.Format = Data.StyledDateFormat;
+            ws.Range(2, 4, last, 6).Style.NumberFormat.Format = Data.MoneyFormat;
+            ws.Range(2, 7, last, 8).Style.NumberFormat.Format = Data.PercentFormat;
+        }
+        wb.SaveAs(output);
+    }
 }
 
 /// <summary>
@@ -339,6 +551,38 @@ public sealed class MiniExcelWriter : ILibraryWriter
     /// <inheritdoc />
     public void WriteWide(Stream output, double[,] grid) =>
         output.SaveAs(WideRows(grid), printHeader: false, sheetName: "Data");
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows) =>
+        output.SaveAs(StringRows(rows), printHeader: false, sheetName: "Data");
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows) =>
+        // The typed path, as for Long: the formats come from [ExcelColumn(Format = ...)] on StyledRow. The header
+        // captions are the property names, which Data.StyledHeaders matches.
+        output.SaveAs(rows, printHeader: true, sheetName: "Data");
+
+    /// <summary>
+    /// One dictionary per sheet, overwritten for every row. MiniExcel's streaming writer consumes a row before it
+    /// asks for the next, so this is safe, and it is the cheapest way to feed it: MiniExcel is not charged for
+    /// allocating a dictionary per row that a caller who cares about speed would not allocate either. (Wide keeps
+    /// the one-dictionary-per-row shape the original scenarios used; the --verify guard proves this one still
+    /// writes every row correctly.)
+    /// </summary>
+    private static IEnumerable<Dictionary<string, object>> StringRows(string[][] rows)
+    {
+        if (rows.Length == 0) yield break;
+        int cols = rows[0].Length;
+        var keys = new string[cols];
+        for (int c = 0; c < cols; c++) keys[c] = "C" + (c + 1);
+        var row = new Dictionary<string, object>(cols);
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var values = rows[r];
+            for (int c = 0; c < cols; c++) row[keys[c]] = values[c];
+            yield return row;
+        }
+    }
 
     /// <summary>Column keys are built once; MiniExcel only uses them for headers, which are off here.</summary>
     private static IEnumerable<Dictionary<string, object>> WideRows(double[,] grid)
@@ -379,6 +623,22 @@ public sealed class NpoiXssfWriter : ILibraryWriter
         NpoiShared.WriteWide(wb, grid);
         wb.Write(output, leaveOpen: true);
     }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows)
+    {
+        using var wb = new XSSFWorkbook();
+        NpoiShared.WriteStrings(wb, rows);
+        wb.Write(output, leaveOpen: true);
+    }
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows)
+    {
+        using var wb = new XSSFWorkbook();
+        NpoiShared.WriteStyled(wb, rows);
+        wb.Write(output, leaveOpen: true);
+    }
 }
 
 /// <summary>
@@ -404,6 +664,22 @@ public sealed class NpoiSxssfWriter : ILibraryWriter
     {
         using var wb = new SXSSFWorkbook(100);
         NpoiShared.WriteWide(wb, grid);
+        wb.Write(output, leaveOpen: true);
+    }
+
+    /// <inheritdoc />
+    public void WriteStrings(Stream output, string[][] rows)
+    {
+        using var wb = new SXSSFWorkbook(100);
+        NpoiShared.WriteStrings(wb, rows);
+        wb.Write(output, leaveOpen: true);
+    }
+
+    /// <inheritdoc />
+    public void WriteStyled(Stream output, StyledRow[] rows)
+    {
+        using var wb = new SXSSFWorkbook(100);
+        NpoiShared.WriteStyled(wb, rows);
         wb.Write(output, leaveOpen: true);
     }
 }
@@ -458,6 +734,59 @@ internal static class NpoiShared
         {
             var row = sheet.CreateRow(r);
             for (int c = 0; c < cols; c++) row.CreateCell(c).SetCellValue(grid[r, c]);
+        }
+    }
+
+    public static void WriteStrings(IWorkbook wb, string[][] rows)
+    {
+        var sheet = wb.CreateSheet("Data");
+        for (int r = 0; r < rows.Length; r++)
+        {
+            var row = sheet.CreateRow(r);
+            var values = rows[r];
+            for (int c = 0; c < values.Length; c++) row.CreateCell(c).SetCellValue(values[c]);
+        }
+    }
+
+    public static void WriteStyled(IWorkbook wb, StyledRow[] rows)
+    {
+        var sheet = wb.CreateSheet("Data");
+        var format = wb.CreateDataFormat();
+
+        // Five styles created once and shared by every cell, as the NPOI docs recommend.
+        var font = wb.CreateFont();
+        font.IsBold = true;
+        var bold = wb.CreateCellStyle();
+        bold.SetFont(font);
+        var date = wb.CreateCellStyle();
+        date.DataFormat = format.GetFormat(Data.StyledDateFormat);
+        var dateTime = wb.CreateCellStyle();
+        dateTime.DataFormat = format.GetFormat(Data.DateTimeFormat);
+        var money = wb.CreateCellStyle();
+        money.DataFormat = format.GetFormat(Data.MoneyFormat);
+        var percent = wb.CreateCellStyle();
+        percent.DataFormat = format.GetFormat(Data.PercentFormat);
+
+        var header = sheet.CreateRow(0);
+        for (int c = 0; c < Data.StyledHeaders.Length; c++)
+        {
+            var cell = header.CreateCell(c);
+            cell.SetCellValue(Data.StyledHeaders[c]);
+            cell.CellStyle = bold;
+        }
+
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var r = rows[i];
+            var row = sheet.CreateRow(i + 1);
+            var a = row.CreateCell(0); a.SetCellValue(r.OrderDate); a.CellStyle = date;
+            var b = row.CreateCell(1); b.SetCellValue(r.Created); b.CellStyle = dateTime;
+            var d = row.CreateCell(2); d.SetCellValue(r.ShipDate); d.CellStyle = date;
+            var net = row.CreateCell(3); net.SetCellValue(r.Net); net.CellStyle = money;
+            var tax = row.CreateCell(4); tax.SetCellValue(r.Tax); tax.CellStyle = money;
+            var total = row.CreateCell(5); total.SetCellValue(r.Total); total.CellStyle = money;
+            var margin = row.CreateCell(6); margin.SetCellValue(r.Margin); margin.CellStyle = percent;
+            var discount = row.CreateCell(7); discount.SetCellValue(r.Discount); discount.CellStyle = percent;
         }
     }
 }
