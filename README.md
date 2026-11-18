@@ -136,33 +136,36 @@ SheetStream.NET writes while you go, which is why memory stays flat. The cost is
 
 ## Benchmarks
 
-Writing 100,000 rows of 10 mixed, formatted columns. BenchmarkDotNet on .NET 8.0.31, Intel Core i7-8700, Windows 11, measured on one developer workstation (2026-10-13). Peak memory is the peak working set above an empty baseline process, from separate fresh-process runs.
+Writing 100,000 rows of 10 mixed, formatted columns. BenchmarkDotNet 0.15.8 on .NET 10.0.15, Windows Server 2025, an Azure `Standard_D8s_v6` virtual machine (Intel Xeon Platinum 8573C, 8 vCPUs, 32 GB) used for nothing else, measured on 2026-11-18 with three fresh processes per row (30 measured writes). Peak memory is the peak working set above an empty baseline process, from separate fresh-process runs. SheetStream.NET and SpreadCheetah each appear at both zip levels, so every row has a row from the other library at the same level to be read against.
 
 | Library | Time | Allocated | Peak above baseline | File size |
 |---|--:|--:|--:|--:|
-| SheetStream.NET (default compression) | 1,012.6 ms | 26.67 MB | 29.6 MB | 5,798 KB |
-| SheetStream.NET (`CompressionLevel.Fastest`) | 534.1 ms | 26.67 MB | 31.0 MB | 7,006 KB |
-| MiniExcel 1.46.0 | 596.4 ms | 343.36 MB | 37.3 MB | 7,421 KB |
-| NPOI 2.7.6 SXSSF | 2,039.7 ms | 704.22 MB | 65.2 MB | 5,518 KB |
-| EPPlus 4.5.3.3 | 2,286.7 ms | 390.19 MB | 183.8 MB | 5,601 KB |
-| ClosedXML 0.105.1 | 3,103.2 ms | 1,104.16 MB | 231.1 MB | 6,030 KB |
-| NPOI 2.7.6 XSSF | 4,658.4 ms | 1,186.16 MB | 545.1 MB | 5,304 KB |
+| SheetStream.NET (`CompressionLevel.Fastest`) | 80.0 ms | 164 KB | 16.7 MB | 5,304 KB |
+| SpreadCheetah 1.29.0 (its default, Fastest) | 106.8 ms | 12 KB | 15.0 MB | 5,296 KB |
+| SheetStream.NET (default compression, Optimal) | 248.3 ms | 164 KB | 14.4 MB | 2,917 KB |
+| SpreadCheetah 1.29.0 (Optimal) | 274.0 ms | 12 KB | 12.8 MB | 2,916 KB |
+| MiniExcel 1.46.0 | 335.5 ms | 309 MB | 114.6 MB | 10,420 KB |
+| NPOI 2.7.6 SXSSF | 1,582.3 ms | 636 MB | 130.9 MB | 5,518 KB |
+| EPPlus 4.5.3.3 | 2,172.3 ms | 390 MB | 287.0 MB | 5,601 KB |
+| ClosedXML 0.105.1 | 2,441.8 ms | 1,013 MB | 351.5 MB | 5,955 KB |
+| NPOI 2.7.6 XSSF | 4,354.0 ms | 1,149 MB | 619.9 MB | 5,304 KB |
 
-- At default settings MiniExcel is faster. SheetStream.NET defaults to the smallest files (`CompressionLevel.Optimal`); with `Fastest` the two are level on this sheet (534 ms against 596 ms is inside the error bars).
-- Allocation is where SheetStream.NET is clearly ahead: about 13 times less than the next library, and the same at both compression levels.
-- NPOI and EPPlus write slightly smaller files on this sheet.
-- Reading the same 100,000-row file: SheetStream.NET 532.7 ms and 118.62 MB allocated, ExcelDataReader 915.9 ms and 211.03 MB, EPPlus 4.5.3.3 1,205.8 ms and 787.26 MB, MiniExcel 1,829.3 ms and 2,369.07 MB, ClosedXML 3,034.0 ms and 1,598.17 MB. These were measured before 0.5.0, whose reader limit checks make reading up to about 10% slower and allocate about 10% less.
-- At 1,000,000 rows, SheetStream.NET with `Fastest` takes 4.8 s and allocates 275 MB; MiniExcel takes 5.3 s and 3.3 GB. The default setting takes 12.8 s for a file 17% smaller.
+- **Against SpreadCheetah, at the same zip level:** SheetStream.NET is faster on this sheet (25% less time at `Fastest`, 9% at `Optimal`), and on wide sheets (1,000 × 1,000: 42% and 14% less), very wide sheets (1,000 × 10,000: 43% and 15%), a million rows (23% and 13%) and styled dates (14% and 3%). The two are level on a mix of repeated and unique text. SpreadCheetah is about 2% faster on its own benchmark shape, 100,000 rows of ten text columns in which every value is different, at the `Optimal` level. The same ratios came out of three complete runs.
+- **Against MiniExcel:** SheetStream.NET at its default settings is faster in every scenario we measure except one: with every cell styled as a date, money or percentage (StyledDates), MiniExcel takes 301 ms against 341 ms at the default level (105 ms with `Fastest`). MiniExcel's files are 3.6 times larger on this sheet.
+- **Allocation:** SpreadCheetah allocates the least (12 KB per write here), SheetStream.NET next (164 KB, the same for a million rows), then every other library by a wide margin.
+- Reading the same 100,000-row file: SheetStream.NET 351 ms and 124 MB allocated, ExcelDataReader 693 ms and 249 MB, EPPlus 4.5.3.3 1,163 ms and 805 MB, MiniExcel 1,459 ms and 2,157 MB, ClosedXML 2,663 ms and 1,509 MB.
+- At 1,000,000 rows, SheetStream.NET with `Fastest` takes 0.81 s, SpreadCheetah 1.05 s and MiniExcel 3.5 s; at the default level SheetStream.NET takes 2.5 s for a file 45% smaller.
 - The read benchmarks use a file SheetStream.NET wrote, and MiniExcel cannot bold the header, so its file carries slightly less formatting.
 
-EPPlus and NPOI are pinned to their last plain open-source releases. Methodology, the wide-sheet scenarios and how to rerun everything: [benchmarks/README.md](benchmarks/README.md). Rerun it on your own hardware before relying on the numbers.
-
+These are the numbers of one machine; the ratios were the same in all three runs, the absolute times will differ on yours. EPPlus and NPOI are pinned to their last plain open-source releases. Every table, the raw output, the methodology and how to rerun everything, including the rows where SheetStream.NET is not first: [benchmarks/README.md](benchmarks/README.md). Rerun it on your own hardware before relying on the numbers.
 ## When to choose something else
 
 - You need to edit large workbooks in place. `ExcelPackage.Edit` holds the edited sheet in memory and is meant for small files. Use ClosedXML (MIT) or EPPlus.
 - You need formulas evaluated in .NET, for example to read a calculated total without Excel. Use ClosedXML or EPPlus, which have calculation engines.
 - You need sparklines, macros, encryption, or pivot tables with calculated fields, grouping or slicers. Not supported. See the [gap analysis](docs/gap-analysis-epplus-8.md) for the full list against EPPlus 8.
 - You only map simple objects to and from sheets and want the smallest API. MiniExcel does that well.
+- Other tools read your files and need every cell's address. By default SheetStream.NET omits the 
+ attribute on a cell that directly follows the previous one, which the Open XML specification allows and Excel reads; MiniExcel 1.46.0, NPOI 2.7.6's SAX reader and the Excel OleDb provider (ACE) misread such files. Set PackageOptions.WriteCellReferences = true, at the price of a larger file and a slower write.
 
 ## Migrating from EPPlus or ClosedXML
 

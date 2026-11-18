@@ -12,14 +12,14 @@ ClosedXML is a good library: MIT licensed, a pleasant API, a calculation engine,
 | | ClosedXML 0.105 | SheetStream.NET |
 |---|---|---|
 | Model | The workbook is an object tree in memory; saved in one go at the end | Rows are written to the file as you produce them |
-| 100,000 rows of 10 columns, written | 3,103 ms, 1,104 MB allocated, 231 MB peak | 1,013 ms, 27 MB allocated, 30 MB peak |
-| The same file, read | 3,034 ms, 1,598 MB allocated | 533 ms, 119 MB allocated |
+| 100,000 rows of 10 columns, written | 2,442 ms, 1,013 MB allocated, 352 MB peak | 248 ms (80 ms with `Fastest` compression), 0.16 MB allocated, 14 MB peak |
+| The same file, read | 2,663 ms, 1,509 MB allocated | 351 ms, 124 MB allocated |
 | Cells in any order | Yes | Rows ascend. `Cells[row, column]` gives random access for one small sheet at a time |
 | Change a workbook that exists | Yes, any part | Cell values of small sheets (`ExcelPackage.Edit`), or fill a template |
 | Formulas calculated in .NET | Yes | No. Simple aggregates can be cached; Excel calculates the rest on open |
 | Dependencies | Open XML SDK and others | None |
 
-The figures are from this repository's benchmarks (BenchmarkDotNet, .NET 8, one developer workstation, 2026-10-13; see [benchmarks/README.md](https://github.com/P4Software/SheetStream.NET/blob/main/benchmarks/README.md)). Both libraries wrote the same sheet with the same formats. Run them on your own hardware before relying on them.
+The figures are from this repository's benchmarks (BenchmarkDotNet, .NET 10, an Azure D8s_v6 virtual machine, 2026-11-18; "peak" is the peak working set above an empty process; see [benchmarks/README.md](https://github.com/P4Software/SheetStream.NET/blob/main/benchmarks/README.md)). Both libraries wrote the same sheet with the same formats. Run them on your own hardware before relying on them.
 
 ## Before: ClosedXML
 
