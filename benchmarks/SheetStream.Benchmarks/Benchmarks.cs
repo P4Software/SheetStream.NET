@@ -237,9 +237,11 @@ public abstract class StyledShapeBenchmarks : ScenarioBenchmarks
 }
 
 /// <summary>Long: 100,000 rows x 10 mixed-type columns plus a bold header row.</summary>
-// One launch, 3 warm-up and 10 measured iterations: enough for stable means on operations that take from
-// tens of milliseconds to several seconds, while keeping the whole suite well under 15 minutes.
-[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+// Three launches, each with 3 warm-up and 10 measured iterations. One launch is not enough: the same binary can
+// settle into a slightly slower JIT/layout state in one process and not in the next (measured: about 5 ms on a
+// 55 ms write), so a single-launch row can flip between two runs. Three launches put that spread into the
+// StdDev column instead of hiding it in a lucky or unlucky process.
+[SimpleJob(launchCount: 3, warmupCount: 3, iterationCount: 10)]
 public class LongBenchmarks : LongShapeBenchmarks
 {
     /// <inheritdoc />
@@ -247,7 +249,7 @@ public class LongBenchmarks : LongShapeBenchmarks
 }
 
 /// <summary>Wide: 1,000 rows x 1,000 columns of doubles, no header.</summary>
-[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[SimpleJob(launchCount: 3, warmupCount: 3, iterationCount: 10)]
 public class WideBenchmarks : WideShapeBenchmarks
 {
     /// <inheritdoc />
@@ -258,7 +260,7 @@ public class WideBenchmarks : WideShapeBenchmarks
 /// SpreadCheetahOwn: SpreadCheetah's own published benchmark shape, 100,000 rows x 10 columns where every cell is a
 /// distinct string. Run it to see every library on the scenario SpreadCheetah chose for itself.
 /// </summary>
-[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[SimpleJob(launchCount: 3, warmupCount: 3, iterationCount: 10)]
 public class SpreadCheetahOwnBenchmarks : StringShapeBenchmarks
 {
     /// <inheritdoc />
@@ -266,7 +268,7 @@ public class SpreadCheetahOwnBenchmarks : StringShapeBenchmarks
 }
 
 /// <summary>StringHeavy: 100,000 rows x 10 string columns, repeated and unique values, text that needs escaping.</summary>
-[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[SimpleJob(launchCount: 3, warmupCount: 3, iterationCount: 10)]
 public class StringHeavyBenchmarks : StringShapeBenchmarks
 {
     /// <inheritdoc />
@@ -274,7 +276,7 @@ public class StringHeavyBenchmarks : StringShapeBenchmarks
 }
 
 /// <summary>StyledDates: 100,000 rows x 8 columns of dates, date-times, money and percentages, plus a bold header.</summary>
-[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 10)]
+[SimpleJob(launchCount: 3, warmupCount: 3, iterationCount: 10)]
 public class StyledDatesBenchmarks : StyledShapeBenchmarks
 {
     /// <inheritdoc />
