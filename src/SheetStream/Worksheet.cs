@@ -50,8 +50,8 @@ namespace SheetStream
         private readonly RowWriter _row;
 
         // Body: where <row> elements go. Normally the part itself; a temp file when AutoFit defers the header.
-        private XmlWriter? _body;
         private FileStream? _spill;
+        private PartStream? _spillPart;
         private bool _bodyStarted;
         private bool _headerWritten;
         private bool _sealed;
@@ -292,6 +292,7 @@ namespace SheetStream
             FlushBuffer();
             EnsureBodyStarted(); // A sheet with no rows still needs a (possibly empty) sheetData element.
             _row.End();
+            _row.ReleaseBuffer();
 
             if (_templateSource != null)
             {
@@ -304,21 +305,26 @@ namespace SheetStream
             if (_spill != null)
             {
                 // AutoFit mode: the rows went to a temp file. Now that every width is known, write the header
-                // and copy the rows in. Memory stays flat because the copy streams in 64K chunks.
-                _body!.Flush();
-                _body.Dispose();
+                // and copy the rows in. Memory stays flat because the copy streams in chunks.
+                var spillPart = _spillPart!;
+                spillPart.Drain();
                 ApplyAutoFitWidths();
                 EnsureHeaderWritten();
-                _part.Flush();
-                _spill.Position = 0;
-                using (var reader = new StreamReader(_spill, new UTF8Encoding(false), false, 1 << 16, leaveOpen: true))
+                if (_spill.Length > 0)
                 {
-                    var buffer = new char[1 << 15];
+                    // Close the <sheetData> start tag (a sheet with no rows keeps <sheetData />), then put the
+                    // XML writer's output in the stream ahead of the rows and copy the rows in as the bytes they are.
+                    _part.WriteRaw(string.Empty);
+                    _part.Flush();
+                    var target = Workbook.Package.OpenPartStream!;
+                    var chunk = spillPart.Buffer;
+                    _spill.Position = 0;
                     int n;
-                    while ((n = reader.Read(buffer, 0, buffer.Length)) > 0) _part.WriteRaw(buffer, 0, n);
+                    while ((n = _spill.Read(chunk, 0, chunk.Length)) > 0) target.Write(chunk, 0, n);
                 }
                 _spill.Dispose();
                 _spill = null;
+                _spillPart = null;
             }
 
             _part.WriteEndElement(); // sheetData
@@ -342,22 +348,25 @@ namespace SheetStream
             _bodyStarted = true;
             if (_autoFit)
             {
+                // The rows are composed straight into the buffer of a temp file's stream; the header comes later.
                 var path = Path.GetTempFileName();
                 _spill = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.DeleteOnClose);
-                _body = XmlWriter.Create(_spill, new XmlWriterSettings
-                {
-                    Encoding = new UTF8Encoding(false),
-                    ConformanceLevel = ConformanceLevel.Fragment,
-                    CloseOutput = false,
-                    NewLineHandling = NewLineHandling.None,
-                });
+                _spillPart = new PartStream(_spill, new byte[Math.Max(Workbook.Package.Options.BufferSize, 4096)], leaveOpen: true);
+                _row.AttachDirect(_spillPart, null);
+            }
+            else if (_templateSource != null)
+            {
+                // Rows are interleaved with elements copied from the template, so the XML writer stays in charge.
+                EnsureHeaderWritten();
+                _row.AttachXml(_part);
             }
             else
             {
+                // The header is written by the XML writer, which leaves <sheetData> open; the row writer closes it
+                // before the first row and from then on composes the rows in the part's own write buffer.
                 EnsureHeaderWritten();
-                _body = _part;
+                _row.AttachDirect(Workbook.Package.OpenPartStream!, _part);
             }
-            _row.Attach(_body);
         }
 
         /// <summary>

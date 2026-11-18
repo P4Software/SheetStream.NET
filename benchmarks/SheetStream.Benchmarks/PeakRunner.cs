@@ -29,6 +29,8 @@ public static class PeakRunner
         if (scenarios.Length == 0) scenarios = Scenarios.All;
         foreach (var s in scenarios)
             if (!Scenarios.All.Contains(s, StringComparer.OrdinalIgnoreCase)) throw Scenarios.Unknown(s);
+        // The children look scenarios up by their exact names, so hand them the canonical spelling.
+        scenarios = scenarios.Select(s => Scenarios.All.First(a => string.Equals(a, s, StringComparison.OrdinalIgnoreCase))).ToArray();
 
         foreach (var scenario in scenarios)
         {
@@ -79,10 +81,15 @@ public static class PeakRunner
         if (string.Equals(scenario, Scenarios.Read, StringComparison.OrdinalIgnoreCase)) return RunReadChild(library);
 
         // Build the input first, exactly as the benchmarks do; it is part of every library's floor.
-        bool longShape = Scenarios.IsLongShape(scenario);
+        var shape = Scenarios.Shape(scenario);
         int dataRows = Scenarios.Rows(scenario), columns = Scenarios.Columns(scenario);
-        LongRow[]? rows = longShape ? Data.CreateLong(dataRows) : null;
-        double[,]? grid = longShape ? null : Data.CreateWide(dataRows, columns);
+        LongRow[]? rows = shape == ScenarioShape.Long ? Data.CreateLong(dataRows) : null;
+        double[,]? grid = shape == ScenarioShape.Wide ? Data.CreateWide(dataRows, columns) : null;
+        string[][]? strings = shape == ScenarioShape.Strings
+            ? (string.Equals(scenario, Scenarios.SpreadCheetahOwn, StringComparison.OrdinalIgnoreCase)
+                ? Data.CreateOwnStrings(dataRows) : Data.CreateStringHeavy(dataRows))
+            : null;
+        StyledRow[]? styled = shape == ScenarioShape.Styled ? Data.CreateStyled(dataRows) : null;
         using var output = new ReusableOutput(Scenarios.OutputCapacity(scenario));
 
         var sw = Stopwatch.StartNew();
@@ -90,7 +97,9 @@ public static class PeakRunner
         {
             var writer = Writers.Get(library);
             if (rows != null) writer.WriteLong(output, rows);
-            else writer.WriteWide(output, grid!);
+            else if (grid != null) writer.WriteWide(output, grid);
+            else if (strings != null) writer.WriteStrings(output, strings);
+            else writer.WriteStyled(output, styled!);
         }
         sw.Stop();
 

@@ -75,7 +75,7 @@ namespace SheetStream
             // Runs routinely start or end with a space ("Status: "), which Excel would trim without this.
             if (text.Length > 0 && (char.IsWhiteSpace(text[0]) || char.IsWhiteSpace(text[text.Length - 1])))
                 w.WriteAttributeString("xml", "space", null, "preserve");
-            w.WriteString(text);
+            XmlTextUtil.WriteText(w, text);
             w.WriteEndElement();
             w.WriteEndElement();
         }

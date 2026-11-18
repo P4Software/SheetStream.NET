@@ -68,6 +68,48 @@ namespace SheetStream.NetFx.Tests
         }
 
         [Fact]
+        public void DoublesAreWrittenAsXmlConvertFormatsThem()
+        {
+            // Short decimals take a fast path that must give the text the runtime's own formatter gives, and on
+            // .NET Framework that formatter (XmlConvert.ToString) is the one that is not always the shortest form.
+            // So compare the text in the file with it, for decimals, binary noise and every magnitude.
+            var random = new Random(20261119);
+            var values = new List<double>();
+            for (var i = 0; i < 60000; i++)
+            {
+                var places = random.Next(0, 9);
+                var whole = (long)(random.NextDouble() * Math.Pow(10, random.Next(1, 16)));
+                var v = whole / Math.Pow(10, places);
+                values.Add(v);
+                values.Add(-v);
+                values.Add(v + random.Next(1, 100) / 100.0);
+                values.Add(random.Next(0, 10000) * 1.25 + 0.99);
+                values.Add(random.NextDouble() * Math.Pow(10, random.Next(-8, 18)));
+            }
+            values.AddRange(new[] { 0.0, 1e-4, 9.999999999999999e-5, 1e-5, 1e15, 999999999999999.0, 0.1 + 0.2, 123456789012345.0, 4503599627370496.0 });
+
+            var bytes = ExcelPackage.CreateBytes(wb =>
+            {
+                var s = wb.Worksheets.Add("Data");
+                foreach (var v in values) s.Row().WriteCell(v);
+            });
+
+            string xml;
+            using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes), System.IO.Compression.ZipArchiveMode.Read))
+            using (var reader = new StreamReader(zip.GetEntry("xl/worksheets/sheet1.xml")!.Open()))
+                xml = reader.ReadToEnd();
+
+            var at = 0;
+            foreach (var v in values)
+            {
+                var open = xml.IndexOf("<v>", at, StringComparison.Ordinal) + 3;
+                var close = xml.IndexOf("</v>", open, StringComparison.Ordinal);
+                Assert.Equal(System.Xml.XmlConvert.ToString(v), xml.Substring(open, close - open));
+                at = close;
+            }
+        }
+
+        [Fact]
         public void CachedRoundAndEarlyDates_MatchExcel()
         {
             var bytes = ExcelPackage.CreateBytes(wb =>
@@ -124,7 +166,7 @@ namespace SheetStream.NetFx.Tests
         [Fact]
         public void ReaderLimits_RejectAnOversizedCell()
         {
-            var bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Data").Row().WriteInlineString(new string('A', 50000)));
+            var bytes = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("Data").Row().WriteInlineString(new string('A', 30000))); // Under the 32,767 characters a cell may hold.
             var ex = Assert.Throws<InvalidDataException>(() =>
             {
                 using (var reader = ExcelReader.Open(new MemoryStream(bytes), false, new ReaderOptions { MaxCellTextLength = 1000 }))
@@ -133,7 +175,7 @@ namespace SheetStream.NetFx.Tests
             Assert.Contains("MaxCellTextLength", ex.Message);
 
             using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
-                Assert.Equal(50000, ((string)reader.ReadRows(0).First()[0]!).Length);
+                Assert.Equal(30000, ((string)reader.ReadRows(0).First()[0]!).Length);
         }
 
         [Fact]
@@ -394,6 +436,55 @@ namespace SheetStream.NetFx.Tests
                     if (failure != null && !IsDocumented(failure) && failures.Count < 12) failures.Add("iteration " + iteration + ": " + failure.GetType().Name + ": " + failure.Message);
             }
             Assert.True(failures.Count == 0, string.Join("\n", failures));
+        }
+
+        [Theory]
+        [InlineData(16353)]
+        [InlineData(16354)]
+        [InlineData(16355)]
+        public void TemplateSheet_RichTextWithAnEmojiAtTheFlushBoundary_IsWrittenWhole(int offset)
+        {
+            // The staging buffer is decoded back to text in 16 KB blocks; a block that ends inside the emoji's four
+            // bytes used to make the next decode one char too long for its buffer (offset 16354 is the unlucky one).
+            var template = ExcelPackage.CreateBytes(wb => wb.Worksheets.Add("S"));
+            // A cell holds at most 32,767 characters, so the rich text alone leaves a block of about 16,030 bytes after the first
+            // flush. The filler cell after it makes the second block a whole 16 KB, which is what overflowed the decoder's buffer.
+            var text = new string('a', offset) + "\U0001F600" + new string('b', 16000);
+            var filler = new string('c', 2000);
+            using (var output = new MemoryStream())
+            {
+                using (var package = ExcelPackage.OpenTemplate(new MemoryStream(template), output, leaveOpen: true))
+                {
+                    package.Workbook.Worksheets.Open("S").Row(1).WriteRichText(new RichText(text)).WriteInlineString(filler);
+                    package.Save();
+                }
+                using (var reader = ExcelReader.Open(new MemoryStream(output.ToArray())))
+                {
+                    var row = reader.ReadRows("S").Single();
+                    Assert.Equal(filler, row[1]);
+                    var read = (string)row[0]!;
+                    Assert.True(read.Length == text.Length && string.CompareOrdinal(read, text) == 0, "The text read back differs from the text written.");
+                }
+            }
+        }
+
+        [Fact]
+        public void FormulaWithNaNOrInfinityAsResult_StoresNoResult_AsOnModernDotNet()
+        {
+            // The two builds used to write different text here (Infinity against INF). Now neither writes a result.
+            var bytes = ExcelPackage.CreateBytes(wb =>
+            {
+                var row = wb.Worksheets.Add("S").Row();
+                row.WriteFormula("1/0", double.NaN).WriteFormula("1/0", double.PositiveInfinity).WriteFormula("1/0", double.NegativeInfinity).WriteCell(2);
+            });
+            using (var reader = ExcelReader.Open(new MemoryStream(bytes)))
+            {
+                var row = reader.ReadRows("S").Single();
+                Assert.Null(row[0]);
+                Assert.Null(row[1]);
+                Assert.Null(row[2]);
+                Assert.Equal(2d, row[3]);
+            }
         }
 
         [Fact]

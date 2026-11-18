@@ -49,10 +49,14 @@ namespace SheetStream
         internal TemplateSource? Template { get; private set; }
 
         /// <summary>
-        /// Whether text cells go through the shared string table. A template without a shared strings part gets
-        /// inline strings, which avoids adding a part, a relationship and a content type to someone else's file.
+        /// How text cells are stored in this workbook, from <see cref="PackageOptions.StringStorage"/> and
+        /// <see cref="PackageOptions.UseSharedStrings"/>. A template without a shared strings part always gets inline
+        /// strings, which avoids adding a part, a relationship and a content type to someone else's file.
         /// </summary>
-        internal bool UseSharedStrings => Package.Options.UseSharedStrings && (Template == null || Template.SharedStringsPart != null);
+        internal StringStorage StringStorage =>
+            !Package.Options.UseSharedStrings || (Template != null && Template.SharedStringsPart == null)
+                ? StringStorage.Inline
+                : Package.Options.StringStorage;
 
         /// <summary>Puts the workbook in template mode: styles and shared strings continue the template's numbering.</summary>
         internal void AttachTemplate(TemplateSource template)

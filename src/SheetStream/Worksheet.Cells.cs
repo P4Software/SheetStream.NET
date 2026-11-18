@@ -292,6 +292,8 @@ namespace SheetStream
             get => _sheet.GetBufferedCell(Row, Column, false)?.Value;
             set
             {
+                // Refused here, not when the sheet is sealed: by then the caller is long gone. The cell is left as it was.
+                CellText.EnsureFits(value, nameof(value));
                 var c = _sheet.GetBufferedCellForContentChange(Row, Column);
                 c.Value = value;
                 c.Formula = null;

@@ -14,9 +14,24 @@ namespace SheetStream
         public CompressionLevel CompressionLevel { get; set; } = CompressionLevel.Optimal;
 
         /// <summary>
-        /// When <c>true</c> (default) string cells are de-duplicated through the shared string table, which
-        /// is what Excel itself does and produces the smallest files. When <c>false</c> strings are written
-        /// inline in the sheet, so memory stays flat regardless of how many unique strings the export has.
+        /// How text cells are stored: <see cref="SheetStream.StringStorage.Auto"/> (default) shares the values of
+        /// columns that repeat and are long or varied (including columns that repeat among many thousands of values, which it
+        /// finds with two more looks later in the sheet), and writes every other column (unique text, and short values
+        /// from a small set) inside its cells,
+        /// <see cref="SheetStream.StringStorage.Shared"/> always uses the shared string table (what SheetStream did
+        /// before this setting existed) and <see cref="SheetStream.StringStorage.Inline"/> never does. Every choice
+        /// reads back identically in Excel and in <see cref="Reading.ExcelReader"/>; only the file layout, the
+        /// speed and the memory differ (some third-party readers show <c>_xHHHH_</c> escapes of inline text, see
+        /// <see cref="SheetStream.StringStorage"/>). <see cref="UseSharedStrings"/> set to <c>false</c> overrides this setting
+        /// and stores everything inline.
+        /// </summary>
+        public StringStorage StringStorage { get; set; } = StringStorage.Auto;
+
+        /// <summary>
+        /// Set to <c>false</c> to write every text inline in its cell, so memory stays flat however many unique
+        /// strings the export has; it is the same as <see cref="StringStorage"/> set to
+        /// <see cref="SheetStream.StringStorage.Inline"/> and wins over it. The default (<c>true</c>) leaves the
+        /// choice to <see cref="StringStorage"/>.
         /// </summary>
         public bool UseSharedStrings { get; set; } = true;
 
@@ -27,11 +42,37 @@ namespace SheetStream
         /// Repeated values (status codes, names) therefore still de-duplicate, while an export of millions of
         /// unique strings stops growing the table instead of holding them all until the save. The default of
         /// 16,000,000 keeps the table to a few tens of megabytes. Raise it for the smallest possible file when
-        /// memory is no concern; it has no effect when <see cref="UseSharedStrings"/> is <c>false</c>.
+        /// memory is no concern; it has no effect when text is stored inline
+        /// (<see cref="UseSharedStrings"/> <c>false</c> or <see cref="StringStorage"/> set to
+        /// <see cref="SheetStream.StringStorage.Inline"/>).
         /// </summary>
         public long MaxSharedStringChars { get; set; } = 16_000_000;
 
-        /// <summary>Size of the write buffer placed in front of each zip entry, in bytes.</summary>
+        /// <summary>
+        /// When <c>true</c>, every cell is written with its address (<c>r="B2"</c>), the way Excel itself writes
+        /// a sheet. The default is <c>false</c>: a cell that sits in the column right after the previous cell
+        /// of its row is written without its address, which the Open XML specification allows (a cell without
+        /// one belongs in the next column, and the first cell of a row in column A). That makes the file
+        /// smaller and the write faster. We read a sheet with gaps, written with the default, through Excel,
+        /// <see cref="Reading.ExcelReader"/>, EPPlus 4.5.3.3, ClosedXML 0.105.1, ExcelDataReader 3.9.0 and NPOI 2.7.6's
+        /// XSSF reader (checked 2026-11-16): each puts every value in the right cell. Three readers we checked do not:
+        /// MiniExcel 1.46.0 ignores the addresses of a sheet whose first cell has none, so a value after a gap lands in
+        /// the wrong column (a sheet with no gaps reads correctly); NPOI 2.7.6's event (SAX) reader hands over a
+        /// <c>null</c> address for such a cell; and the Excel ADO / OleDb provider (ACE 12.0 and 16.0) fails with
+        /// "System resource exceeded". Your own Open XML SDK code that reads <c>Cell.CellReference</c> gets <c>null</c> for
+        /// a cell without an address, as the attribute is absent. We have not checked Microsoft Spreadsheet Compare, which
+        /// has been reported to need the address. If a tool you or your users rely on needs the address, set this to
+        /// <c>true</c>. The cost is a larger file and a somewhat slower write, in proportion to the number of
+        /// cells. It applies to every cell SheetStream writes, whichever way: <c>Row()</c>, <c>Cells[,]</c>,
+        /// AutoFit, <c>Worksheets.Edit</c> and the rows filled into a template. Rows of a template that are copied
+        /// unchanged keep the form the template had.
+        /// </summary>
+        public bool WriteCellReferences { get; set; }
+        /// <summary>
+        /// Size of the write buffer placed in front of the zip entries, in bytes. A package has one such buffer, used
+        /// by whichever part is being written; a sheet's rows are composed in it directly. Values under 4096 are
+        /// treated as 4096. The default of 64 KB suits nearly everything.
+        /// </summary>
         public int BufferSize { get; set; } = 64 * 1024;
 
         /// <summary>

@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.Text;
+using System.Xml;
 
 namespace SheetStream.Internal
 {
@@ -92,7 +93,7 @@ namespace SheetStream.Internal
             => (c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0xFFFE || c == 0xFFFF;
 
         /// <summary>True when the text at <paramref name="i"/> reads <c>_xHHHH_</c> with four hex digits.</summary>
-        private static bool LooksLikeEscape(string s, int i)
+        internal static bool LooksLikeEscape(string s, int i)
         {
             if (i + 6 >= s.Length) return false;
             if (s[i + 1] != 'x' && s[i + 1] != 'X') return false;
@@ -103,6 +104,33 @@ namespace SheetStream.Internal
 
         private static void AppendEscape(StringBuilder sb, char c)
             => sb.Append("_x").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture)).Append('_');
+
+        /// <summary>
+        /// Writes element text through an XML writer that leaves line breaks alone, with each carriage return as the
+        /// character reference <c>&amp;#xD;</c>. A raw CR in an XML file is read back as LF (the parser normalises it,
+        /// XML 1.0 section 2.11), so <c>"a\r\nb"</c> would come back as <c>"a\nb"</c>; the reference is the one spelling that
+        /// keeps it. It is what an <see cref="XmlWriter"/> with <see cref="NewLineHandling.Entitize"/> writes in text, and
+        /// is written here by hand because that setting also rewrites tabs and line feeds in attribute values, and
+        /// nothing but cell text is meant to change. Text without a CR takes the plain <see cref="XmlWriter.WriteString"/> route.
+        /// </summary>
+        public static void WriteText(XmlWriter w, string text)
+        {
+            var at = text.IndexOf('\r');
+            if (at < 0)
+            {
+                w.WriteString(text);
+                return;
+            }
+            var start = 0;
+            while (at >= 0)
+            {
+                if (at > start) w.WriteString(text.Substring(start, at - start));
+                w.WriteRaw("&#xD;");
+                start = at + 1;
+                at = text.IndexOf('\r', start);
+            }
+            if (start < text.Length) w.WriteString(text.Substring(start));
+        }
 
         /// <summary>True when a shared string needs <c>xml:space="preserve"</c> to survive a round trip.</summary>
         public static bool NeedsSpacePreserve(string value)

@@ -14,7 +14,7 @@ The goal set for SheetStream is **as good as or better than EPPlus 8 in every as
 | Area | EPPlus 8 | SheetStream.NET 0.5.0 | Verdict |
 |---|---|---|---|
 | Licence, dependencies, platforms | Commercial, US$569/dev/yr, 5 dependencies, 16 MB package | MIT, zero dependencies, 226 KB, Native AOT, bundled analyzer | **SheetStream better** |
-| Performance and memory | Whole workbook in memory; official: 100k × 200 cells in 29 s | Streaming; 100k × 10 in 1.0 s, 27 MB allocated; 1M rows at 200 MB peak | **SheetStream better** |
+| Performance and memory | Whole workbook in memory; official: 100k × 200 cells in 29 s | Streaming; 100k × 10 in 0.25 s, 0.16 MB allocated; 1M rows at 159 MB peak | **SheetStream better** |
 | Writing cells, rows, layout | Random access anywhere | Streaming rows, plus `Cells[]` per sheet | Parity for exports; gap for in-place edits |
 | Reading | Load whole package; typed values; `Text` | Streaming, async, fuzz-tested, with limits against files built to exhaust memory or waste time (`ReaderOptions`), which also cover templates and edits; typed values | **SheetStream better** for imports; gaps: `.xls`, CSV, formatted `Text`, reading definitions |
 | Templates and editing | Open and edit any workbook | Template filling (streaming); edit small workbooks | Gap: large edits, insert/delete rows and columns, copy ranges and sheets |
@@ -37,7 +37,7 @@ These are the reasons to choose SheetStream today, and they must be protected wh
 
 - **Licence and cost.** MIT versus US$569 per developer per year (subscription, 1 to 4 developers) or US$899 perpetual, with a licence key that must be set at startup and a SaaS clause that needs a custom licence. SheetStream has no key, no seat count and no SaaS clause.
 - **Dependencies and size.** Zero package dependencies on every target; 226 KB assembly. EPPlus 8 brings `EPPlus.Interfaces`, `Microsoft.Extensions.Configuration.Json`, `Microsoft.IO.RecyclableMemoryStream`, `System.Security.Cryptography.Pkcs` and `System.Security.Cryptography.Xml`, in a 16 MB package.
-- **Memory and speed for exports.** Writing 100,000 × 10 formatted cells: 1.0 s and 27 MB allocated (0.53 s with fastest compression); EPPlus 4.5.3.3 takes 2.3 s and 390 MB; EPPlus' own 8.6 figure for 100,000 × 200 cells is 29 s with the whole workbook in memory. One million rows write with a 200 MB peak working set including the output buffer. A 10,000-column sheet is the same cost as a 10,000-row one.
+- **Memory and speed for exports.** Writing 100,000 × 10 formatted cells: 0.25 s and 0.16 MB allocated (0.08 s with fastest compression); EPPlus 4.5.3.3 takes 2.2 s and 390 MB (both on one Azure VM, 2026-11-18; see the benchmarks); EPPlus' own 8.6 figure for 100,000 × 200 cells is 29 s with the whole workbook in memory. One million rows write with a 159 MB peak working set including the output buffer. A 10,000-column sheet is the same cost as a 10,000-row one.
 - **Memory for imports.** `ExcelReader` streams rows (2.7 MB above baseline for a 100,000-row file); EPPlus loads the package.
 - **Native AOT and trimming.** `IsAotCompatible` and `IsTrimmable` on `net8.0`, with a source generator that removes reflection from object mapping. EPPlus has no AOT or trimming claim.
 - **Design-time safety.** A Roslyn analyzer in the package turns the three streaming mistakes into IDE warnings. EPPlus validates nothing at design time, and by its own docs does not validate formulas or number formats on write either.
@@ -198,8 +198,8 @@ Each table lists what EPPlus 8 has, what SheetStream has, and the plan. "Busines
 
 | Measure | EPPlus 8 | SheetStream | Verdict |
 |---|---|---|---|
-| Write 100,000 × 10 formatted | EPPlus 4.5.3.3: 2.3 s, 390 MB allocated, 184 MB peak | 1.0 s (0.53 s fastest zip), 27 MB allocated, 30 MB peak | SheetStream better |
-| Write 100,000 × 200 (EPPlus' own benchmark) | 29.1 s on an i9, whole workbook in memory | Not measured on that shape; 1,000 × 10,000 (same cell count) runs with a 160 MB peak | SheetStream better on memory; add the 100,000 × 200 shape to the suite for a direct number (0.3 days) |
+| Write 100,000 × 10 formatted | EPPlus 4.5.3.3: 2.2 s, 390 MB allocated, 287 MB peak | 0.25 s (0.08 s fastest zip), 0.16 MB allocated, 14 MB peak | SheetStream better |
+| Write 100,000 × 200 (EPPlus' own benchmark) | 29.1 s on an i9, whole workbook in memory | Not measured on that shape; 1,000 × 10,000 (same cell count) runs with a 132 MB peak | SheetStream better on memory; add the 100,000 × 200 shape to the suite for a direct number (0.3 days) |
 | Read 100,000 × 10 | EPPlus 4.5.3.3 loads the package (hundreds of MB) | 2.7 MB above baseline, streaming | SheetStream better |
 | Large workbooks (millions of cells) | Memory-bound | Flat memory for writing and reading; editing is bounded by the edit limit | SheetStream better for writing and reading; EPPlus better for editing |
 

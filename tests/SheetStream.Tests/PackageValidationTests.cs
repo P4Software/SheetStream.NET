@@ -100,7 +100,7 @@ public class PackageValidationTests
         Assert.Contains("Line\nbreak _x0001_ control", strings);
 
         var dataPart = (WorksheetPart)wbPart.GetPartById(sheets[0].Id!.Value!);
-        var cells = dataPart.Worksheet.Descendants<Cell>().ToDictionary(c => c.CellReference!.Value!, c => c);
+        var cells = dataPart.Worksheet.CellsByAddress();
 
         Assert.Equal(CellValues.SharedString, cells["A1"].DataType!.Value);
         Assert.Equal("Id", strings[int.Parse(cells["A1"].CellValue!.Text)]);
@@ -320,8 +320,8 @@ public class PackageValidationTests
         var ws = doc.WorkbookPart!.WorksheetParts.Single().Worksheet;
         var cols = ws.GetFirstChild<Columns>()!.Elements<Column>().Select(c => (c.Min!.Value, c.Max!.Value, c.Width!.Value, Hidden: c.Hidden?.Value ?? false)).ToList();
         Assert.Equal(new[] { (1u, 4u, 12d, false), (5u, 5u, 30d, false), (6u, 2000u, 12d, false), (2001u, 2010u, 12d, true), (2011u, 3000u, 12d, false) }, cols);
-        var lastCell = ws.Descendants<Row>().Last().Elements<Cell>().Last();
-        Assert.Equal("DKJ20", lastCell.CellReference!.Value);
+        var (lastAddress, lastCell) = ws.WithAddresses().Last();
+        Assert.Equal("DKJ20", lastAddress);
         Assert.Equal((20 * columns).ToString(), lastCell.CellValue!.Text);
     }
 

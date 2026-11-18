@@ -93,7 +93,7 @@ public class TemplateTests
         Assert.Equal("D5:D14", ws.Elements<X.ConditionalFormatting>().Single().SequenceOfReferences.InnerText);
 
         // Title and formula rows above the data survive; template styles are still applied.
-        var cells = ws.Descendants<X.Cell>().ToDictionary(c => c.CellReference.Value);
+        var cells = ws.CellsByAddress();
         Assert.Equal("SUM(Lines[Amount])", cells["D2"].CellFormula.Text);
         Assert.NotNull(cells["A1"].StyleIndex);
         Assert.Equal(cells["D14"].StyleIndex.Value, cells["D5"].StyleIndex.Value);

@@ -496,7 +496,7 @@ public class HardeningTests
     {
         var ms = new MemoryStream();
         int unique;
-        using (var package = new ExcelPackage(ms, leaveOpen: true, new PackageOptions { MaxSharedStringChars = 5000 }))
+        using (var package = new ExcelPackage(ms, leaveOpen: true, new PackageOptions { MaxSharedStringChars = 5000, StringStorage = StringStorage.Shared }))
         {
             var s = package.Workbook.Worksheets.Add("Data");
             for (var i = 0; i < 2000; i++) s.Row().WriteCell("Unique value " + i).WriteCell("Repeated");
@@ -521,12 +521,13 @@ public class HardeningTests
     [Fact]
     public void SharedStringBudget_DefaultIsNotReachedByOrdinaryExports()
     {
+        // Shared mode, so that every text goes through the table; Auto decides per column (StringStorageTests).
         var bytes = ExcelPackage.CreateBytes(wb =>
         {
             var s = wb.Worksheets.Add("Data");
             for (var i = 0; i < 5000; i++) s.Row().WriteCell("Customer " + i);
             Assert.Equal(5000, wb.SharedStrings.UniqueCount);
-        });
+        }, new PackageOptions { StringStorage = StringStorage.Shared });
         Assert.Equal(5000, ReadAll(bytes).Count);
     }
 

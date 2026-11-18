@@ -1,0 +1,14 @@
+Per-iteration times (ms) of the "Fastest zip" rows of SpreadCheetahOwn and StringHeavy in run C, one line per launch (L1-L3),
+the ten measured writes in order. Extracted from run C's BenchmarkDotNet console log (WorkloadActual lines).
+SpreadCheetahOwnBenchmarks.'SheetStream (Fastest zip)'#L1 : 132.2 145.2 127.8 59.2 58.2 55.1 54.8 55.4 54.4 55.3
+SpreadCheetahOwnBenchmarks.'SheetStream (Fastest zip)'#L2 : 130.9 150.3 150.2 77.5 56.3 54.9 54.7 54.4 54.3 54.7
+SpreadCheetahOwnBenchmarks.'SheetStream (Fastest zip)'#L3 : 131.7 147.9 146.7 59.1 56.6 55.3 54.5 55 56.3 54.9
+SpreadCheetahOwnBenchmarks.'SpreadCheetah (default, Fastest zip)'#L1 : 77.8 58.9 53.9 54.6 55.5 55.7 54.4 54.7 54.7 54
+SpreadCheetahOwnBenchmarks.'SpreadCheetah (default, Fastest zip)'#L2 : 259.5 194 55.5 55 55.8 55 55.7 55.9 55.9 55.1
+SpreadCheetahOwnBenchmarks.'SpreadCheetah (default, Fastest zip)'#L3 : 82 65.1 55 54.9 53.9 55.7 54.3 54.2 55.2 54.3
+StringHeavyBenchmarks.'SheetStream (Fastest zip)'#L1 : 82.9 82 81.3 79.3 80.4 78.7 78.8 77.5 78.1 78.4
+StringHeavyBenchmarks.'SheetStream (Fastest zip)'#L2 : 171.1 176.3 187.9 163.3 82.7 78.4 78.4 78.4 78.3 78.6
+StringHeavyBenchmarks.'SheetStream (Fastest zip)'#L3 : 82.6 81.7 81.4 77.5 77.7 78.5 78 77.8 77.8 77
+StringHeavyBenchmarks.'SpreadCheetah (default, Fastest zip)'#L1 : 80 79.9 80.1 79.7 80.2 80.3 79.9 78.6 79.6 79.7
+StringHeavyBenchmarks.'SpreadCheetah (default, Fastest zip)'#L2 : 80.2 79.7 80.4 80.9 79.7 79.6 79.3 80.2 79.6 79.9
+StringHeavyBenchmarks.'SpreadCheetah (default, Fastest zip)'#L3 : 79.2 79.7 80.3 78.1 79.5 79.9 79.1 79.3 78.3 79.6
